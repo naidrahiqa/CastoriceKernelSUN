@@ -123,151 +123,187 @@ jobs:
           done
           echo "SUSFS setup complete"
 
-      - name: Generate Module Signing Key
+      - name: Apply Kernel Fixes (android15 6.6)
         run: |
           cd kernel/common
-
-          # Generate signing key BEFORE configure so it exists for Bazel
-          mkdir -p certs
-          openssl req -new -x509 -newkey rsa:2048 \
-            -keyout certs/signing_key.pem \
-            -out certs/signing_key.x509 \
-            -nodes -days 365 \
-            -subj "/CN=Castorice Kernel Build/" 2>/dev/null
-
-          # Also generate the DER format that kernel build might need
-          openssl x509 -in certs/signing_key.x509 -outform der -out certs/signing_key.x509.der 2>/dev/null || true
-
-          echo "Module signing key generated"
-          ls -la certs/
-
-      - name: Configure Kernel
-        run: |
-          cd kernel/common
-          DEFCONFIG="arch/arm64/configs/gki_defconfig"
-
-          # Tambah semua config ke defconfig
-          echo "" >> $DEFCONFIG
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
-
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
-            echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
+          # Fix missing trace/hooks/fs.h include for android15-6.6
+          if ! grep -qxF '#include <trace/hooks/fs.h>' ./fs/namespace.c; then
+            sed -i '/#include <trace\/hooks\/blk.h>/a #include <trace\/hooks\/fs.h>' ./fs/namespace.c || true
           fi
 
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
-          echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
-          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+      - name: Create Defconfig Fragment
+        run: |
+          # Create a defconfig fragment file — this is the proper Kleaf way
+          # to add config options without modifying gki_defconfig directly
+          cat > $GITHUB_WORKSPACE/castorice_gki.fragment << 'EOF'
+          CONFIG_KSU=y
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_LOCALVERSION="-Castorice"
+          # CONFIG_LOCALVERSION_AUTO is not set
 
           # Gaming & Performance
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
-          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_DEFAULT_TCP_CONG="bbr"
+          CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
 
-          # Module signing - point to our generated key
-          echo 'CONFIG_MODULE_SIG_KEY="certs/signing_key.pem"' >> $DEFCONFIG
-          echo 'CONFIG_SYSTEM_TRUSTED_KEYS=""' >> $DEFCONFIG
-          echo 'CONFIG_SYSTEM_REVOCATION_KEYS=""' >> $DEFCONFIG
+          # Module signing — let the build handle it automatically
+          # Do NOT set CONFIG_MODULE_SIG=n as GKI requires it
+          # The build system auto-generates signing keys
+          # CONFIG_MODULE_SIG_ALL is not set
+          CONFIG_SYSTEM_TRUSTED_KEYS=""
+          CONFIG_SYSTEM_REVOCATION_KEYS=""
 
-          echo "=== Config appended, running savedefconfig to sync ==="
-          # Sync defconfig supaya lolos validasi Bazel
-          make ARCH=arm64 savedefconfig
-          cp defconfig $DEFCONFIG
-          echo "Config done. Kernel will be: 6.6.x-Castorice"
+          # Mountify Support
+          CONFIG_OVERLAY_FS=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          # CONFIG_TRIM_UNUSED_KSYMS is not set
+          EOF
 
-      - name: Patch Build System
+          # Add SUSFS configs if enabled
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+            cat >> $GITHUB_WORKSPACE/castorice_gki.fragment << 'EOF'
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          EOF
+          fi
+
+          # Copy fragment into the kernel source tree so Bazel can reference it
+          cp $GITHUB_WORKSPACE/castorice_gki.fragment kernel/common/arch/arm64/configs/castorice_gki.fragment
+
+          echo "=== Defconfig fragment ==="
+          cat $GITHUB_WORKSPACE/castorice_gki.fragment
+
+      - name: Remove Protected Exports
         run: |
           cd kernel/common
 
-          # === Bypass protected exports & defconfig check ===
+          # Remove protected export files
+          rm -rf android/abi_gki_protected_exports_* || true
+
+          # Remove protected_exports_list from BUILD.bazel
           if [ -f "BUILD.bazel" ]; then
+            perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//' BUILD.bazel
+            # Also remove any other protected_exports references
             sed -i '/abi_gki_protected_exports/d' BUILD.bazel
             sed -i '/protected_exports/d' BUILD.bazel
-            sed -i '/check_defconfig/d' BUILD.bazel
           fi
 
+          # Clear protected_modules list in modules.bzl
+          if [ -f "modules.bzl" ] && grep -q 'protected_modules = ' modules.bzl; then
+            sed -i 's/protected_modules = \[.*\]/protected_modules = []/' modules.bzl
+          fi
+
+          # Bypass defconfig check
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
               sed -i '/check_defconfig/d' "$f"
             fi
           done
 
-          # Bypass protection script
+          # Bypass ABI protection check script
           PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
           if [ -f "$PROT_SCRIPT" ]; then
             perl -i -pe 's/^(\s*)return 1$/$1return 0/g' "$PROT_SCRIPT"
           fi
 
-          # === Fix module signing for Kleaf/Bazel ===
-          # Patch the Kleaf build scripts to skip sign-file/signing_key validation
-          # These "Unable to find" errors come from Kleaf's post-build checks
-          find ../build/kernel -name "*.py" -exec grep -l "sign-file\|signing_key" {} \; 2>/dev/null | while read pyfile; do
-            echo "Patching: $pyfile"
-            sed -i 's/Unable to find scripts\/sign-file/sign-file check skipped/g' "$pyfile" || true
-            sed -i 's/Unable to find certs\/signing_key/signing_key check skipped/g' "$pyfile" || true
-            # Make the check non-fatal by replacing sys.exit(1) near signing checks
-            python3 -c "
-          import re
-          with open('$pyfile', 'r') as f:
-              content = f.read()
-          # Replace error raises related to signing with warnings
-          content = re.sub(r'raise\s+Exception.*sign.*', 'pass  # signing check skipped', content, flags=re.IGNORECASE)
-          with open('$pyfile', 'w') as f:
-              f.write(content)
-          " 2>/dev/null || true
-          done
+      - name: Clean Dirty Flags
+        run: |
+          cd kernel
 
-          # Patch Kleaf shell scripts that check for sign-file
-          find ../build/kernel -name "*.sh" -exec grep -l "sign-file\|signing_key" {} \; 2>/dev/null | while read shfile; do
-            echo "Patching: $shfile"
-            # Comment out lines that check for sign-file or signing_key.pem
-            sed -i '/Unable to find.*sign/s/^/#PATCHED /' "$shfile" || true
-            sed -i '/signing_key\.pem/s/exit 1/true/g' "$shfile" || true
-            sed -i '/sign-file/s/exit 1/true/g' "$shfile" || true
-          done
+          # Clean -dirty suffix from Bazel stamp
+          if [ -f "build/kernel/kleaf/impl/stamp.bzl" ]; then
+            sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' build/kernel/kleaf/impl/stamp.bzl
+          fi
 
-          echo "Build system patched"
+          # Clean -dirty suffix from setlocalversion
+          sed -i 's/-dirty//' common/scripts/setlocalversion
+
+          # Create .scmversion to prevent auto version suffix
+          : > common/.scmversion
+
+      - name: Commit Changes for Bazel
+        run: |
+          # CRITICAL: Bazel sandbox uses git to determine source files
+          # All modifications MUST be committed before building
+          cd kernel/common
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Castorice: prepare kernel source for build" || true
 
       - name: Build Kernel
         run: |
           set -x
           cd kernel
-          echo "Starting build..."
+          echo "Starting Castorice kernel build..."
 
-          # Verify signing key exists
-          ls -la common/certs/signing_key.pem
-
-          tools/bazel run \
-            --config=stamp \
-            --lto=thin \
-            //common:kernel_aarch64_dist \
-            -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || {
-            echo "=== Build failed, retrying without LTO ==="
-            tools/bazel run \
-              --config=stamp \
+          # Use 'tools/bazel build' with defconfig fragment
+          # This is the correct Kleaf build method used by successful GKI builders
+          tools/bazel build \
+            --config=release \
+            --stamp \
+            --notrim \
+            --defconfig_fragment=//common:arch/arm64/configs/castorice_gki.fragment \
+            //common:kernel_aarch64_dist 2>&1 || {
+            echo "=== First build attempt failed, retrying with --lto=none ==="
+            tools/bazel build \
+              --config=release \
+              --stamp \
+              --notrim \
               --lto=none \
-              //common:kernel_aarch64_dist \
-              -- --dist_dir=$GITHUB_WORKSPACE/dist
+              --defconfig_fragment=//common:arch/arm64/configs/castorice_gki.fragment \
+              //common:kernel_aarch64_dist
           }
-          echo "=== Build output ==="
-          ls -lah $GITHUB_WORKSPACE/dist/ || true
+
+          echo "=== Build completed ==="
         env:
           SOURCE_DATE_EPOCH: "0"
-          LOCALVERSION: "-Castorice"
+
+      - name: Extract Build Output
+        run: |
+          cd kernel
+          # Find the dist directory from Bazel output
+          DIST_DIR=$(find bazel-out -path "*/kernel_aarch64_dist/*" -name "Image*" -printf '%h\n' 2>/dev/null | head -1 || true)
+
+          if [ -z "$DIST_DIR" ]; then
+            # Try alternative: run the dist target to copy files
+            echo "Extracting via bazel run..."
+            tools/bazel run \
+              --config=release \
+              --stamp \
+              --notrim \
+              --defconfig_fragment=//common:arch/arm64/configs/castorice_gki.fragment \
+              //common:kernel_aarch64_dist \
+              -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
+          else
+            mkdir -p $GITHUB_WORKSPACE/dist
+            cp -v "$DIST_DIR"/* $GITHUB_WORKSPACE/dist/ 2>/dev/null || true
+          fi
+
+          # Also check standard bazel-bin location
+          if [ ! -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+            find bazel-out -name "Image" -o -name "Image.gz" -o -name "Image.lz4" 2>/dev/null | while read img; do
+              cp -v "$img" $GITHUB_WORKSPACE/dist/ 2>/dev/null || true
+            done
+          fi
+
+          echo "=== Build output ==="
+          ls -lah $GITHUB_WORKSPACE/dist/ || echo "No dist directory found"
 
       - name: Verify Build
         run: |
