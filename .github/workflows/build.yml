@@ -224,11 +224,9 @@ jobs:
           for cfg_file in build.config.gki build.config.gki.aarch64; do
             if [ -f "$cfg_file" ]; then
               # Append post_defconfig fragment to disable module signing
-              cat >> "$cfg_file" << 'CFGEOF'
-
-# Disable module signing (added by CI)
-POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} ; scripts/config --file ${OUT_DIR}/.config -d MODULE_SIG -d MODULE_SIG_ALL -d MODULE_SIG_FORCE --set-str MODULE_SIG_KEY \"\" --set-str SYSTEM_TRUSTED_KEYS \"\" --set-str SYSTEM_REVOCATION_KEYS \"\""
-CFGEOF
+              echo "" >> "$cfg_file"
+              echo "# Disable module signing (added by CI)" >> "$cfg_file"
+              echo 'POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} ; scripts/config --file ${OUT_DIR}/.config -d MODULE_SIG -d MODULE_SIG_ALL -d MODULE_SIG_FORCE --set-str MODULE_SIG_KEY \"\" --set-str SYSTEM_TRUSTED_KEYS \"\" --set-str SYSTEM_REVOCATION_KEYS \"\""' >> "$cfg_file"
             fi
           done
 
