@@ -228,29 +228,30 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
-          # Tulis anykernel.sh tanpa indentasi (penting!)
+          # Tulis anykernel.sh (indentasi dihapus oleh sed)
           cat > anykernel.sh << 'AKEOF'
-# AnyKernel3 Ramdisk Mod Script
-# osm0sis @ xda-developers
-properties() { '
-kernel.string=Castorice Kernel by naidrahiqa
-do.devicecheck=0
-do.modules=0
-do.systemless=1
-do.cleanup=1
-do.cleanuponabort=0
-device.name1=fire
-device.name2=Redmi 12
-supported.versions=15
-'; }
-block=boot;
-is_slot_device=auto;
-ramdisk_compression=auto;
-patch_vbmeta_flag=auto;
-. tools/ak3-core.sh;
-dump_boot;
-write_boot;
-AKEOF
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+          properties() { '
+          kernel.string=Castorice Kernel by naidrahiqa
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=fire
+          device.name2=Redmi 12
+          supported.versions=15
+          '; }
+          block=boot;
+          is_slot_device=auto;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          AKEOF
+          sed -i 's/^ *//' anykernel.sh
 
           if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
             cp $GITHUB_WORKSPACE/dist/Image.gz .
