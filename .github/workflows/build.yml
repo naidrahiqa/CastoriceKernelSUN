@@ -246,11 +246,9 @@ jobs:
           # 2) Create dummy sign-file script
           mkdir -p scripts
           if [ ! -f scripts/sign-file ]; then
-            cat > scripts/sign-file << 'SIGNEOF'
-#!/bin/bash
-# Dummy sign-file - does nothing
-exit 0
-SIGNEOF
+            echo '#!/bin/bash' > scripts/sign-file
+            echo '# Dummy sign-file - does nothing' >> scripts/sign-file
+            echo 'exit 0' >> scripts/sign-file
             chmod +x scripts/sign-file
             echo "Dummy sign-file created"
           fi
