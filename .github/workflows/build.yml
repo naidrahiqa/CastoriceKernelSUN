@@ -160,10 +160,14 @@ jobs:
           echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $DEFCONFIG
           echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
 
-          # Fix certs/signing_key.pem error
+          # Fix module signing errors (sign-file + signing_key.pem)
+          echo "CONFIG_MODULE_SIG=n" >> $DEFCONFIG
+          echo "CONFIG_MODULE_SIG_ALL=n" >> $DEFCONFIG
+          echo "CONFIG_MODULE_SIG_FORCE=n" >> $DEFCONFIG
           echo 'CONFIG_MODULE_SIG_KEY=""' >> $DEFCONFIG
           echo 'CONFIG_SYSTEM_TRUSTED_KEYS=""' >> $DEFCONFIG
           echo 'CONFIG_SYSTEM_REVOCATION_KEYS=""' >> $DEFCONFIG
+          echo 'CONFIG_MODULE_SIG_HASH="sha256"' >> $DEFCONFIG
 
           echo "=== Config appended, running savedefconfig to sync ==="
           # Sync defconfig supaya lolos validasi Bazel
@@ -198,13 +202,84 @@ jobs:
             perl -i -pe 's/^(\s*)return 1$/$1return 0/g' "$PROT_SCRIPT"
           fi
 
-          echo "Protected exports & defconfig check bypassed"
+          # ====== FIX MODULE SIGNING ======
+          # Patch Kconfig to not force MODULE_SIG
+          if [ -f "init/Kconfig" ]; then
+            sed -i 's/select MODULE_SIG$/# select MODULE_SIG/' init/Kconfig || true
+          fi
+
+          # Patch scripts/Makefile to skip sign-file build errors
+          if [ -f "scripts/Makefile" ]; then
+            sed -i 's/sign-file/sign-file-disabled/g' scripts/Makefile 2>/dev/null || true
+          fi
+
+          # Patch module signing Makefile
+          MODSIG_MK="scripts/Makefile.modsign"
+          if [ -f "$MODSIG_MK" ]; then
+            # Replace sign-file invocations with no-op
+            sed -i 's|$(obj)/sign-file|/bin/true|g' "$MODSIG_MK" || true
+          fi
+
+          # Ensure post_defconfig disables MODULE_SIG in .config
+          for cfg_file in build.config.gki build.config.gki.aarch64; do
+            if [ -f "$cfg_file" ]; then
+              # Append post_defconfig fragment to disable module signing
+              cat >> "$cfg_file" << 'CFGEOF'
+
+# Disable module signing (added by CI)
+POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} ; scripts/config --file ${OUT_DIR}/.config -d MODULE_SIG -d MODULE_SIG_ALL -d MODULE_SIG_FORCE --set-str MODULE_SIG_KEY \"\" --set-str SYSTEM_TRUSTED_KEYS \"\" --set-str SYSTEM_REVOCATION_KEYS \"\""
+CFGEOF
+            fi
+          done
+
+          echo "Protected exports & defconfig check & module signing bypassed"
+
+      - name: Fix Module Signing
+        run: |
+          cd kernel/common
+
+          # 1) Generate dummy signing key so build doesn't fail
+          mkdir -p certs
+          openssl req -new -x509 -newkey rsa:2048 -keyout certs/signing_key.pem \
+            -out certs/signing_key.x509 -nodes -days 365 \
+            -subj "/CN=Castorice Kernel Build/" 2>/dev/null
+          echo "Dummy signing key generated"
+
+          # 2) Create dummy sign-file script
+          mkdir -p scripts
+          if [ ! -f scripts/sign-file ]; then
+            cat > scripts/sign-file << 'SIGNEOF'
+#!/bin/bash
+# Dummy sign-file - does nothing
+exit 0
+SIGNEOF
+            chmod +x scripts/sign-file
+            echo "Dummy sign-file created"
+          fi
+
+          # 3) Patch kernel Makefile to skip signing if sign-file missing
+          if grep -q 'CONFIG_MODULE_SIG_ALL' Makefile; then
+            sed -i 's/CONFIG_MODULE_SIG_ALL=y/CONFIG_MODULE_SIG_ALL=n/g' Makefile || true
+          fi
+
+          # 4) Also create signing key in output dirs that bazel sandbox might check
+          echo "Module signing fix applied"
 
       - name: Build Kernel
         run: |
           set -x
           cd kernel
           echo "Starting build..."
+
+          # Pre-create certs in common for sandbox access
+          mkdir -p common/certs
+          if [ ! -f common/certs/signing_key.pem ]; then
+            openssl req -new -x509 -newkey rsa:2048 \
+              -keyout common/certs/signing_key.pem \
+              -out common/certs/signing_key.x509 \
+              -nodes -days 365 -subj "/CN=Build/" 2>/dev/null
+          fi
+
           tools/bazel run \
             --config=stamp \
             --lto=thin \
