@@ -76,7 +76,7 @@ jobs:
       - name: Setup KernelSU-Next
         run: |
           cd kernel/common
-          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/main/kernel/setup.sh" | bash -s main
+          curl -LSsf "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           KSU_DIR=""
           if [ -d "KernelSU-Next" ]; then
             KSU_DIR="KernelSU-Next"
