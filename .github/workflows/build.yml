@@ -17,6 +17,7 @@ permissions:
   contents: write
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ANDROID_VERSION: android15
   KERNEL_VERSION: "6.6"
   KERNEL_NAME: Castorice
@@ -54,7 +55,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch binutils
+          sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch binutils libncurses-dev pkg-config ninja-build zstd
 
       - name: Install repo tool
         run: |
@@ -168,6 +169,7 @@ jobs:
 
       - name: Build Kernel
         run: |
+          set -x
           cd kernel
           echo "Starting build..."
           tools/bazel run --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist
