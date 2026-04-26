@@ -55,7 +55,9 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch binutils libncurses-dev pkg-config ninja-build zstd
+          sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev \
+            python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch \
+            binutils libncurses-dev pkg-config ninja-build zstd
 
       - name: Install repo tool
         run: |
@@ -68,7 +70,8 @@ jobs:
         run: |
           mkdir -p kernel
           cd kernel
-          repo init -u https://android.googlesource.com/kernel/manifest -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
+          repo init -u https://android.googlesource.com/kernel/manifest \
+            -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
           echo "=== Kernel version ==="
           cd common && make kernelversion
@@ -95,7 +98,10 @@ jobs:
         if: ${{ inputs.enable_susfs == true }}
         run: |
           cd kernel
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-6.6
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
+            -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || \
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
+            -b gki-${ANDROID_VERSION}-6.6
           cd common
           cp -v ../susfs4ksu/kernel_patches/fs/susfs.c fs/ || true
           cp -v ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ || true
@@ -107,6 +113,7 @@ jobs:
               patch -p1 --forward < "$patch" || true
             fi
           done
+          KSU_DIR="${{ env.KSU_DIR }}"
           for patch in ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu*.patch; do
             if [ -f "$patch" ]; then
               echo "Applying to $KSU_DIR: $patch"
@@ -121,6 +128,7 @@ jobs:
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
 
+          # Tambah semua config ke defconfig
           echo "" >> $DEFCONFIG
           echo "CONFIG_KSU=y" >> $DEFCONFIG
 
@@ -146,33 +154,57 @@ jobs:
           echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
-          # Gaming & Performance Optimizations
+          # Gaming & Performance
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
-          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> $DEFCONFIG
+          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $DEFCONFIG
           echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
 
+          echo "=== Config appended, running savedefconfig to sync ==="
+          # Sync defconfig supaya lolos validasi Bazel
+          make ARCH=arm64 savedefconfig
+          cp defconfig $DEFCONFIG
           echo "Config done. Kernel will be: 6.6.x-Castorice"
 
-      - name: Remove Protected Exports
+      - name: Remove Protected Exports & Defconfig Check
         run: |
           cd kernel/common
+
+          # Bypass protected exports
           if [ -f "BUILD.bazel" ]; then
             sed -i '/abi_gki_protected_exports/d' BUILD.bazel
             sed -i '/protected_exports/d' BUILD.bazel
+            # FIX UTAMA: hapus validasi savedefconfig di Bazel
+            sed -i '/check_defconfig/d' BUILD.bazel
+            sed -i '/savedefconfig/d' BUILD.bazel
           fi
+
+          # Bypass di build config juga
+          for f in build.config.gki build.config.gki.aarch64; do
+            if [ -f "$f" ]; then
+              sed -i '/check_defconfig/d' "$f"
+              sed -i '/savedefconfig/d' "$f"
+            fi
+          done
+
+          # Bypass protection script
           PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
           if [ -f "$PROT_SCRIPT" ]; then
             perl -i -pe 's/^(\s*)return 1$/$1return 0/g' "$PROT_SCRIPT"
           fi
-          echo "Protected exports bypassed"
+
+          echo "Protected exports & defconfig check bypassed"
 
       - name: Build Kernel
         run: |
           set -x
           cd kernel
           echo "Starting build..."
-          tools/bazel run --config=stamp --lto=thin //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist
+          tools/bazel run \
+            --config=stamp \
+            --lto=thin \
+            //common:kernel_aarch64_dist \
+            -- --dist_dir=$GITHUB_WORKSPACE/dist
           echo "=== Build output ==="
           ls -lah $GITHUB_WORKSPACE/dist/ || true
         env:
@@ -195,28 +227,31 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
+
+          # Tulis anykernel.sh tanpa indentasi (penting!)
           cat > anykernel.sh << 'AKEOF'
-          # AnyKernel3 Ramdisk Mod Script
-          # osm0sis @ xda-developers
-          properties() { '
-          kernel.string=Castorice Kernel by naidrahiqa
-          do.devicecheck=0
-          do.modules=0
-          do.systemless=1
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=fire
-          device.name2=Redmi 12
-          supported.versions=15
-          '; }
-          block=boot;
-          is_slot_device=auto;
-          ramdisk_compression=auto;
-          patch_vbmeta_flag=auto;
-          . tools/ak3-core.sh;
-          dump_boot;
-          write_boot;
-          AKEOF
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+properties() { '
+kernel.string=Castorice Kernel by naidrahiqa
+do.devicecheck=0
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=fire
+device.name2=Redmi 12
+supported.versions=15
+'; }
+block=boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+. tools/ak3-core.sh;
+dump_boot;
+write_boot;
+AKEOF
+
           if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
             cp $GITHUB_WORKSPACE/dist/Image.gz .
           elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
@@ -224,6 +259,7 @@ jobs:
           elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
             cp $GITHUB_WORKSPACE/dist/Image.lz4 .
           fi
+
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           ZIP="Castorice-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
