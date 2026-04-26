@@ -220,13 +220,11 @@ jobs:
             sed -i 's|$(obj)/sign-file|/bin/true|g' "$MODSIG_MK" || true
           fi
 
-          # Ensure post_defconfig disables MODULE_SIG in .config
+          # Disable module signing via build config
           for cfg_file in build.config.gki build.config.gki.aarch64; do
             if [ -f "$cfg_file" ]; then
-              # Append post_defconfig fragment to disable module signing
-              echo "" >> "$cfg_file"
-              echo "# Disable module signing (added by CI)" >> "$cfg_file"
-              echo 'POST_DEFCONFIG_CMDS="${POST_DEFCONFIG_CMDS} ; scripts/config --file ${OUT_DIR}/.config -d MODULE_SIG -d MODULE_SIG_ALL -d MODULE_SIG_FORCE --set-str MODULE_SIG_KEY \"\" --set-str SYSTEM_TRUSTED_KEYS \"\" --set-str SYSTEM_REVOCATION_KEYS \"\""' >> "$cfg_file"
+              # Remove any existing MODULE_SIG references
+              sed -i '/MODULE_SIG/d' "$cfg_file" || true
             fi
           done
 
