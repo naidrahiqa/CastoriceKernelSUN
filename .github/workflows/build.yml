@@ -160,6 +160,11 @@ jobs:
           echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $DEFCONFIG
           echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
 
+          # Fix certs/signing_key.pem error
+          echo 'CONFIG_MODULE_SIG_KEY=""' >> $DEFCONFIG
+          echo 'CONFIG_SYSTEM_TRUSTED_KEYS=""' >> $DEFCONFIG
+          echo 'CONFIG_SYSTEM_REVOCATION_KEYS=""' >> $DEFCONFIG
+
           echo "=== Config appended, running savedefconfig to sync ==="
           # Sync defconfig supaya lolos validasi Bazel
           make ARCH=arm64 savedefconfig
