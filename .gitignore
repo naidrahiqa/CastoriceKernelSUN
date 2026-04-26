@@ -1,0 +1,6 @@
+boot.img
+*.img
+dist/
+out/
+kernel/
+ak3/

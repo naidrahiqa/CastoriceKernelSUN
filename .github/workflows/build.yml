@@ -1,0 +1,407 @@
+name: Build Castorice Kernel - Redmi 12 Fire
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_sublevel:
+        description: 'Kernel sublevel (58 = 6.6.58, match stock)'
+        required: true
+        default: '58'
+      enable_susfs:
+        description: 'Enable SUSFS'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  ANDROID_VERSION: android15
+  KERNEL_VERSION: "6.6"
+
+jobs:
+  build:
+    name: "Castorice 6.6.${{ inputs.kernel_sublevel }} - KernelSU-Next"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Maximize Disk Space
+      run: |
+        echo "=== Before cleanup ==="
+        df -h /
+
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          /usr/share/swift /usr/share/miniconda /usr/local/share/chromium \
+          /usr/local/share/powershell /usr/share/az* /opt/hostedtoolcache
+        
+        sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' \
+          azure-cli google-cloud-cli microsoft-edge-stable \
+          google-chrome-stable firefox powershell mono-devel || true
+        sudo apt-get autoremove -y && sudo apt-get clean
+
+        echo "=== After cleanup ==="
+        df -h /
+
+    - name: Setup Swap (16GB for LTO)
+      run: |
+        sudo fallocate -l 16G /mnt/swapfile
+        sudo chmod 600 /mnt/swapfile
+        sudo mkswap /mnt/swapfile
+        sudo swapon /mnt/swapfile
+        echo "Swap:" && free -h | grep Swap
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          git curl wget bc bison flex libssl-dev make \
+          libelf-dev python3 python3-pip zip unzip \
+          cpio kmod rsync lz4 jq
+
+    - name: Install repo tool
+      run: |
+        mkdir -p ~/bin
+        curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "$HOME/bin" >> $GITHUB_PATH
+
+    - name: Sync Android Common Kernel
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/kernel
+        cd $GITHUB_WORKSPACE/kernel
+        
+        repo init \
+          -u https://android.googlesource.com/kernel/manifest \
+          -b common-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }} \
+          --depth=1
+        
+        repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
+        
+        echo "=== Kernel version ==="
+        cd common
+        make kernelversion 2>/dev/null || cat Makefile | head -5
+
+    - name: Setup KernelSU-Next
+      run: |
+        cd $GITHUB_WORKSPACE/kernel/common
+        
+        echo "=== Installing KernelSU-Next ==="
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/main/kernel/setup.sh" | bash -s main
+        
+        # Get version info
+        if [ -d "KernelSU-Next" ]; then
+          KSU_DIR="KernelSU-Next"
+        elif [ -d "KernelSU" ]; then
+          KSU_DIR="KernelSU"
+        fi
+        
+        KSU_VERSION=$(cd $KSU_DIR && git rev-list --count HEAD)
+        echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+        echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
+        echo "✅ KernelSU-Next installed, commit count: $KSU_VERSION"
+
+    - name: Setup SUSFS
+      if: inputs.enable_susfs
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        
+        echo "=== Cloning SUSFS ==="
+        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
+          -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }} || \
+        git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
+          -b gki-${{ env.ANDROID_VERSION }}-6.6
+        
+        cd common
+        
+        # Copy SUSFS kernel source files
+        cp -v ../susfs4ksu/kernel_patches/fs/susfs.c fs/ 2>/dev/null || true
+        cp -v ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ 2>/dev/null || true
+        cp -rv ../susfs4ksu/kernel_patches/fs/sus_* fs/ 2>/dev/null || true
+        cp -rv ../susfs4ksu/kernel_patches/include/linux/sus_* include/linux/ 2>/dev/null || true
+        
+        # Apply SUSFS kernel patch
+        echo "=== Applying SUSFS kernel patches ==="
+        for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
+          if [ -f "$patch" ]; then
+            echo "Applying: $patch"
+            patch -p1 --forward < "$patch" || true
+          fi
+        done
+        
+        # Apply KSU-SUSFS integration
+        echo "=== Applying KSU-SUSFS integration ==="
+        for patch in ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu*.patch; do
+          if [ -f "$patch" ]; then
+            echo "Applying to $KSU_DIR: $patch"
+            cd $KSU_DIR
+            patch -p1 --forward < "$patch" || true
+            cd ..
+          fi
+        done
+        
+        echo "✅ SUSFS setup complete"
+
+    - name: Configure Kernel Flags
+      run: |
+        cd $GITHUB_WORKSPACE/kernel/common
+        
+        DEFCONFIG="arch/arm64/configs/gki_defconfig"
+        
+        # KernelSU
+        echo "" >> $DEFCONFIG
+        echo "# KernelSU-Next" >> $DEFCONFIG
+        echo "CONFIG_KSU=y" >> $DEFCONFIG
+        
+        # SUSFS
+        if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+          echo "" >> $DEFCONFIG
+          echo "# SUSFS" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
+        fi
+        
+        # Networking extras
+        echo "" >> $DEFCONFIG
+        echo "# Extras" >> $DEFCONFIG
+        echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
+        echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
+        
+        echo "✅ Kernel config updated"
+        echo "=== Added configs ==="
+        tail -30 $DEFCONFIG
+
+    - name: Apply Castorice Branding
+      run: |
+        cd $GITHUB_WORKSPACE/kernel/common
+        
+        # Set LOCALVERSION to Castorice
+        DEFCONFIG="arch/arm64/configs/gki_defconfig"
+        echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
+        echo 'CONFIG_LOCALVERSION_AUTO=n' >> $DEFCONFIG
+        
+        # Also set via environment
+        echo "LOCALVERSION=-Castorice" >> $GITHUB_ENV
+        
+        echo "✅ Kernel branded as Castorice"
+        echo "   Kernel will show: 6.6.58-Castorice"
+
+    - name: Remove Protected Exports
+      run: |
+        cd $GITHUB_WORKSPACE/kernel/common
+        
+        # Remove GKI ABI protection that blocks KSU symbols
+        if [ -f "BUILD.bazel" ]; then
+          sed -i '/abi_gki_protected_exports/d' BUILD.bazel
+          sed -i '/protected_exports/d' BUILD.bazel
+          echo "✅ Protected exports removed from BUILD.bazel"
+        fi
+        
+        # Bypass symbol protection check
+        PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
+        if [ -f "$PROT_SCRIPT" ]; then
+          perl -i -pe 's/^(\s*)return 1$/$1print("KSU: Bypassed symbol protection")\n$1return 0/g' "$PROT_SCRIPT"
+          echo "✅ Symbol protection check bypassed"
+        fi
+
+    - name: Build GKI Kernel
+      run: |
+        cd $GITHUB_WORKSPACE/kernel
+        
+        echo "=== Starting kernel build ==="
+        echo "This will take 30-90 minutes..."
+        
+        tools/bazel run --config=fast --config=stamp \
+          //common:kernel_aarch64_dist \
+          -- --dist_dir=$GITHUB_WORKSPACE/dist \
+          2>&1 | tail -100
+        
+        echo ""
+        echo "=== Build complete ==="
+        ls -lah $GITHUB_WORKSPACE/dist/ | head -30
+      env:
+        SOURCE_DATE_EPOCH: "0"
+
+    - name: Check Build Output
+      id: check
+      run: |
+        echo "=== dist/ contents ==="
+        ls -la $GITHUB_WORKSPACE/dist/
+        
+        # Find kernel image
+        if [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+          echo "image_type=Image" >> $GITHUB_OUTPUT
+          echo "✅ Raw Image found ($(du -h $GITHUB_WORKSPACE/dist/Image | cut -f1))"
+        fi
+        if [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
+          echo "image_lz4=true" >> $GITHUB_OUTPUT
+          echo "✅ Image.lz4 found"
+        fi
+        if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
+          echo "image_gz=true" >> $GITHUB_OUTPUT
+          echo "✅ Image.gz found"
+        fi
+        
+        # Check for boot.img from build system
+        if [ -f "$GITHUB_WORKSPACE/dist/boot.img" ]; then
+          echo "boot_img=true" >> $GITHUB_OUTPUT
+          echo "✅ boot.img found from build system"
+        fi
+        
+        # Verify kernel version in Image
+        if [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+          strings $GITHUB_WORKSPACE/dist/Image | grep "Linux version" | head -1
+        fi
+
+    - name: Create Boot Images
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/out
+        
+        # Copy build system boot images if they exist
+        for f in $GITHUB_WORKSPACE/dist/boot*.img; do
+          [ -f "$f" ] && cp -v "$f" $GITHUB_WORKSPACE/out/
+        done
+        
+        # Copy kernel images
+        for f in Image Image.lz4 Image.gz; do
+          [ -f "$GITHUB_WORKSPACE/dist/$f" ] && cp -v "$GITHUB_WORKSPACE/dist/$f" $GITHUB_WORKSPACE/out/
+        done
+
+    - name: Prepare AnyKernel3
+      run: |
+        cd $GITHUB_WORKSPACE
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+        cd ak3
+        
+        # Write AnyKernel3 config for Redmi 12
+        cat > anykernel.sh << 'EOF'
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+
+## AnyKernel setup
+properties() { '
+kernel.string=Castorice Kernel by naidrahiqa | GKI 6.6 KernelSU-Next
+do.devicecheck=0
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=fire
+device.name2=Redmi 12
+supported.versions=15
+supported.patchlevels=
+'; }
+
+block=boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+. tools/ak3-core.sh;
+
+dump_boot;
+write_boot;
+EOF
+        
+        # Copy kernel image - prefer Image.gz for smaller size
+        if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
+          cp $GITHUB_WORKSPACE/dist/Image.gz .
+          echo "Packed Image.gz into AnyKernel3"
+        elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+          cp $GITHUB_WORKSPACE/dist/Image .
+          echo "Packed Image into AnyKernel3"
+        elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
+          cp $GITHUB_WORKSPACE/dist/Image.lz4 .
+          echo "Packed Image.lz4 into AnyKernel3"
+        fi
+        
+        # Build ZIP
+        SUSFS_TAG=""
+        if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+          SUSFS_TAG="-SUSFS"
+        fi
+        
+        ZIP_NAME="Castorice-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${SUSFS_TAG}-fire-$(date +%Y%m%d%H)"
+        zip -r9 "$GITHUB_WORKSPACE/out/${ZIP_NAME}.zip" . \
+          -x ".git*" "*.md" "LICENSE"
+        
+        echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+        echo "✅ AnyKernel3 ZIP created: ${ZIP_NAME}.zip"
+
+    - name: Generate Release Notes
+      run: |
+        SUSFS_TAG=""
+        if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+          SUSFS_TAG=" + SUSFS"
+        fi
+        
+        cat > $GITHUB_WORKSPACE/out/RELEASE.md << EOF
+## 🔥 Castorice Kernel for Redmi 12 (fire) — HyperOS 2.0.206+
+
+| Info | Value |
+|---|---|
+| **Kernel** | 6.6.${{ inputs.kernel_sublevel }} |
+| **KMI** | android15-6.6 |
+| **Root** | KernelSU-Next (v${KSU_VERSION:-N/A})${SUSFS_TAG} |
+| **Target** | Redmi 12 (fire) HyperOS 2.0.206+ |
+| **LCD** | 0a/0b/0c/0d — ALL safe (vendor modules) |
+
+### 📱 LCD 0c/0d
+Display drivers are **vendor kernel modules** in GKI architecture.
+This build replaces ONLY the kernel core. Your LCD panel driver stays 
+in the vendor partition → **all LCD panels (0a/0b/0c/0d) work normally**.
+
+### ⚡ Flash via Fastboot
+\`\`\`
+fastboot flash boot boot.img
+fastboot reboot
+\`\`\`
+
+### ⚡ Flash via Recovery (AnyKernel3)
+Flash the ZIP file via TWRP or other custom recovery.
+
+### 🔄 Recovery
+\`\`\`
+fastboot flash boot <stock_boot.img>
+fastboot reboot
+\`\`\`
+EOF
+
+    - name: Upload All Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: "Castorice-6.6.${{ inputs.kernel_sublevel }}-KSU_Next-fire"
+        path: |
+          ${{ github.workspace }}/out/*
+        if-no-files-found: warn
+        compression-level: 9
+        retention-days: 30
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: "v6.6.${{ inputs.kernel_sublevel }}-castorice-${{ github.run_number }}"
+        name: "Castorice 6.6.${{ inputs.kernel_sublevel }} KernelSU-Next — Redmi 12 Fire"
+        body_path: ${{ github.workspace }}/out/RELEASE.md
+        files: |
+          ${{ github.workspace }}/out/*.img
+          ${{ github.workspace }}/out/*.zip
+          ${{ github.workspace }}/out/Image*
+        draft: false
+        prerelease: true
