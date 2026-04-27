@@ -265,6 +265,22 @@ jobs:
           echo "=== Defconfig tail ==="
           tail -40 $DEFCONFIG
 
+      # ===== COMPILER FIXES (Modern Clang vs 4.19) =====
+      - name: Fix Compiler Errors
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          
+          # Fix modern Clang -Werror warnings (like zram_drv.c missing (void) parameter)
+          echo "Stripping -Werror from all Makefiles to prevent build drops..."
+          find . -type f -name "Makefile" -exec sed -i 's/-Werror\b//g' {} +
+          
+          # Explicitly fix zram_drv.c empty parameters if present
+          if [ -f "drivers/block/zram/zram_drv.c" ]; then
+            echo "Patching zram_drv.c strict-prototypes..."
+            sed -i 's/zram_debugfs_init()/zram_debugfs_init(void)/g' drivers/block/zram/zram_drv.c
+            sed -i 's/zram_debugfs_destroy()/zram_debugfs_destroy(void)/g' drivers/block/zram/zram_drv.c
+          fi
+
       # ===== BUILD =====
       - name: Build Kernel
         run: |
@@ -293,7 +309,9 @@ jobs:
             HOSTLD=ld.lld \
             HOSTCC=clang \
             HOSTCXX=clang++ \
-            LLVM=1"
+            LLVM=1 \
+            KCFLAGS=\"-Wno-error -Wno-strict-prototypes\" \
+            KBUILD_CFLAGS=\"-Wno-error -Wno-strict-prototypes\""
 
           # Generate .config
           make O=out $ARGS fire_defconfig
