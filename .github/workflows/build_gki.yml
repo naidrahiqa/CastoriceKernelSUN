@@ -46,7 +46,10 @@ jobs:
 
       - name: Setup Swap
         run: |
-          sudo fallocate -l 16G /mnt/swapfile
+          # Remove existing swapfile if present (prevents "Text file busy")
+          sudo swapoff /mnt/swapfile 2>/dev/null || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
@@ -79,7 +82,20 @@ jobs:
       - name: Setup KernelSU-Next
         run: |
           cd kernel/common
-          curl -LSsf "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/main/kernel/setup.sh" | bash -s main
+
+          # Try 'next' branch first (has setup.sh), then fallback to 'main'
+          if curl -LSsf "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" -o /tmp/ksu_setup.sh 2>/dev/null; then
+            echo "Using KernelSU-Next setup.sh from 'next' branch"
+            bash /tmp/ksu_setup.sh next
+          elif curl -LSsf "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/main/kernel/setup.sh" -o /tmp/ksu_setup.sh 2>/dev/null; then
+            echo "Using KernelSU-Next setup.sh from 'main' branch"
+            bash /tmp/ksu_setup.sh main
+          else
+            echo "Trying sidex15 fork..."
+            curl -LSsf "https://raw.githubusercontent.com/sidex15/KernelSU-Next/next/kernel/setup.sh" -o /tmp/ksu_setup.sh
+            bash /tmp/ksu_setup.sh next
+          fi
+
           KSU_DIR=""
           if [ -d "KernelSU-Next" ]; then
             KSU_DIR="KernelSU-Next"
@@ -87,6 +103,7 @@ jobs:
             KSU_DIR="KernelSU"
           else
             echo "KernelSU directory not found!"
+            ls -la
             exit 1
           fi
           KSU_VERSION=$(cd $KSU_DIR && git rev-list --count HEAD)
@@ -124,15 +141,26 @@ jobs:
             fi
           done
 
-          # Apply KernelSU patches for SUSFS
+          # Apply KernelSU patches for SUSFS (check multiple possible directories)
           KSU_DIR="${{ env.KSU_DIR }}"
-          for patch in ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu*.patch ../susfs4ksu/kernel_patches/KernelSU-Next/10_enable_susfs_for_ksu*.patch; do
-            if [ -f "$patch" ]; then
-              echo "Applying to $KSU_DIR: $patch"
-              cd $KSU_DIR && patch -p1 --forward < "$patch" || echo "WARNING: KSU SUSFS patch failed"
-              cd ..
-            fi
+          SUSFS_KSU_PATCH_APPLIED=false
+          for patchdir in KernelSU KernelSU-Next; do
+            for patch in ../susfs4ksu/kernel_patches/${patchdir}/10_enable_susfs_for_ksu*.patch; do
+              if [ -f "$patch" ]; then
+                echo "Applying to $KSU_DIR: $patch"
+                if cd $KSU_DIR && patch -p1 --forward < "../$patch"; then
+                  SUSFS_KSU_PATCH_APPLIED=true
+                else
+                  echo "WARNING: KSU SUSFS patch $patch failed"
+                fi
+                cd ..
+              fi
+            done
           done
+
+          if [ "$SUSFS_KSU_PATCH_APPLIED" = "false" ]; then
+            echo "WARNING: No SUSFS KSU patches were applied"
+          fi
 
           # Verify SUSFS Kconfig
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
@@ -255,21 +283,26 @@ jobs:
             //common:kernel_aarch64_dist \
             -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
 
-          if [ ! -f "$GITHUB_WORKSPACE/dist/Image" ] && [ ! -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
-            echo "Searching bazel-out for kernel images..."
-            find bazel-out -name "Image" -o -name "Image.gz" -o -name "Image.lz4" -o -name "boot.img" 2>/dev/null | head -10 | while read img; do
-              echo "Found: $img"
-              cp -v "$img" $GITHUB_WORKSPACE/dist/ 2>/dev/null || true
-            done
-          fi
+          # Also search bazel-out for any missing files
+          echo "Searching bazel-out for all kernel artifacts..."
+          for artifact in Image Image.gz Image.lz4 boot.img boot-gz.img; do
+            if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
+              FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
+              if [ -n "$FOUND" ]; then
+                echo "Found in bazel-out: $FOUND"
+                cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/" 2>/dev/null || true
+              fi
+            fi
+          done
 
           echo "=== Build output ==="
           ls -lah $GITHUB_WORKSPACE/dist/ || echo "No output found"
 
       - name: Verify Build
         run: |
+          echo "=== dist contents ==="
           ls -la dist/
-          for f in Image Image.gz Image.lz4; do
+          for f in Image Image.gz Image.lz4 boot.img boot-gz.img; do
             if [ -f "dist/$f" ]; then
               echo "Found: $f ($(du -h dist/$f | cut -f1))"
             fi
@@ -278,64 +311,79 @@ jobs:
             strings dist/Image | grep "Linux version" | head -1
           fi
 
-      # ===== MAGISKBOOT — 128MB BOOT.IMG REPACK =====
-      - name: Setup Magiskboot
+      # ===== BOOT.IMG 128MB =====
+      - name: Generate Boot Images (128MB)
         run: |
           cd $GITHUB_WORKSPACE
-          mkdir -p magiskboot
-
-          MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' | head -n1)
-
-          echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
-          aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
-          7z e magiskboot.7z native/out/x86_64/magiskboot -omagiskboot/
-          chmod +x magiskboot/magiskboot
-          rm -f magiskboot.7z
-
-      - name: Repack Boot Image (128MB - Dual Slot A/B)
-        run: |
-          cd $GITHUB_WORKSPACE/magiskboot
-          MAGISKBOOT="$GITHUB_WORKSPACE/magiskboot/magiskboot"
-          STOCK_BOOT="$GITHUB_WORKSPACE/dist/boot.img"
-
-          if [ ! -f "$STOCK_BOOT" ]; then
-            echo "Searching bazel-out for boot.img..."
-            FOUND_BOOT=$(cd $GITHUB_WORKSPACE/kernel && find bazel-out -name "boot.img" 2>/dev/null | head -n 1)
-            if [ -n "$FOUND_BOOT" ]; then
-              cp "$GITHUB_WORKSPACE/kernel/$FOUND_BOOT" "$STOCK_BOOT"
-              echo "Copied bazel generated boot.img"
-            fi
-          fi
 
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           BASE_NAME="Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-          if [ ! -f "$STOCK_BOOT" ] || [ ! -s "$STOCK_BOOT" ]; then
-            echo "WARNING: boot.img not found from Bazel or download, skipping boot.img repack"
+          # Look for boot.img from GKI build output
+          BOOT_IMG=""
+          for f in dist/boot.img dist/boot-gz.img; do
+            if [ -f "$f" ]; then
+              BOOT_IMG="$f"
+              echo "Found GKI boot image: $BOOT_IMG ($(du -h $BOOT_IMG | cut -f1))"
+              break
+            fi
+          done
+
+          if [ -z "$BOOT_IMG" ]; then
+            echo "WARNING: No boot.img found from GKI build, skipping boot.img generation"
             echo "BOOTIMG_OK=false" >> $GITHUB_ENV
-            exit 0
+          else
+            # Download magiskboot for permissive variant
+            mkdir -p magiskboot
+            MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases 2>/dev/null | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' 2>/dev/null | head -n1)
+
+            MAGISKBOOT_OK=false
+            if [ -n "$MAGISKBOOT_DLINK" ] && [ "$MAGISKBOOT_DLINK" != "null" ]; then
+              echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
+              if aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z 2>/dev/null; then
+                7z e magiskboot.7z native/out/x86_64/magiskboot -omagiskboot/ 2>/dev/null || true
+                if [ -f "magiskboot/magiskboot" ]; then
+                  chmod +x magiskboot/magiskboot
+                  MAGISKBOOT_OK=true
+                fi
+                rm -f magiskboot.7z
+              fi
+            fi
+
+            # === Enforcing boot.img (128MB) ===
+            echo "=== Generating boot.img (Enforcing) ==="
+            cp "$BOOT_IMG" "dist/${BASE_NAME}.img"
+            truncate -s 134217728 "dist/${BASE_NAME}.img"
+            echo "Enforcing: $(du -h dist/${BASE_NAME}.img | cut -f1)"
+
+            # === Permissive boot.img (128MB) ===
+            if [ "$MAGISKBOOT_OK" = "true" ]; then
+              echo "=== Generating boot.img (Permissive SELinux) ==="
+              cd magiskboot
+              cp "$GITHUB_WORKSPACE/$BOOT_IMG" boot.img
+              ./magiskboot unpack -h boot.img
+              if [ -f "header" ]; then
+                sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
+                ./magiskboot repack boot.img
+                truncate -s 134217728 new-boot.img
+                mv new-boot.img "$GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img"
+                echo "Permissive: $(du -h $GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img | cut -f1)"
+              else
+                echo "WARNING: magiskboot unpack did not produce header, copying enforcing as permissive"
+                cp "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img" "$GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img"
+              fi
+              cd $GITHUB_WORKSPACE
+            else
+              echo "WARNING: magiskboot not available, copying enforcing as permissive"
+              cp "dist/${BASE_NAME}.img" "dist/${BASE_NAME}-Permissive.img"
+            fi
+
+            echo "BOOTIMG_OK=true" >> $GITHUB_ENV
+            echo "=== Boot images created ==="
+            ls -lah dist/*.img
           fi
-          echo "Base boot.img size: $(du -h $STOCK_BOOT | cut -f1)"
-
-          # === Enforcing boot.img (128MB) ===
-          echo "=== Generating boot.img (Enforcing) ==="
-          cp "$STOCK_BOOT" "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img"
-          truncate -s 134217728 "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img"
-
-          # === Permissive boot.img (128MB) ===
-          echo "=== Repacking boot.img (Permissive SELinux) ==="
-          cp "$STOCK_BOOT" .
-          $MAGISKBOOT unpack -h boot.img
-          sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
-          $MAGISKBOOT repack boot.img
-          truncate -s 134217728 new-boot.img
-          mv new-boot.img "$GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img"
-
-          echo "BOOTIMG_OK=true" >> $GITHUB_ENV
-          echo "=== Boot images created ==="
-          ls -lah $GITHUB_WORKSPACE/dist/*.img
 
       # ===== ANYKERNEL3 ZIP =====
       - name: Package AnyKernel3
@@ -374,8 +422,6 @@ jobs:
             cp $GITHUB_WORKSPACE/dist/Image.lz4 .
           fi
 
-          STAG=""
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           zip -r9 "$GITHUB_WORKSPACE/dist/${ZIP_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
       - name: Copy Output
@@ -388,6 +434,7 @@ jobs:
           cp dist/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
           # Raw kernel images
           cp dist/Image* out/ 2>/dev/null || true
+          cp dist/boot.img out/ 2>/dev/null || true
           echo "=== Final output ==="
           ls -lah out/
 

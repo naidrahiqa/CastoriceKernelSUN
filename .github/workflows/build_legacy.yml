@@ -46,7 +46,9 @@ jobs:
 
       - name: Setup Swap
         run: |
-          sudo fallocate -l 16G /mnt/swapfile
+          sudo swapoff /mnt/swapfile 2>/dev/null || true
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile
           sudo mkswap /mnt/swapfile
           sudo swapon /mnt/swapfile
@@ -61,7 +63,8 @@ jobs:
             optipng maven libssl-dev pwgen libxml-sax-base-perl libxml-simple-perl \
             libc6-dev-i386 lib32ncurses-dev libncurses-dev libx11-dev lib32z-dev \
             libstdc++6 lib32stdc++6 libgl1-mesa-dev xsltproc unzip gzip \
-            device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev -y
+            device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev \
+            jq libyaml-dev -y
 
       # ===== TOOLCHAIN =====
       - name: Download ZyClang (Latest)
@@ -270,7 +273,7 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Fix modern Clang -Werror warnings (like zram_drv.c missing (void) parameter)
+          # Fix modern Clang -Werror warnings
           echo "Stripping -Werror from all Makefiles to prevent build drops..."
           find . -type f -name "Makefile" -exec sed -i 's/-Werror\b//g' {} +
           
@@ -279,6 +282,12 @@ jobs:
             echo "Patching zram_drv.c strict-prototypes..."
             sed -i 's/zram_debugfs_init()/zram_debugfs_init(void)/g' drivers/block/zram/zram_drv.c
             sed -i 's/zram_debugfs_destroy()/zram_debugfs_destroy(void)/g' drivers/block/zram/zram_drv.c
+          fi
+
+          # Fix dtc build: ensure libyaml headers are found
+          if [ -f "scripts/dtc/Makefile" ]; then
+            echo "Ensuring dtc can find system libyaml..."
+            sed -i 's/-Werror//g' scripts/dtc/Makefile
           fi
 
       # ===== BUILD =====
@@ -334,29 +343,10 @@ jobs:
           echo "BUILD SUCCESS: $IMAGE"
           ls -lah $IMAGE
 
-      # ===== MAGISKBOOT — 128MB BOOT.IMG REPACK =====
-      - name: Setup Magiskboot
+      # ===== ANYKERNEL3 ZIP =====
+      - name: Package AnyKernel3
         run: |
           cd $GITHUB_WORKSPACE
-          mkdir -p magiskboot
-
-          # Download magiskboot binary
-          MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' | head -n1)
-
-          echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
-          aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
-          7z e magiskboot.7z native/out/x86_64/magiskboot -omagiskboot/
-          chmod +x magiskboot/magiskboot
-          rm -f magiskboot.7z
-          echo "Magiskboot ready"
-
-      - name: Repack Boot Image (128MB - Dual Slot A/B)
-        run: |
-          cd $GITHUB_WORKSPACE/magiskboot
-          MAGISKBOOT="$GITHUB_WORKSPACE/magiskboot/magiskboot"
-          IMAGE="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
-          DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
-          STOCK_BOOT="$GITHUB_WORKSPACE/boot.img"
 
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
@@ -365,56 +355,6 @@ jobs:
           BASE_NAME="Castorice-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-          # Verify stock boot.img exists (128MB from repo)
-          if [ ! -f "$STOCK_BOOT" ] || [ ! -s "$STOCK_BOOT" ]; then
-            echo "WARNING: Stock boot.img not found in repo root!"
-            echo "Skipping boot.img repack. AnyKernel3 zip will still be generated."
-            exit 0
-          fi
-          echo "Stock boot.img size: $(du -h $STOCK_BOOT | cut -f1)"
-
-          # Unpack stock boot.img
-          cp "$STOCK_BOOT" .
-          $MAGISKBOOT unpack -h boot.img
-          echo "=== Stock boot.img header ==="
-          cat header 2>/dev/null || true
-
-          # Replace kernel with our built Image.gz-dtb
-          cp "$IMAGE" .
-          $MAGISKBOOT split Image.gz-dtb
-          rm -f Image.gz-dtb
-
-          # Use DTB from build if available
-          if [ -f "$DTB" ]; then
-            echo "Using DTB from build output"
-            cp "$DTB" ./dtb
-          elif [ -f kernel_dtb ]; then
-            echo "Using DTB from split"
-            mv kernel_dtb ./dtb
-          fi
-
-          ls -lah
-
-          # === Enforcing boot.img (128MB) ===
-          echo "=== Repacking boot.img (Enforcing) ==="
-          $MAGISKBOOT repack boot.img
-          mv new-boot.img "$GITHUB_WORKSPACE/${BASE_NAME}.img"
-          echo "Enforcing boot.img: $(du -h $GITHUB_WORKSPACE/${BASE_NAME}.img | cut -f1)"
-
-          # === Permissive boot.img (128MB) ===
-          echo "=== Repacking boot.img (Permissive SELinux) ==="
-          sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
-          $MAGISKBOOT repack boot.img
-          mv new-boot.img "$GITHUB_WORKSPACE/${BASE_NAME}-Permissive.img"
-          echo "Permissive boot.img: $(du -h $GITHUB_WORKSPACE/${BASE_NAME}-Permissive.img | cut -f1)"
-
-          echo "=== Boot images created ==="
-          ls -lah $GITHUB_WORKSPACE/*.img
-
-      # ===== ANYKERNEL3 ZIP =====
-      - name: Package AnyKernel3
-        run: |
-          cd $GITHUB_WORKSPACE
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
@@ -445,14 +385,11 @@ jobs:
           # Copy kernel image
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb .
 
-          zip -r9 "$GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
+          zip -r9 "$GITHUB_WORKSPACE/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
       - name: Prepare Output
         run: |
           mkdir -p out
-          # boot.img variants (128MB, ready to fastboot flash)
-          cp $GITHUB_WORKSPACE/${ZIP_NAME}.img out/ 2>/dev/null || true
-          cp $GITHUB_WORKSPACE/${ZIP_NAME}-Permissive.img out/ 2>/dev/null || true
           # AnyKernel3 zip (flash via recovery)
           cp $GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
           # Raw kernel image
@@ -483,20 +420,17 @@ jobs:
             - **KernelSU-Next**: v${{ env.KSU_VERSION }} (Legacy Manual Hook)
             - **SUSFS**: ${{ inputs.enable_susfs }}
             - **Toolchain**: ${{ env.CLANG_VERSION }}
-            - **Boot Partition**: 128MB (A/B dual slot)
             
             ### Downloads
-            | File | Method | SELinux |
-            |------|--------|---------|
-            | `*.img` | `fastboot flash boot` | Enforcing |
-            | `*-Permissive.img` | `fastboot flash boot` | Permissive |
-            | `*-AnyKernel3.zip` | Flash via Recovery | Enforcing |
+            | File | Method |
+            |------|--------|
+            | `*-AnyKernel3.zip` | Flash via Recovery |
+            | `Image.gz-dtb` | Raw kernel image |
             
             ### Compatibility
             - ✅ MIUI 14.x (Android 13)
             - ✅ HyperOS 1.x (Android 14)
             - ✅ LCD 0c/0d: **FIXED** (touchscreen safe)
-            - ✅ A/B dual slot: boot.img = 128MB
             
             ### Performance
             - schedutil governor + EAS
@@ -507,7 +441,6 @@ jobs:
             > ⚠️ **NOT compatible** with HyperOS 2.x (Android 15). Use GKI 6.6 version instead.
           files: |
             out/*.zip
-            out/*.img
             out/Image.gz-dtb
           draft: false
           prerelease: false
