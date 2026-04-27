@@ -1,0 +1,408 @@
+name: Build Castorice Legacy (4.19)
+
+on:
+  workflow_dispatch:
+    inputs:
+      enable_susfs:
+        description: "Enable SUSFS"
+        required: true
+        type: boolean
+        default: true
+      enable_ksu:
+        description: "Enable KernelSU-Next"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_NAME: Castorice
+  DEVICE_CODE: fire
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: "Castorice Legacy 4.19"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Maximize Disk Space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo rm -rf /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
+          sudo rm -rf /usr/local/share/chromium /usr/local/share/powershell
+          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel || true
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          echo "=== After cleanup ==="
+          df -h /
+
+      - name: Setup Swap
+        run: |
+          sudo fallocate -l 16G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aria2 git ccache automake flex lzop bison gperf \
+            build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 \
+            libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make \
+            optipng maven libssl-dev pwgen libxml-sax-base-perl libxml-simple-perl \
+            libc6-dev-i386 lib32ncurses-dev libncurses-dev libx11-dev lib32z-dev \
+            libstdc++6 lib32stdc++6 libgl1-mesa-dev xsltproc unzip gzip \
+            device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev -y
+
+      # ===== TOOLCHAIN =====
+      - name: Download ZyClang (Latest)
+        run: |
+          ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
+          ZYASSET=$(curl -sL https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG | grep -oP '[^/"]+\.tar.gz' | head -n1)
+          ZYCLANG_DLINK="https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
+
+          echo "Downloading: $ZYCLANG_DLINK"
+          mkdir -p $GITHUB_WORKSPACE/ZyClang
+          aria2c -s16 -x16 -k1M "$ZYCLANG_DLINK" -o ZyClang.tar.gz
+          tar -C $GITHUB_WORKSPACE/ZyClang/ -zxf ZyClang.tar.gz
+          rm -f ZyClang.tar.gz
+
+          CLANG_VERSION=$($GITHUB_WORKSPACE/ZyClang/bin/clang --version | head -n 1)
+          LLD_VERSION=$($GITHUB_WORKSPACE/ZyClang/bin/ld.lld --version | head -n 1)
+          echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
+          echo "LLD_VERSION=$LLD_VERSION" >> $GITHUB_ENV
+          echo "Clang: $CLANG_VERSION"
+          echo "LLD: $LLD_VERSION"
+
+      # ===== KERNEL SOURCE =====
+      - name: Clone Kernel Source (Xiaomi fire-t-oss)
+        run: |
+          git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
+            -b fire-t-oss $GITHUB_WORKSPACE/kernel
+          cd $GITHUB_WORKSPACE/kernel
+          KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)
+          echo "KERNEL_HEAD_HASH=$KERNEL_HEAD_HASH" >> $GITHUB_ENV
+          echo "Kernel HEAD: $KERNEL_HEAD_HASH"
+
+      # ===== KERNELSU-NEXT (LEGACY) =====
+      - name: Setup KernelSU-Next (Legacy)
+        if: ${{ inputs.enable_ksu == true }}
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          curl -LSs "https://raw.githubusercontent.com/sidex15/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
+
+          KSU_DIR=""
+          if [ -d "KernelSU-Next" ]; then
+            KSU_DIR="KernelSU-Next"
+          elif [ -d "KernelSU" ]; then
+            KSU_DIR="KernelSU"
+          else
+            echo "ERROR: KernelSU directory not found!"
+            exit 1
+          fi
+
+          KSU_GIT_VERSION=$(cd $KSU_DIR && git rev-list --count legacy)
+          KERNELSU_VERSION=$(($KSU_GIT_VERSION + 30000 + 60))
+          echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
+          echo "KSU_VERSION=$KERNELSU_VERSION" >> $GITHUB_ENV
+          echo "KernelSU-Next Legacy installed - version $KERNELSU_VERSION"
+
+      # ===== SUSFS =====
+      - name: Setup SUSFS (kernel-4.19)
+        if: ${{ inputs.enable_susfs == true }}
+        run: |
+          cd $GITHUB_WORKSPACE
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.19
+
+          cd $GITHUB_WORKSPACE/kernel
+          # Copy SUSFS source files
+          cp -v ../susfs4ksu/kernel_patches/fs/susfs.c fs/ || true
+          cp -v ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ || true
+          cp -rv ../susfs4ksu/kernel_patches/fs/sus_* fs/ || true
+          cp -rv ../susfs4ksu/kernel_patches/include/linux/sus_* include/linux/ || true
+          echo "SUSFS source files copied"
+
+      # ===== PATCHES =====
+      - name: Clone Reference Patches
+        run: |
+          cd $GITHUB_WORKSPACE
+          git clone --depth=1 https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire.git ref_patches
+          echo "=== Available patches ==="
+          ls -la ref_patches/patchs/ || true
+
+      - name: Apply Patches
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+
+          # Apply KSU hooks for 4.19 (manual hook, NO kprobes)
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            echo "Applying KSU hooks patch..."
+            patch -p1 --forward < ../ref_patches/patchs/ksu_hooks_4.19.patch || echo "WARN: ksu_hooks patch had issues"
+
+            echo "Applying hide KSU patch..."
+            patch -p1 --forward < ../ref_patches/patchs/69_hide_ksu.patch || echo "WARN: hide_ksu patch had issues"
+          fi
+
+          # Fix kernel genheaders (build fix)
+          echo "Applying genheaders fix..."
+          patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || echo "WARN: genheaders patch had issues"
+
+          # SUSFS kernel integration patch
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
+            echo "Applying SUSFS kernel patch..."
+            patch -p1 --forward < ../ref_patches/patchs/50_add_susfs_in_kernel-4.19.patch || echo "WARN: susfs patch had issues"
+
+            # Fix SUSFS format strings for 4.19
+            sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
+            sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
+
+            # Fix task_work_add compatibility
+            if [ -d "KernelSU-Next" ]; then
+              sed -i "/task_work_add(tsk, cb, TWA_RESUME);/c\\
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\\
+          \\ttask_work_add(tsk, cb, TWA_RESUME);\\
+          #else\\
+          \\ttask_work_add(tsk, cb, true);\\
+          #endif" ./KernelSU-Next/kernel/allowlist.c 2>/dev/null || true
+            fi
+          fi
+
+          # ===== LCD 0c/0d FIX (CRITICAL FOR TOUCHSCREEN) =====
+          echo "Applying LCM fix (LCD 0c/0d touchscreen fix)..."
+          patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch || echo "WARN: fix_lcm patch had issues"
+
+          echo "Applying primary display fix..."
+          patch -p1 --forward < ../ref_patches/primary_display_fix.patch || echo "WARN: primary_display_fix patch had issues"
+
+          echo "All patches applied"
+
+      # ===== DEFCONFIG =====
+      - name: Configure Kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+          DEFCONFIG="arch/arm64/configs/fire_defconfig"
+
+          # Use reference fire_defconfig as base (stock Xiaomi)
+          if [ -f "../ref_patches/fire_defconfig" ]; then
+            echo "Using reference fire_defconfig..."
+            cp ../ref_patches/fire_defconfig $DEFCONFIG
+          fi
+
+          # KernelSU configs
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            echo "" >> $DEFCONFIG
+            echo "# KernelSU-Next (Legacy Manual Hook)" >> $DEFCONFIG
+            echo "CONFIG_KSU=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_KPROBES_HOOK=n" >> $DEFCONFIG
+            echo "CONFIG_KSU_MANUAL_HOOK=y" >> $DEFCONFIG
+          fi
+
+          # SUSFS configs
+          if [ "${{ inputs.enable_susfs }}" = "true" ] && [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            echo "" >> $DEFCONFIG
+            echo "# SUSFS" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
+          fi
+
+          # Networking (stable performance)
+          echo "" >> $DEFCONFIG
+          echo "# Networking Performance" >> $DEFCONFIG
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
+          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
+          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
+
+          # IPSet Support
+          echo "" >> $DEFCONFIG
+          echo "# IPSet" >> $DEFCONFIG
+          echo "CONFIG_IP_SET=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_MAX=65534" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_BITMAP_IP=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_BITMAP_IPMAC=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_BITMAP_PORT=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_IP=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_IPMARK=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_IPPORT=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_IPPORTIP=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_IPPORTNET=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_IPMAC=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_MAC=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_NETPORTNET=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_NET=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_NETNET=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_NETPORT=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> $DEFCONFIG
+          echo "CONFIG_IP_SET_LIST_SET=y" >> $DEFCONFIG
+
+          # Branding
+          echo "" >> $DEFCONFIG
+          echo "# Branding" >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+
+          echo "=== Defconfig tail ==="
+          tail -40 $DEFCONFIG
+
+      # ===== BUILD =====
+      - name: Build Kernel
+        run: |
+          cd $GITHUB_WORKSPACE/kernel
+
+          export KBUILD_BUILD_USER=Castorice
+          export KBUILD_BUILD_HOST=naidrahiqa
+          export KBUILD_BUILD_VERSION=1
+          export PATH="$GITHUB_WORKSPACE/ZyClang/bin:$PATH"
+
+          ARGS="ARCH=arm64 \
+            SUBARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CC=clang \
+            NM=llvm-nm \
+            CXX=clang++ \
+            AR=llvm-ar \
+            LD=ld.lld \
+            STRIP=llvm-strip \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            OBJSIZE=llvm-size \
+            READELF=llvm-readelf \
+            HOSTAR=llvm-ar \
+            HOSTLD=ld.lld \
+            HOSTCC=clang \
+            HOSTCXX=clang++ \
+            LLVM=1"
+
+          # Generate .config
+          make O=out $ARGS fire_defconfig
+
+          KERNEL_VERSION=$(make O=out $ARGS kernelversion 2>/dev/null | grep "4.19")
+          echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+          echo "=== Building Linux $KERNEL_VERSION ==="
+
+          # Build
+          make O=out $ARGS -j"$(nproc --all)" 2>&1 | tee build.log
+
+          # Verify
+          IMAGE="out/arch/arm64/boot/Image.gz-dtb"
+          if [ ! -f "$IMAGE" ]; then
+            echo "BUILD FAILED! Image.gz-dtb not found"
+            tail -100 build.log
+            exit 1
+          fi
+          echo "BUILD SUCCESS: $IMAGE"
+          ls -lah $IMAGE
+
+      # ===== PACKAGE =====
+      - name: Package AnyKernel3
+        run: |
+          cd $GITHUB_WORKSPACE
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          cd ak3
+
+          # Configure anykernel.sh for fire
+          cat > anykernel.sh << 'AKEOF'
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+          properties() { '
+          kernel.string=Castorice Legacy Kernel by naidrahiqa
+          do.devicecheck=1
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=fire
+          device.name2=Redmi 12
+          supported.versions=13-14
+          '; }
+          block=boot;
+          is_slot_device=auto;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          AKEOF
+
+          # Copy kernel image
+          cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb .
+
+          STAG=""
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
+          KSUTAG=""
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU_Next"; fi
+
+          ZIP_NAME="Castorice-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
+          zip -r9 "$GITHUB_WORKSPACE/${ZIP_NAME}.zip" . -x ".git*" "*.md" "LICENSE"
+          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+
+      - name: Prepare Output
+        run: |
+          mkdir -p out
+          cp $GITHUB_WORKSPACE/*.zip out/ 2>/dev/null || true
+          cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb out/ 2>/dev/null || true
+          ls -la out/
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: "Castorice-Legacy-4.19-fire"
+          path: out/*
+          if-no-files-found: warn
+          compression-level: 9
+          retention-days: 30
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v4.19-castorice-legacy-${{ github.run_number }}"
+          name: "Castorice Legacy ${{ env.KERNEL_VERSION }} - Redmi 12 Fire"
+          body: |
+            ## ⚡ Castorice Legacy Kernel for Redmi 12 (fire)
+            
+            ### Kernel Info
+            - **Kernel**: ${{ env.KERNEL_VERSION }}-Castorice
+            - **Type**: Legacy (non-GKI)
+            - **KernelSU-Next**: v${{ env.KSU_VERSION }} (Legacy Manual Hook)
+            - **SUSFS**: ${{ inputs.enable_susfs }}
+            - **Toolchain**: ${{ env.CLANG_VERSION }}
+            
+            ### Compatibility
+            - ✅ MIUI 14.x (Android 13)
+            - ✅ HyperOS 1.x (Android 14)
+            - ✅ LCD 0c/0d: **FIXED** (touchscreen safe)
+            
+            ### Performance
+            - schedutil governor + EAS
+            - TCP BBR congestion control
+            - IPSet support
+            - CFQ I/O scheduler
+            
+            > ⚠️ **NOT compatible** with HyperOS 2.x (Android 15). Use GKI 6.6 version instead.
+          files: |
+            out/*.zip
+            out/Image.gz-dtb
+          draft: false
+          prerelease: false

@@ -1,12 +1,12 @@
-name: Build Castorice Kernel
+name: Build Castorice GKI (6.6)
 
 on:
   workflow_dispatch:
     inputs:
       kernel_sublevel:
-        description: "Kernel sublevel (58 = match stock 6.6.58)"
+        description: "Kernel sublevel (135 = latest LTS 6.6.135)"
         required: true
-        default: "58"
+        default: "135"
       enable_susfs:
         description: "Enable SUSFS"
         required: true
@@ -24,7 +24,7 @@ env:
 
 jobs:
   build:
-    name: "Castorice 6.6.${{ inputs.kernel_sublevel }}"
+    name: "Castorice GKI 6.6.${{ inputs.kernel_sublevel }}"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -110,7 +110,7 @@ jobs:
           cp -rv ../susfs4ksu/kernel_patches/fs/sus_* fs/ || true
           cp -rv ../susfs4ksu/kernel_patches/include/linux/sus_* include/linux/ || true
 
-          # Apply kernel patches (these add Kconfig entries)
+          # Apply kernel patches
           PATCH_APPLIED=false
           for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
             if [ -f "$patch" ]; then
@@ -118,7 +118,7 @@ jobs:
               if patch -p1 --forward < "$patch"; then
                 PATCH_APPLIED=true
               else
-                echo "WARNING: Patch $patch had conflicts, checking .rej files..."
+                echo "WARNING: Patch $patch had conflicts"
                 find . -name "*.rej" -exec echo "REJECT: {}" \; -exec cat {} \;
               fi
             fi
@@ -134,29 +134,25 @@ jobs:
             fi
           done
 
-          # Verify SUSFS Kconfig entries exist
-          echo "=== Checking SUSFS Kconfig ==="
+          # Verify SUSFS Kconfig
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
             echo "SUSFS_KCONFIG_OK=true" >> $GITHUB_ENV
-            echo "SUSFS Kconfig entries found!"
           else
             echo "SUSFS_KCONFIG_OK=false" >> $GITHUB_ENV
-            echo "WARNING: SUSFS Kconfig entries NOT found. SUSFS configs will be skipped."
+            echo "WARNING: SUSFS Kconfig entries NOT found"
           fi
-
-          echo "SUSFS setup complete"
 
       - name: Configure Kernel
         run: |
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
 
-          # Add KSU config (setup.sh adds Kconfig entry)
+          # KernelSU
           echo "" >> $DEFCONFIG
           echo "# KernelSU" >> $DEFCONFIG
           echo "CONFIG_KSU=y" >> $DEFCONFIG
 
-          # Add SUSFS configs ONLY if Kconfig entries were added by patches
+          # SUSFS
           if [ "${{ env.SUSFS_KCONFIG_OK }}" = "true" ] && [ "${{ inputs.enable_susfs }}" = "true" ]; then
             echo "" >> $DEFCONFIG
             echo "# SUSFS" >> $DEFCONFIG
@@ -176,7 +172,7 @@ jobs:
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
           fi
 
-          # Networking configs (these exist in mainline Kconfig)
+          # Networking (stable performance)
           echo "" >> $DEFCONFIG
           echo "# Networking" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
@@ -184,7 +180,7 @@ jobs:
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
 
-          # Kernel branding
+          # Branding
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
           echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
@@ -197,38 +193,31 @@ jobs:
         run: |
           cd kernel/common
 
-          # === Remove protected exports ===
+          # Remove protected exports
           rm -rf android/abi_gki_protected_exports_* || true
-
           if [ -f "BUILD.bazel" ]; then
-            # Remove protected exports references
             perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//' BUILD.bazel
             sed -i '/abi_gki_protected_exports/d' BUILD.bazel
             sed -i '/protected_exports/d' BUILD.bazel
-
-            # Remove defconfig check (critical - prevents config mismatch errors)
             sed -i '/check_defconfig/d' BUILD.bazel
           fi
 
-          # Clear protected_modules in modules.bzl
           if [ -f "modules.bzl" ] && grep -q 'protected_modules = ' modules.bzl; then
             sed -i 's/protected_modules = \[.*\]/protected_modules = []/' modules.bzl
           fi
 
-          # Remove defconfig check from build configs
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
               sed -i '/check_defconfig/d' "$f"
             fi
           done
 
-          # Bypass ABI protection check
           PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
           if [ -f "$PROT_SCRIPT" ]; then
             perl -i -pe 's/^(\s*)return 1$/$1return 0/g' "$PROT_SCRIPT"
           fi
 
-          # === Clean dirty flags ===
+          # Clean dirty flags
           if [ -f "../build/kernel/kleaf/impl/stamp.bzl" ]; then
             sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' ../build/kernel/kleaf/impl/stamp.bzl
           fi
@@ -239,27 +228,19 @@ jobs:
 
       - name: Commit All Changes
         run: |
-          # CRITICAL: Bazel uses git to track source files in sandbox.
-          # All modifications MUST be committed before building.
           cd kernel/common
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Castorice: prepare kernel for build" || true
+          git commit -m "Castorice: prepare GKI kernel for build" || true
 
       - name: Build Kernel
         run: |
           cd kernel
-
-          # Build using the official Kleaf method from KernelSU docs:
-          # tools/bazel build --config=fast //common:kernel_aarch64_dist
-          # --config=fast uses LTO=none for faster builds
-          # NO --defconfig_fragment (we modified gki_defconfig directly)
-          echo "=== Starting Castorice kernel build ==="
+          echo "=== Starting Castorice GKI kernel build ==="
           tools/bazel build \
             --config=fast \
             //common:kernel_aarch64_dist 2>&1
-
           echo "=== Build completed ==="
         env:
           SOURCE_DATE_EPOCH: "0"
@@ -269,13 +250,11 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/dist
           cd kernel
 
-          # Method 1: Use bazel run to extract to dist_dir
           tools/bazel run \
             --config=fast \
             //common:kernel_aarch64_dist \
             -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
 
-          # Method 2: Find in bazel-out if method 1 failed
           if [ ! -f "$GITHUB_WORKSPACE/dist/Image" ] && [ ! -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
             echo "Searching bazel-out for kernel images..."
             find bazel-out -name "Image" -o -name "Image.gz" -o -name "Image.lz4" 2>/dev/null | head -5 | while read img; do
@@ -304,27 +283,28 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
-          # Write anykernel.sh
-          echo '# AnyKernel3 Ramdisk Mod Script' > anykernel.sh
-          echo '# osm0sis @ xda-developers' >> anykernel.sh
-          echo "properties() { '" >> anykernel.sh
-          echo 'kernel.string=Castorice Kernel by naidrahiqa' >> anykernel.sh
-          echo 'do.devicecheck=0' >> anykernel.sh
-          echo 'do.modules=0' >> anykernel.sh
-          echo 'do.systemless=1' >> anykernel.sh
-          echo 'do.cleanup=1' >> anykernel.sh
-          echo 'do.cleanuponabort=0' >> anykernel.sh
-          echo 'device.name1=fire' >> anykernel.sh
-          echo 'device.name2=Redmi 12' >> anykernel.sh
-          echo 'supported.versions=15' >> anykernel.sh
-          echo "'; }" >> anykernel.sh
-          echo 'block=boot;' >> anykernel.sh
-          echo 'is_slot_device=auto;' >> anykernel.sh
-          echo 'ramdisk_compression=auto;' >> anykernel.sh
-          echo 'patch_vbmeta_flag=auto;' >> anykernel.sh
-          echo '. tools/ak3-core.sh;' >> anykernel.sh
-          echo 'dump_boot;' >> anykernel.sh
-          echo 'write_boot;' >> anykernel.sh
+          cat > anykernel.sh << 'AKEOF'
+          # AnyKernel3 Ramdisk Mod Script
+          # osm0sis @ xda-developers
+          properties() { '
+          kernel.string=Castorice GKI Kernel by naidrahiqa
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=fire
+          device.name2=Redmi 12
+          supported.versions=15
+          '; }
+          block=boot;
+          is_slot_device=auto;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          AKEOF
 
           if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
             cp $GITHUB_WORKSPACE/dist/Image.gz .
@@ -336,11 +316,11 @@ jobs:
 
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
-          ZIP="Castorice-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
+          ZIP="Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
           zip -r9 "$GITHUB_WORKSPACE/dist/${ZIP}.zip" . -x ".git*" "*.md" "LICENSE"
           echo "ZIP_NAME=${ZIP}" >> $GITHUB_ENV
 
-      - name: Copy Boot Images
+      - name: Copy Output
         run: |
           mkdir -p out
           cp dist/*.img out/ 2>/dev/null || true
@@ -351,7 +331,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: "Castorice-6.6.${{ inputs.kernel_sublevel }}-fire"
+          name: "Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-fire"
           path: out/*
           if-no-files-found: warn
           compression-level: 9
@@ -360,17 +340,31 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v6.6.${{ inputs.kernel_sublevel }}-castorice-${{ github.run_number }}"
-          name: "Castorice 6.6.${{ inputs.kernel_sublevel }} - Redmi 12 Fire"
+          tag_name: "v6.6.${{ inputs.kernel_sublevel }}-castorice-gki-${{ github.run_number }}"
+          name: "Castorice GKI 6.6.${{ inputs.kernel_sublevel }} - Redmi 12 Fire"
           body: |
-            ## Castorice Kernel for Redmi 12 (fire)
-            - Kernel: 6.6.${{ inputs.kernel_sublevel }}-Castorice
-            - KernelSU-Next v${{ env.KSU_VERSION }}
-            - SUSFS: ${{ inputs.enable_susfs }}
-            - LCD 0c/0d: Safe (vendor modules untouched)
+            ## ⚡ Castorice GKI Kernel for Redmi 12 (fire)
+            
+            ### Kernel Info
+            - **Kernel**: 6.6.${{ inputs.kernel_sublevel }}-Castorice
+            - **Type**: GKI (Generic Kernel Image)
+            - **KernelSU-Next**: v${{ env.KSU_VERSION }}
+            - **SUSFS**: ${{ inputs.enable_susfs }}
+            
+            ### Compatibility
+            - ✅ HyperOS 2.x (Android 15)
+            - ✅ LCD 0c/0d: **SAFE** (vendor modules untouched)
+            
+            ### Performance
+            - schedutil governor
+            - TCP BBR congestion control
+            - mq-deadline I/O scheduler
+            - LTO=fast build
+            
+            > ⚠️ **NOT compatible** with MIUI 14 / HyperOS 1.x. Use Legacy 4.19 version instead.
           files: |
             out/*.img
             out/*.zip
             out/Image*
           draft: false
-          prerelease: true
+          prerelease: false
