@@ -57,7 +57,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev \
             python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch \
-            binutils libncurses-dev pkg-config ninja-build zstd
+            binutils libncurses-dev pkg-config ninja-build zstd aria2 p7zip-full
 
       - name: Install repo tool
         run: |
@@ -278,6 +278,78 @@ jobs:
             strings dist/Image | grep "Linux version" | head -1
           fi
 
+      # ===== MAGISKBOOT — 128MB BOOT.IMG REPACK =====
+      - name: Setup Magiskboot
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p magiskboot
+
+          REPO=$(curl -sI https://github.com/xiaoxindada/magisk_bins_ndk/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
+          ASSET=$(curl -sL https://github.com/xiaoxindada/magisk_bins_ndk/releases/expanded_assets/$REPO | grep -oP '[^/"]+\.7z' | head -n1)
+          MAGISKBOOT_DLINK="https://github.com/xiaoxindada/magisk_bins_ndk/releases/latest/download/$ASSET"
+
+          echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
+          aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
+          7z e magiskboot.7z native/out/x86_64/magiskboot -omagiskboot/
+          chmod +x magiskboot/magiskboot
+          rm -f magiskboot.7z
+
+      - name: Repack Boot Image (128MB - Dual Slot A/B)
+        run: |
+          cd $GITHUB_WORKSPACE/magiskboot
+          MAGISKBOOT="$GITHUB_WORKSPACE/magiskboot/magiskboot"
+          STOCK_BOOT="$GITHUB_WORKSPACE/boot.img"
+
+          STAG=""
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
+          BASE_NAME="Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
+          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
+
+          if [ ! -f "$STOCK_BOOT" ]; then
+            echo "WARNING: Stock boot.img not found, skipping boot.img repack"
+            echo "BOOTIMG_OK=false" >> $GITHUB_ENV
+            exit 0
+          fi
+          echo "Stock boot.img size: $(du -h $STOCK_BOOT | cut -f1)"
+
+          # Find kernel image from build
+          KERNEL_IMG=""
+          for f in Image.gz Image Image.lz4; do
+            if [ -f "$GITHUB_WORKSPACE/dist/$f" ]; then
+              KERNEL_IMG="$GITHUB_WORKSPACE/dist/$f"
+              break
+            fi
+          done
+
+          if [ -z "$KERNEL_IMG" ]; then
+            echo "WARNING: No kernel image found, skipping boot.img repack"
+            echo "BOOTIMG_OK=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          cp "$STOCK_BOOT" .
+          $MAGISKBOOT unpack -h boot.img
+
+          # Replace kernel
+          cp "$KERNEL_IMG" ./kernel
+          ls -lah
+
+          # === Enforcing boot.img (128MB) ===
+          echo "=== Repacking boot.img (Enforcing) ==="
+          $MAGISKBOOT repack boot.img
+          mv new-boot.img "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img"
+
+          # === Permissive boot.img (128MB) ===
+          echo "=== Repacking boot.img (Permissive SELinux) ==="
+          sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
+          $MAGISKBOOT repack boot.img
+          mv new-boot.img "$GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img"
+
+          echo "BOOTIMG_OK=true" >> $GITHUB_ENV
+          echo "=== Boot images created ==="
+          ls -lah $GITHUB_WORKSPACE/dist/*.img
+
+      # ===== ANYKERNEL3 ZIP =====
       - name: Package AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
@@ -316,17 +388,20 @@ jobs:
 
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
-          ZIP="Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
-          zip -r9 "$GITHUB_WORKSPACE/dist/${ZIP}.zip" . -x ".git*" "*.md" "LICENSE"
-          echo "ZIP_NAME=${ZIP}" >> $GITHUB_ENV
+          zip -r9 "$GITHUB_WORKSPACE/dist/${ZIP_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
       - name: Copy Output
         run: |
           mkdir -p out
-          cp dist/*.img out/ 2>/dev/null || true
-          cp dist/*.zip out/ 2>/dev/null || true
+          # boot.img variants (128MB, ready to fastboot flash)
+          cp dist/${ZIP_NAME}.img out/ 2>/dev/null || true
+          cp dist/${ZIP_NAME}-Permissive.img out/ 2>/dev/null || true
+          # AnyKernel3 zip (flash via recovery)
+          cp dist/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
+          # Raw kernel images
           cp dist/Image* out/ 2>/dev/null || true
-          ls -la out/
+          echo "=== Final output ==="
+          ls -lah out/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -350,10 +425,19 @@ jobs:
             - **Type**: GKI (Generic Kernel Image)
             - **KernelSU-Next**: v${{ env.KSU_VERSION }}
             - **SUSFS**: ${{ inputs.enable_susfs }}
+            - **Boot Partition**: 128MB (A/B dual slot)
+            
+            ### Downloads
+            | File | Method | SELinux |
+            |------|--------|---------|
+            | `*.img` | `fastboot flash boot` | Enforcing |
+            | `*-Permissive.img` | `fastboot flash boot` | Permissive |
+            | `*-AnyKernel3.zip` | Flash via Recovery | Enforcing |
             
             ### Compatibility
             - ✅ HyperOS 2.x (Android 15)
             - ✅ LCD 0c/0d: **SAFE** (vendor modules untouched)
+            - ✅ A/B dual slot: boot.img = 128MB
             
             ### Performance
             - schedutil governor

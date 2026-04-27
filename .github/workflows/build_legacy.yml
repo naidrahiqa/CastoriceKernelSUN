@@ -315,14 +315,93 @@ jobs:
           echo "BUILD SUCCESS: $IMAGE"
           ls -lah $IMAGE
 
-      # ===== PACKAGE =====
+      # ===== MAGISKBOOT — 128MB BOOT.IMG REPACK =====
+      - name: Setup Magiskboot
+        run: |
+          cd $GITHUB_WORKSPACE
+          mkdir -p magiskboot
+
+          # Download magiskboot binary
+          REPO=$(curl -sI https://github.com/xiaoxindada/magisk_bins_ndk/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
+          ASSET=$(curl -sL https://github.com/xiaoxindada/magisk_bins_ndk/releases/expanded_assets/$REPO | grep -oP '[^/"]+\.7z' | head -n1)
+          MAGISKBOOT_DLINK="https://github.com/xiaoxindada/magisk_bins_ndk/releases/latest/download/$ASSET"
+
+          echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
+          aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
+          7z e magiskboot.7z native/out/x86_64/magiskboot -omagiskboot/
+          chmod +x magiskboot/magiskboot
+          rm -f magiskboot.7z
+          echo "Magiskboot ready"
+
+      - name: Repack Boot Image (128MB - Dual Slot A/B)
+        run: |
+          cd $GITHUB_WORKSPACE/magiskboot
+          MAGISKBOOT="$GITHUB_WORKSPACE/magiskboot/magiskboot"
+          IMAGE="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
+          DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
+          STOCK_BOOT="$GITHUB_WORKSPACE/boot.img"
+
+          STAG=""
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
+          KSUTAG=""
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU_Next"; fi
+          BASE_NAME="Castorice-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
+          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
+
+          # Verify stock boot.img exists (128MB from repo)
+          if [ ! -f "$STOCK_BOOT" ]; then
+            echo "ERROR: Stock boot.img not found in repo root!"
+            echo "Please add a 128MB stock boot.img to the repo."
+            exit 1
+          fi
+          echo "Stock boot.img size: $(du -h $STOCK_BOOT | cut -f1)"
+
+          # Unpack stock boot.img
+          cp "$STOCK_BOOT" .
+          $MAGISKBOOT unpack -h boot.img
+          echo "=== Stock boot.img header ==="
+          cat header 2>/dev/null || true
+
+          # Replace kernel with our built Image.gz-dtb
+          cp "$IMAGE" .
+          $MAGISKBOOT split Image.gz-dtb
+          rm -f Image.gz-dtb
+
+          # Use DTB from build if available
+          if [ -f "$DTB" ]; then
+            echo "Using DTB from build output"
+            cp "$DTB" ./dtb
+          elif [ -f kernel_dtb ]; then
+            echo "Using DTB from split"
+            mv kernel_dtb ./dtb
+          fi
+
+          ls -lah
+
+          # === Enforcing boot.img (128MB) ===
+          echo "=== Repacking boot.img (Enforcing) ==="
+          $MAGISKBOOT repack boot.img
+          mv new-boot.img "$GITHUB_WORKSPACE/${BASE_NAME}.img"
+          echo "Enforcing boot.img: $(du -h $GITHUB_WORKSPACE/${BASE_NAME}.img | cut -f1)"
+
+          # === Permissive boot.img (128MB) ===
+          echo "=== Repacking boot.img (Permissive SELinux) ==="
+          sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
+          $MAGISKBOOT repack boot.img
+          mv new-boot.img "$GITHUB_WORKSPACE/${BASE_NAME}-Permissive.img"
+          echo "Permissive boot.img: $(du -h $GITHUB_WORKSPACE/${BASE_NAME}-Permissive.img | cut -f1)"
+
+          echo "=== Boot images created ==="
+          ls -lah $GITHUB_WORKSPACE/*.img
+
+      # ===== ANYKERNEL3 ZIP =====
       - name: Package AnyKernel3
         run: |
           cd $GITHUB_WORKSPACE
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
-          # Configure anykernel.sh for fire
+          # Configure anykernel.sh for fire (A/B dual slot)
           cat > anykernel.sh << 'AKEOF'
           # AnyKernel3 Ramdisk Mod Script
           # osm0sis @ xda-developers
@@ -349,21 +428,20 @@ jobs:
           # Copy kernel image
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb .
 
-          STAG=""
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
-          KSUTAG=""
-          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU_Next"; fi
-
-          ZIP_NAME="Castorice-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
-          zip -r9 "$GITHUB_WORKSPACE/${ZIP_NAME}.zip" . -x ".git*" "*.md" "LICENSE"
-          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
+          zip -r9 "$GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
       - name: Prepare Output
         run: |
           mkdir -p out
-          cp $GITHUB_WORKSPACE/*.zip out/ 2>/dev/null || true
+          # boot.img variants (128MB, ready to fastboot flash)
+          cp $GITHUB_WORKSPACE/${ZIP_NAME}.img out/ 2>/dev/null || true
+          cp $GITHUB_WORKSPACE/${ZIP_NAME}-Permissive.img out/ 2>/dev/null || true
+          # AnyKernel3 zip (flash via recovery)
+          cp $GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
+          # Raw kernel image
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb out/ 2>/dev/null || true
-          ls -la out/
+          echo "=== Final output ==="
+          ls -lah out/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -388,11 +466,20 @@ jobs:
             - **KernelSU-Next**: v${{ env.KSU_VERSION }} (Legacy Manual Hook)
             - **SUSFS**: ${{ inputs.enable_susfs }}
             - **Toolchain**: ${{ env.CLANG_VERSION }}
+            - **Boot Partition**: 128MB (A/B dual slot)
+            
+            ### Downloads
+            | File | Method | SELinux |
+            |------|--------|---------|
+            | `*.img` | `fastboot flash boot` | Enforcing |
+            | `*-Permissive.img` | `fastboot flash boot` | Permissive |
+            | `*-AnyKernel3.zip` | Flash via Recovery | Enforcing |
             
             ### Compatibility
             - ✅ MIUI 14.x (Android 13)
             - ✅ HyperOS 1.x (Android 14)
             - ✅ LCD 0c/0d: **FIXED** (touchscreen safe)
+            - ✅ A/B dual slot: boot.img = 128MB
             
             ### Performance
             - schedutil governor + EAS
@@ -403,6 +490,7 @@ jobs:
             > ⚠️ **NOT compatible** with HyperOS 2.x (Android 15). Use GKI 6.6 version instead.
           files: |
             out/*.zip
+            out/*.img
             out/Image.gz-dtb
           draft: false
           prerelease: false
