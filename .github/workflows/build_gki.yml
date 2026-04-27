@@ -12,11 +12,6 @@ on:
         required: true
         type: boolean
         default: true
-      stock_boot_url:
-        description: "Direct URL to stock boot.img (128MB)"
-        required: false
-        type: string
-        default: "https://github.com/naidrahiqa/CastoriceKernelSUN/releases/download/stock-assets/boot.img"
 
 permissions:
   contents: write
@@ -312,11 +307,6 @@ jobs:
             fi
           fi
 
-          if [ ! -f "$STOCK_BOOT" ] && [ -n "${{ inputs.stock_boot_url }}" ]; then
-            echo "Downloading stock boot.img from URL fallback..."
-            wget -qO "$STOCK_BOOT" "${{ inputs.stock_boot_url }}" || echo "Download failed"
-          fi
-
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           BASE_NAME="Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
@@ -329,36 +319,15 @@ jobs:
           fi
           echo "Base boot.img size: $(du -h $STOCK_BOOT | cut -f1)"
 
-          # Find kernel image from build
-          KERNEL_IMG=""
-          for f in Image.gz Image Image.lz4; do
-            if [ -f "$GITHUB_WORKSPACE/dist/$f" ]; then
-              KERNEL_IMG="$GITHUB_WORKSPACE/dist/$f"
-              break
-            fi
-          done
-
-          if [ -z "$KERNEL_IMG" ]; then
-            echo "WARNING: No kernel image found, skipping boot.img repack"
-            echo "BOOTIMG_OK=false" >> $GITHUB_ENV
-            exit 0
-          fi
-
-          cp "$STOCK_BOOT" .
-          $MAGISKBOOT unpack -h boot.img
-
-          # Replace kernel
-          cp "$KERNEL_IMG" ./kernel
-          ls -lah
-
           # === Enforcing boot.img (128MB) ===
-          echo "=== Repacking boot.img (Enforcing) ==="
-          $MAGISKBOOT repack boot.img
-          truncate -s 134217728 new-boot.img
-          mv new-boot.img "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img"
+          echo "=== Generating boot.img (Enforcing) ==="
+          cp "$STOCK_BOOT" "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img"
+          truncate -s 134217728 "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img"
 
           # === Permissive boot.img (128MB) ===
           echo "=== Repacking boot.img (Permissive SELinux) ==="
+          cp "$STOCK_BOOT" .
+          $MAGISKBOOT unpack -h boot.img
           sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
           $MAGISKBOOT repack boot.img
           truncate -s 134217728 new-boot.img
