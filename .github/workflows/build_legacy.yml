@@ -309,9 +309,10 @@ jobs:
             HOSTLD=ld.lld \
             HOSTCC=clang \
             HOSTCXX=clang++ \
-            LLVM=1 \
-            KCFLAGS=\"-Wno-error -Wno-strict-prototypes\" \
-            KBUILD_CFLAGS=\"-Wno-error -Wno-strict-prototypes\""
+            LLVM=1"
+
+          export KCFLAGS="-Wno-error -Wno-strict-prototypes"
+          export KBUILD_CFLAGS="-Wno-error -Wno-strict-prototypes"
 
           # Generate .config
           make O=out $ARGS fire_defconfig
