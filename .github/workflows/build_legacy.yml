@@ -128,10 +128,13 @@ jobs:
 
           cd $GITHUB_WORKSPACE/kernel
           # Copy SUSFS source files
-          cp -v ../susfs4ksu/kernel_patches/fs/susfs.c fs/ || true
-          cp -v ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ || true
-          cp -rv ../susfs4ksu/kernel_patches/fs/sus_* fs/ || true
-          cp -rv ../susfs4ksu/kernel_patches/include/linux/sus_* include/linux/ || true
+          echo "Copying SUSFS files..."
+          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
+          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          echo "Verifying copied files:"
+          ls -la include/linux/susfs*
+          ls -la fs/susfs*
           echo "SUSFS source files copied"
 
       # ===== PATCHES =====
@@ -284,10 +287,13 @@ jobs:
             sed -i 's/zram_debugfs_destroy()/zram_debugfs_destroy(void)/g' drivers/block/zram/zram_drv.c
           fi
 
-          # Fix dtc build: ensure libyaml headers are found
+          # Fix dtc build: ensure libyaml headers are found and fix yylloc multiple definition
           if [ -f "scripts/dtc/Makefile" ]; then
-            echo "Ensuring dtc can find system libyaml..."
+            echo "Ensuring dtc can compile properly..."
             sed -i 's/-Werror//g' scripts/dtc/Makefile
+          fi
+          if [ -f "scripts/dtc/dtc-lexer.lex.c_shipped" ]; then
+            sed -i 's/^YYLTYPE yylloc/extern YYLTYPE yylloc/g' scripts/dtc/dtc-lexer.lex.c_shipped
           fi
 
       # ===== BUILD =====
@@ -322,6 +328,8 @@ jobs:
 
           export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=return-type -Wno-error=unknown-warning-option -Wno-strict-prototypes"
           export KBUILD_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=return-type -Wno-error=unknown-warning-option -Wno-strict-prototypes"
+          export HOSTCFLAGS="-fcommon"
+          export KBUILD_HOSTCFLAGS="-fcommon"
 
           # Generate .config
           make O=out $ARGS fire_defconfig

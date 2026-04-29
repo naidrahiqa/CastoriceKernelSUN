@@ -122,10 +122,13 @@ jobs:
           cd common
 
           # Copy SUSFS source files
-          cp -v ../susfs4ksu/kernel_patches/fs/susfs.c fs/ || true
-          cp -v ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ || true
-          cp -rv ../susfs4ksu/kernel_patches/fs/sus_* fs/ || true
-          cp -rv ../susfs4ksu/kernel_patches/include/linux/sus_* include/linux/ || true
+          echo "Copying SUSFS files..."
+          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
+          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          echo "Verifying copied files:"
+          ls -la include/linux/susfs*
+          ls -la fs/susfs*
 
           # Apply kernel patches
           PATCH_APPLIED=false
@@ -259,6 +262,7 @@ jobs:
           cd kernel/common
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add include/linux/susfs* fs/susfs* || true
           git add -A
           git commit -m "Castorice: prepare GKI kernel for build" || true
 
