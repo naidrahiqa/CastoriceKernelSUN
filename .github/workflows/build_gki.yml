@@ -326,6 +326,33 @@ jobs:
             echo "=== Manual SUSFS fallback complete ==="
           fi
 
+          # ===== KSU API COMPATIBILITY SHIMS =====
+          # KernelSU-Next v3.x renamed APIs. SUSFS patches may use old names.
+          # Old: ksu_syscall_hook_manager_init/exit, ksu_late_loaded
+          # New: ksu_syscall_hook_init/exit, (removed ksu_late_loaded)
+          echo "=== Applying KSU API compatibility fixes ==="
+
+          # Fix in all KSU and kernel source files
+          find . -type f -name "*.c" -o -name "*.h" | xargs grep -l "ksu_syscall_hook_manager_init\|ksu_syscall_hook_manager_exit\|ksu_late_loaded" 2>/dev/null | while read f; do
+            echo "Fixing API names in: $f"
+            sed -i 's/ksu_syscall_hook_manager_init/ksu_syscall_hook_init/g' "$f"
+            sed -i 's/ksu_syscall_hook_manager_exit/ksu_syscall_hook_exit/g' "$f"
+            # Remove lines referencing ksu_late_loaded (no longer exists)
+            sed -i '/ksu_late_loaded/d' "$f"
+          done
+
+          # Also create a compat header in case any file includes it
+          cat > include/linux/ksu_compat.h << 'COMPAT_EOF'
+          #ifndef _KSU_COMPAT_H
+          #define _KSU_COMPAT_H
+          /* KernelSU-Next API compatibility shims */
+          #define ksu_syscall_hook_manager_init ksu_syscall_hook_init
+          #define ksu_syscall_hook_manager_exit ksu_syscall_hook_exit
+          #endif
+          COMPAT_EOF
+
+          echo "KSU API compatibility fixes applied"
+
           # Verify Kconfig has SUSFS entries
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
             echo "SUSFS_OK=true" >> $GITHUB_ENV

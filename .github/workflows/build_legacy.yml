@@ -337,14 +337,14 @@ jobs:
           # This suppresses warnings that would otherwise be fatal with -Werror
           if [ -f "Makefile" ]; then
             echo "Adding clang compatibility CFLAGS..."
-            sed -i '/^KBUILD_CFLAGS.*:=/a \
-          KBUILD_CFLAGS += -Wno-error \
-          KBUILD_CFLAGS += -Wno-implicit-function-declaration \
-          KBUILD_CFLAGS += -Wno-strict-prototypes \
-          KBUILD_CFLAGS += -Wno-return-type \
-          KBUILD_CFLAGS += -Wno-unknown-warning-option \
-          KBUILD_CFLAGS += -Wno-int-conversion \
-          KBUILD_CFLAGS += -Wno-unused-function' Makefile
+            # Use individual appends to avoid Makefile syntax errors from leading whitespace
+            sed -i '/^KBUILD_CFLAGS.*:=/a KBUILD_CFLAGS += -Wno-error' Makefile
+            sed -i '/^KBUILD_CFLAGS += -Wno-error$/a KBUILD_CFLAGS += -Wno-implicit-function-declaration' Makefile
+            sed -i '/^KBUILD_CFLAGS += -Wno-implicit-function-declaration$/a KBUILD_CFLAGS += -Wno-strict-prototypes' Makefile
+            sed -i '/^KBUILD_CFLAGS += -Wno-strict-prototypes$/a KBUILD_CFLAGS += -Wno-return-type' Makefile
+            sed -i '/^KBUILD_CFLAGS += -Wno-return-type$/a KBUILD_CFLAGS += -Wno-unknown-warning-option' Makefile
+            sed -i '/^KBUILD_CFLAGS += -Wno-unknown-warning-option$/a KBUILD_CFLAGS += -Wno-int-conversion' Makefile
+            sed -i '/^KBUILD_CFLAGS += -Wno-int-conversion$/a KBUILD_CFLAGS += -Wno-unused-function' Makefile
           fi
           
           echo "=== Compiler fixes applied ==="
