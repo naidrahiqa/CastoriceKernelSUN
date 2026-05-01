@@ -1,94 +1,108 @@
 # ⚡ Castorice Kernel — Redmi 12 (fire)
 
-Custom kernel dengan **KernelSU-Next** + **SUSFS** untuk Redmi 12 (fire).  
-Tersedia dalam **2 versi** — pilih sesuai ROM kamu.
+Custom kernel for Xiaomi Redmi 12 (codename: **fire**) with **KernelSU-Next** + **SUSFS** support.
 
-## 📦 Versi
+## 🔥 Two Kernel Variants
 
-| Versi | Kernel | Target ROM | LCD 0c/0d | Build |
-|-------|--------|------------|-----------|-------|
-| **Castorice Legacy** | 4.19.x | MIUI 14 / HyperOS 1.x (A13-14) | ✅ Patched | `make` + ZyClang |
-| **Castorice GKI** | 6.6.135 | HyperOS 2.x (A15) | ✅ Safe (vendor module) | Bazel/Kleaf |
+| Variant | Kernel | ROM | Build System |
+|---------|--------|-----|-------------|
+| **GKI 6.6** | 6.6.x | HyperOS 2.x (Android 15) | Bazel/Kleaf (ACK) |
+| **Legacy 4.19** | 4.19.x | MIUI 14 / HyperOS 1.x | make + ZyClang |
 
-## 🖥️ Device Info
+> ⚠️ **Flash the correct variant for your ROM!** GKI on HyperOS 1 = bootloop. Legacy on HyperOS 2 = bootloop.
 
-```
-Device:      Redmi 12 (fire)
-SoC:         MediaTek Helio G88 (MT6768)
-```
+## 📋 Features
 
-### Legacy (4.19)
-```
-Kernel:      4.19.x-Castorice
-KMI:         Non-GKI (Xiaomi source)
-KernelSU:    KernelSU-Next Legacy (manual hook)
-ROM:         MIUI 14.x / HyperOS 1.x
-```
+### Root & Security
+- **KernelSU-Next** — Kernel-based root solution
+- **SUSFS** — SUS filesystem for advanced root hiding (SUS_PATH, SUS_MOUNT, SUS_MAP, SUS_KSTAT, SPOOF_UNAME, OPEN_REDIRECT)
 
-### GKI (6.6)
-```
-Kernel:      6.6.135-Castorice
-KMI:         android15-6.6
-KernelSU:    KernelSU-Next (latest)
-ROM:         HyperOS 2.0.206+
-```
+### Performance
+- **Memory**: ZRAM (writeback), KSM, Transparent Hugepage, compaction
+- **I/O**: BFQ scheduler (GKI), optimized readahead
+- **Network**: TCP BBR, FQ scheduler, IPSet, TTL target
+- **LCD 0c/0d**: Touchscreen fix (Legacy only)
 
-## 📱 LCD 0c/0d — AMAN ✅
+## 🔧 How to Build
 
-### GKI 6.6
-Display driver ada di **vendor partition** sebagai `.ko` module.  
-Kernel core diganti → LCD + touchscreen **tetap normal**.
+### Prerequisites
+1. Fork this repo
+2. Extract your **stock boot.img** from your current ROM:
+   ```bash
+   # On rooted device / recovery
+   adb shell su -c "dd if=/dev/block/by-name/boot_a of=/sdcard/stock_boot.img"
+   adb pull /sdcard/stock_boot.img
+   ```
+3. Upload `stock_boot.img` somewhere accessible (GitHub release, cloud storage, etc.)
 
-### Legacy 4.19
-Display driver **terintegrasi di kernel**, tapi sudah di-patch dengan:
-- `fix_lcm.patch` — Fix LCM driver untuk panel 0c/0d
-- `primary_display_fix.patch` — Fix pointer bug di display command
+### Run the Build
+1. Go to **Actions** tab → Select workflow
+2. Fill in **stock_boot_url** with the direct download link to your stock boot.img
+3. Enable/disable KSU and SUSFS as needed
+4. Click **Run workflow**
 
-Touchscreen **aman** di kedua versi.
+### Output Files
+| File | Description |
+|------|-------------|
+| `*-Enforcing.img` | Flashable boot.img (SELinux Enforcing) |
+| `*-Permissive.img` | Flashable boot.img (SELinux Permissive) |
+| `*-AnyKernel3.zip` | Flashable ZIP via custom recovery |
+| `Image*` | Raw kernel image |
 
-## 🚀 Fitur Performa Stabil
+## 📱 Flash Guide
 
-- ⚡ **CPU**: schedutil governor + Energy Aware Scheduling
-- 🌐 **Network**: TCP BBR + IPSet support + TTL mangling
-- 💾 **Memory**: ZRAM + LZ4 compression
-- 🔧 **I/O**: CFQ (4.19) / mq-deadline (6.6)
-- 🛡️ **Root**: KernelSU-Next + SUSFS (hide root)
-- 🔒 **Security**: SUSFS spoof uname, cmdline, symbol hiding
-
-## 🔨 Build
-
-1. Go to **Actions**
-2. Pilih workflow:
-   - **Build Castorice Legacy (4.19)** — untuk MIUI 14 / HyperOS 1
-   - **Build Castorice GKI (6.6)** — untuk HyperOS 2
-3. Click **Run workflow**
-4. Pilih opsi (SUSFS on/off, sublevel)
-5. Tunggu selesai
-6. Download dari **Artifacts** atau **Releases**
-
-## 📲 Flash
-
+### Method 1: Fastboot (Recommended)
 ```bash
-# Backup dulu!
-fastboot flash boot stock_boot.img.bak
+# ALWAYS test first with temporary boot!
+fastboot boot Castorice-*-Enforcing.img
 
-# Flash Castorice
-fastboot flash boot boot.img  # atau flash AnyKernel3 zip via recovery
+# If it boots successfully, flash permanently:
+fastboot flash boot Castorice-*-Enforcing.img
 fastboot reboot
 ```
 
-## 🔄 Recovery
+### Method 2: AnyKernel3 ZIP
+Flash via TWRP / custom recovery.
 
+### ⚠️ Recovery from Bootloop
 ```bash
-fastboot flash boot stock_boot.img.bak
+# Flash your stock boot.img back
+fastboot flash boot stock_boot.img
 fastboot reboot
 ```
 
-## 📋 Credits
+## 🔑 Technical Details
 
-- [KernelSU-Next](https://github.com/rifsxd/KernelSU-Next) — Root solution
-- [SUSFS](https://gitlab.com/simonpunk/susfs4ksu) — Root hiding
-- [Alexjr2](https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire) — Reference 4.19 build + LCD patches
-- [WildKernels](https://github.com/WildKernels/GKI_KernelSU_SUSFS) — GKI reference
-- [ZyCromerZ](https://github.com/ZyCromerZ/Clang) — Clang toolchain
-- [sidex15](https://github.com/sidex15/KernelSU-Next) — KernelSU-Next legacy branch
+### GKI 6.6 (HyperOS 2)
+- **KMI**: `6.6-android15-8` (must match device!)
+- **Source**: Android Common Kernel (`common-android15-6.6`)
+- **KernelSU**: `next` branch (kprobes hook)
+- **Boot image**: Repacked from stock boot.img via magiskboot
+- **Module compat**: `CONFIG_MODVERSIONS=n` (allows vendor module loading)
+
+### Legacy 4.19 (MIUI/HyperOS 1)
+- **Source**: `MiCode/Xiaomi_Kernel_OpenSource` branch `fire-t-oss`
+- **KernelSU**: `legacy` branch (manual VFS hook)
+- **Toolchain**: ZyCromerZ Clang (latest)
+- **Boot image**: Repacked from stock boot.img via magiskboot
+
+### Device Info
+| Property | Value |
+|----------|-------|
+| SoC | MediaTek Helio G88 (MT6768) |
+| Partition | A/B dual slot |
+| Boot size | 128 MB |
+| vendor_boot | 64 MB |
+| init_boot | ❌ Not present |
+| Bootloader | LK (Little Kernel) |
+
+## 📚 References
+
+- [ravindu644/Android-Kernel-Tutorials](https://github.com/ravindu644/Android-Kernel-Tutorials) — Kernel building guide
+- [Alexjr2/KernelSU_Next_SUSFS_fire](https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire) — Reference build for fire
+- [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) — Root solution
+- [SUSFS4KSU](https://gitlab.com/simonpunk/susfs4ksu) — Root hiding
+
+## ⚖️ License
+
+This project follows the GPL-2.0 license as required by the Linux kernel.

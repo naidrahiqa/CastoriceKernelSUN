@@ -3,6 +3,10 @@ name: Build Castorice Legacy (4.19)
 on:
   workflow_dispatch:
     inputs:
+      stock_boot_url:
+        description: "Direct URL to stock boot.img (MIUI/HyperOS 1). Leave empty to skip boot.img repack."
+        required: false
+        default: ""
       enable_susfs:
         description: "Enable SUSFS"
         required: true
@@ -219,6 +223,7 @@ jobs:
             echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
@@ -231,6 +236,14 @@ jobs:
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
           fi
+
+          # Memory Optimization
+          echo "" >> $DEFCONFIG
+          echo "# Memory Optimization" >> $DEFCONFIG
+          echo "CONFIG_ZRAM=y" >> $DEFCONFIG
+          echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG
+          echo "CONFIG_COMPACTION=y" >> $DEFCONFIG
+          echo "CONFIG_KSM=y" >> $DEFCONFIG
 
           # Networking (stable performance)
           echo "" >> $DEFCONFIG
@@ -351,6 +364,58 @@ jobs:
           echo "BUILD SUCCESS: $IMAGE"
           ls -lah $IMAGE
 
+      # ===== BOOT.IMG REPACK =====
+      - name: Setup Magiskboot
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/magiskboot
+          MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases 2>/dev/null \
+            | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' 2>/dev/null | head -n1)
+
+          if [ -n "$MAGISKBOOT_DLINK" ] && [ "$MAGISKBOOT_DLINK" != "null" ]; then
+            aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
+            7z e magiskboot.7z native/out/x86_64/magiskboot -o$GITHUB_WORKSPACE/magiskboot/
+            chmod +x $GITHUB_WORKSPACE/magiskboot/magiskboot
+            rm -f magiskboot.7z
+            echo "MAGISKBOOT=$GITHUB_WORKSPACE/magiskboot/magiskboot" >> $GITHUB_ENV
+            echo "MAGISKBOOT_OK=true" >> $GITHUB_ENV
+          else
+            echo "MAGISKBOOT_OK=false" >> $GITHUB_ENV
+          fi
+
+      - name: Repack Stock Boot Image
+        if: ${{ inputs.stock_boot_url != '' }}
+        run: |
+          cd $GITHUB_WORKSPACE/magiskboot
+          STOCK_URL="${{ inputs.stock_boot_url }}"
+          aria2c -s16 -x16 -k1M "$STOCK_URL" -o stock_boot.img
+
+          IMAGE="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
+          DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
+          MAGISKBOOT="${{ env.MAGISKBOOT }}"
+
+          # Unpack stock boot
+          $MAGISKBOOT unpack -h stock_boot.img
+          ls -lah
+
+          # Replace kernel
+          cp "$IMAGE" .
+          $MAGISKBOOT split Image.gz-dtb 2>/dev/null || true
+          if [ -f "$DTB" ]; then cp "$DTB" dtb; fi
+
+          # Repack — Enforcing
+          $MAGISKBOOT repack stock_boot.img
+          truncate -s 134217728 new-boot.img
+          mv new-boot.img $GITHUB_WORKSPACE/Castorice-Legacy-boot-Enforcing.img
+
+          # Repack — Permissive
+          if [ -f "header" ]; then
+            sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
+            $MAGISKBOOT repack stock_boot.img
+            truncate -s 134217728 new-boot.img
+            mv new-boot.img $GITHUB_WORKSPACE/Castorice-Legacy-boot-Permissive.img
+          fi
+          echo "REPACK_OK=true" >> $GITHUB_ENV
+
       # ===== ANYKERNEL3 ZIP =====
       - name: Package AnyKernel3
         run: |
@@ -366,7 +431,6 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
-          # Configure anykernel.sh for fire (A/B dual slot)
           cat > anykernel.sh << 'AKEOF'
           # AnyKernel3 Ramdisk Mod Script
           # osm0sis @ xda-developers
@@ -390,17 +454,14 @@ jobs:
           write_boot;
           AKEOF
 
-          # Copy kernel image
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb .
-
           zip -r9 "$GITHUB_WORKSPACE/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
       - name: Prepare Output
         run: |
           mkdir -p out
-          # AnyKernel3 zip (flash via recovery)
+          cp $GITHUB_WORKSPACE/Castorice-Legacy-boot-*.img out/ 2>/dev/null || true
           cp $GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
-          # Raw kernel image
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb out/ 2>/dev/null || true
           echo "=== Final output ==="
           ls -lah out/
@@ -418,7 +479,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "v4.19-castorice-legacy-${{ github.run_number }}"
-          name: "Castorice Legacy ${{ env.KERNEL_VERSION }} - Redmi 12 Fire"
+          name: "Castorice Legacy ${{ env.KERNEL_VERSION }} — Redmi 12 Fire"
           body: |
             ## ⚡ Castorice Legacy Kernel for Redmi 12 (fire)
             
@@ -429,25 +490,28 @@ jobs:
             - **SUSFS**: ${{ inputs.enable_susfs }}
             - **Toolchain**: ${{ env.CLANG_VERSION }}
             
+            ### Features
+            - 🛡️ KernelSU-Next + SUSFS
+            - 🧠 Memory: ZRAM, KSM, compaction
+            - 🌐 Network: TCP BBR, IPSet, TTL
+            - 🖥️ LCD 0c/0d: FIXED
+            
             ### Downloads
             | File | Method |
             |------|--------|
+            | `*-Enforcing.img` | `fastboot flash boot` |
+            | `*-Permissive.img` | `fastboot flash boot` (Permissive) |
             | `*-AnyKernel3.zip` | Flash via Recovery |
             | `Image.gz-dtb` | Raw kernel image |
             
             ### Compatibility
             - ✅ MIUI 14.x (Android 13)
             - ✅ HyperOS 1.x (Android 14)
-            - ✅ LCD 0c/0d: **FIXED** (touchscreen safe)
+            - ❌ HyperOS 2.x (Android 15) → Use GKI 6.6
             
-            ### Performance
-            - schedutil governor + EAS
-            - TCP BBR congestion control
-            - IPSet support
-            - CFQ I/O scheduler
-            
-            > ⚠️ **NOT compatible** with HyperOS 2.x (Android 15). Use GKI 6.6 version instead.
+            > ⚠️ Always use `fastboot boot <img>` to TEST before permanent flash!
           files: |
+            out/*.img
             out/*.zip
             out/Image.gz-dtb
           draft: false

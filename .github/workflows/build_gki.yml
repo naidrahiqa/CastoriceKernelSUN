@@ -3,12 +3,17 @@ name: Build Castorice GKI (6.6)
 on:
   workflow_dispatch:
     inputs:
-      kernel_sublevel:
-        description: "Kernel sublevel (135 = latest LTS 6.6.135)"
-        required: true
-        default: "135"
+      stock_boot_url:
+        description: "Direct URL to stock boot.img (HyperOS 2). Leave empty to skip boot.img repack."
+        required: false
+        default: ""
       enable_susfs:
         description: "Enable SUSFS"
+        required: true
+        type: boolean
+        default: true
+      enable_ksu:
+        description: "Enable KernelSU-Next"
         required: true
         type: boolean
         default: true
@@ -20,11 +25,19 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ANDROID_VERSION: android15
   KERNEL_VERSION: "6.6"
+  # =====================================================
+  # KMI_GENERATION MUST match your device's KMI exactly!
+  # Check: adb shell uname -r → 6.6.58-android15-8-xxx
+  #                                              ↑ this
+  # =====================================================
+  KMI_GENERATION: "8"
   KERNEL_NAME: Castorice
+  DEVICE_CODE: fire
+  BOOT_PARTITION_SIZE: "134217728"
 
 jobs:
   build:
-    name: "Castorice GKI 6.6.${{ inputs.kernel_sublevel }}"
+    name: "Castorice GKI 6.6"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -46,7 +59,6 @@ jobs:
 
       - name: Setup Swap
         run: |
-          # Remove existing swapfile if present (prevents "Text file busy")
           sudo swapoff /mnt/swapfile 2>/dev/null || true
           sudo rm -f /mnt/swapfile
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
@@ -69,6 +81,7 @@ jobs:
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
+      # ===== KERNEL SOURCE (ACK) =====
       - name: Sync Android Common Kernel
         run: |
           mkdir -p kernel
@@ -79,16 +92,49 @@ jobs:
           echo "=== Kernel version ==="
           cd common && make kernelversion
 
+      # ===== MATCH DEVICE KMI =====
+      - name: Set KMI Generation to Match Device
+        run: |
+          cd kernel/common
+          echo "Device KMI: ${KERNEL_VERSION}-${ANDROID_VERSION}-${KMI_GENERATION}"
+
+          # Set KMI_GENERATION in build.config.common
+          if [ -f "build.config.common" ]; then
+            if grep -q "KMI_GENERATION" build.config.common; then
+              sed -i "s/KMI_GENERATION=.*/KMI_GENERATION=${KMI_GENERATION}/" build.config.common
+            else
+              echo "KMI_GENERATION=${KMI_GENERATION}" >> build.config.common
+            fi
+            echo "build.config.common KMI_GENERATION set:"
+            grep KMI_GENERATION build.config.common
+          fi
+
+          # Also patch Bazel/Kleaf config if present
+          for f in build.config.gki build.config.gki.aarch64; do
+            if [ -f "$f" ] && grep -q "KMI_GENERATION" "$f"; then
+              sed -i "s/KMI_GENERATION=.*/KMI_GENERATION=${KMI_GENERATION}/" "$f"
+              echo "$f patched"
+            fi
+          done
+
+          # Patch stamp.bzl if it has KMI generation
+          STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
+          if [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE"; then
+            echo "Checking stamp.bzl for KMI generation..."
+          fi
+
+      # ===== KERNELSU-NEXT =====
       - name: Setup KernelSU-Next
+        if: ${{ inputs.enable_ksu == true }}
         run: |
           cd kernel/common
 
-          # Try 'next' branch first (has setup.sh), then fallback to 'main'
+          # For GKI 6.6, use 'next' or 'main' branch (NOT legacy)
           if curl -LSsf "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" -o /tmp/ksu_setup.sh 2>/dev/null; then
-            echo "Using KernelSU-Next setup.sh from 'next' branch"
+            echo "Using KernelSU-Next 'next' branch"
             bash /tmp/ksu_setup.sh next
           elif curl -LSsf "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/main/kernel/setup.sh" -o /tmp/ksu_setup.sh 2>/dev/null; then
-            echo "Using KernelSU-Next setup.sh from 'main' branch"
+            echo "Using KernelSU-Next 'main' branch"
             bash /tmp/ksu_setup.sh main
           else
             echo "Trying sidex15 fork..."
@@ -97,20 +143,16 @@ jobs:
           fi
 
           KSU_DIR=""
-          if [ -d "KernelSU-Next" ]; then
-            KSU_DIR="KernelSU-Next"
-          elif [ -d "KernelSU" ]; then
-            KSU_DIR="KernelSU"
-          else
-            echo "KernelSU directory not found!"
-            ls -la
-            exit 1
-          fi
+          if [ -d "KernelSU-Next" ]; then KSU_DIR="KernelSU-Next";
+          elif [ -d "KernelSU" ]; then KSU_DIR="KernelSU";
+          else echo "ERROR: KernelSU directory not found!"; ls -la; exit 1; fi
+
           KSU_VERSION=$(cd $KSU_DIR && git rev-list --count HEAD)
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
-          echo "KernelSU-Next installed - version $KSU_VERSION"
+          echo "KernelSU-Next installed — version $KSU_VERSION"
 
+      # ===== SUSFS =====
       - name: Setup SUSFS
         if: ${{ inputs.enable_susfs == true }}
         run: |
@@ -119,115 +161,159 @@ jobs:
             -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || \
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
             -b gki-${ANDROID_VERSION}-6.6
-          cd common
 
+          cd common
           # Copy SUSFS source files
-          echo "Copying SUSFS files..."
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          
-          echo "Verifying copied files:"
-          ls -la include/linux/susfs*
-          ls -la fs/susfs*
 
-          # Apply kernel patches
-          PATCH_APPLIED=false
+          echo "=== Verify SUSFS files ==="
+          ls -la include/linux/susfs* fs/susfs*
+
+          # Apply kernel integration patch
           for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
-            if [ -f "$patch" ]; then
-              echo "Applying $patch"
-              if patch -p1 --forward < "$patch"; then
-                PATCH_APPLIED=true
-              else
-                echo "WARNING: Patch $patch had conflicts"
-                find . -name "*.rej" -exec echo "REJECT: {}" \; -exec cat {} \;
-              fi
-            fi
+            [ -f "$patch" ] && patch -p1 --forward < "$patch" || echo "WARN: $patch had issues"
           done
 
-          # Apply KernelSU patches for SUSFS (check multiple possible directories)
+          # Apply KSU SUSFS patches
           KSU_DIR="${{ env.KSU_DIR }}"
-          SUSFS_KSU_PATCH_APPLIED=false
           for patchdir in KernelSU KernelSU-Next; do
             for patch in ../susfs4ksu/kernel_patches/${patchdir}/10_enable_susfs_for_ksu*.patch; do
               if [ -f "$patch" ]; then
-                echo "Applying to $KSU_DIR: $patch"
-                if cd $KSU_DIR && patch -p1 --forward < "../$patch"; then
-                  SUSFS_KSU_PATCH_APPLIED=true
-                else
-                  echo "WARNING: KSU SUSFS patch $patch failed"
-                fi
+                echo "Applying: $patch → $KSU_DIR"
+                cd $KSU_DIR && patch -p1 --forward < "../$patch" || echo "WARN: patch failed"
                 cd ..
               fi
             done
           done
 
-          if [ "$SUSFS_KSU_PATCH_APPLIED" = "false" ]; then
-            echo "WARNING: No SUSFS KSU patches were applied"
-          fi
-
-          # Verify SUSFS Kconfig
+          # Verify Kconfig
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
-            echo "SUSFS_KCONFIG_OK=true" >> $GITHUB_ENV
+            echo "SUSFS_OK=true" >> $GITHUB_ENV
           else
-            echo "SUSFS_KCONFIG_OK=false" >> $GITHUB_ENV
-            echo "WARNING: SUSFS Kconfig entries NOT found"
+            echo "SUSFS_OK=false" >> $GITHUB_ENV
+            echo "WARNING: SUSFS Kconfig NOT found in $KSU_DIR"
           fi
 
+      # ===== KERNEL CONFIG =====
       - name: Configure Kernel
         run: |
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
 
-          # KernelSU
-          echo "" >> $DEFCONFIG
-          echo "# KernelSU" >> $DEFCONFIG
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          # --- KernelSU ---
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
+            cat >> $DEFCONFIG << 'EOF'
 
-          # SUSFS
-          if [ "${{ env.SUSFS_KCONFIG_OK }}" = "true" ] && [ "${{ inputs.enable_susfs }}" = "true" ]; then
-            echo "" >> $DEFCONFIG
-            echo "# SUSFS" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
+          # KernelSU-Next
+          CONFIG_KSU=y
+          EOF
           fi
 
-          # Networking (stable performance)
-          echo "" >> $DEFCONFIG
-          echo "# Networking" >> $DEFCONFIG
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+          # --- SUSFS ---
+          if [ "${{ env.SUSFS_OK }}" = "true" ] && [ "${{ inputs.enable_susfs }}" = "true" ]; then
+            cat >> $DEFCONFIG << 'EOF'
+
+          # SUSFS
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_SU=n
+          EOF
+          fi
+
+          # --- Module Loading (CRITICAL: allow vendor modules) ---
+          cat >> $DEFCONFIG << 'EOF'
+
+          # Module Compatibility (allow vendor_boot modules to load)
+          CONFIG_MODVERSIONS=n
+          CONFIG_MODULE_SIG_FORCE=n
+          CONFIG_MODULE_SIG_ALL=n
+          EOF
+
+          # --- Memory Optimization ---
+          cat >> $DEFCONFIG << 'EOF'
+
+          # Memory Optimization
+          CONFIG_ZRAM=y
+          CONFIG_ZRAM_WRITEBACK=y
+          CONFIG_ZSMALLOC=y
+          CONFIG_COMPACTION=y
+          CONFIG_KSM=y
+          CONFIG_TRANSPARENT_HUGEPAGE=y
+          CONFIG_SLAB_FREELIST_RANDOM=y
+          EOF
+
+          # --- I/O Optimization ---
+          cat >> $DEFCONFIG << 'EOF'
+
+          # I/O Optimization
+          CONFIG_IOSCHED_BFQ=y
+          CONFIG_BFQ_GROUP_IOSCHED=y
+          EOF
+
+          # --- Networking ---
+          cat >> $DEFCONFIG << 'EOF'
+
+          # Networking
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+
+          # IPSet
+          CONFIG_IP_SET=y
+          CONFIG_IP_SET_MAX=65534
+          CONFIG_IP_SET_BITMAP_IP=y
+          CONFIG_IP_SET_BITMAP_IPMAC=y
+          CONFIG_IP_SET_BITMAP_PORT=y
+          CONFIG_IP_SET_HASH_IP=y
+          CONFIG_IP_SET_HASH_IPMARK=y
+          CONFIG_IP_SET_HASH_IPPORT=y
+          CONFIG_IP_SET_HASH_IPPORTIP=y
+          CONFIG_IP_SET_HASH_IPPORTNET=y
+          CONFIG_IP_SET_HASH_IPMAC=y
+          CONFIG_IP_SET_HASH_MAC=y
+          CONFIG_IP_SET_HASH_NETPORTNET=y
+          CONFIG_IP_SET_HASH_NET=y
+          CONFIG_IP_SET_HASH_NETNET=y
+          CONFIG_IP_SET_HASH_NETPORT=y
+          CONFIG_IP_SET_HASH_NETIFACE=y
+          CONFIG_IP_SET_LIST_SET=y
+          EOF
+
+          # --- Branding ---
+          cat >> $DEFCONFIG << 'EOF'
 
           # Branding
-          echo "" >> $DEFCONFIG
-          echo "# Branding" >> $DEFCONFIG
-          echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
-          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          CONFIG_LOCALVERSION="-Castorice"
+          CONFIG_LOCALVERSION_AUTO=n
+          EOF
 
-          echo "=== Modified gki_defconfig (last 30 lines) ==="
-          tail -30 $DEFCONFIG
+          echo "=== Defconfig additions ==="
+          tail -60 $DEFCONFIG
 
+      # ===== BUILD SYSTEM PATCHES =====
       - name: Patch Build System
         run: |
           cd kernel/common
 
-          # Remove protected exports
+          # Remove protected exports (prevents build failures)
           rm -rf android/abi_gki_protected_exports_* || true
           if [ -f "BUILD.bazel" ]; then
-            perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//' BUILD.bazel
             sed -i '/abi_gki_protected_exports/d' BUILD.bazel
             sed -i '/protected_exports/d' BUILD.bazel
             sed -i '/check_defconfig/d' BUILD.bazel
@@ -238,11 +324,10 @@ jobs:
           fi
 
           for f in build.config.gki build.config.gki.aarch64; do
-            if [ -f "$f" ]; then
-              sed -i '/check_defconfig/d' "$f"
-            fi
+            [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
           done
 
+          # Bypass ABI check script
           PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
           if [ -f "$PROT_SCRIPT" ]; then
             perl -i -pe 's/^(\s*)return 1$/$1return 0/g' "$PROT_SCRIPT"
@@ -252,24 +337,24 @@ jobs:
           if [ -f "../build/kernel/kleaf/impl/stamp.bzl" ]; then
             sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' ../build/kernel/kleaf/impl/stamp.bzl
           fi
-          sed -i 's/-dirty//' scripts/setlocalversion
+          sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
 
           echo "Build system patched"
 
-      - name: Commit All Changes
+      - name: Commit Changes
         run: |
           cd kernel/common
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add include/linux/susfs* fs/susfs* || true
           git add -A
-          git commit -m "Castorice: prepare GKI kernel for build" || true
+          git commit -m "Castorice: GKI kernel with KSU+SUSFS+optimizations" || true
 
+      # ===== BUILD =====
       - name: Build Kernel
         run: |
           cd kernel
-          echo "=== Starting Castorice GKI kernel build ==="
+          echo "=== Building Castorice GKI Kernel ==="
           tools/bazel build \
             --config=fast \
             //common:kernel_aarch64_dist 2>&1
@@ -287,111 +372,133 @@ jobs:
             //common:kernel_aarch64_dist \
             -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
 
-          # Also search bazel-out for any missing files
-          echo "Searching bazel-out for all kernel artifacts..."
-          for artifact in Image Image.gz Image.lz4 boot.img boot-gz.img; do
+          # Search bazel-out for missing artifacts
+          for artifact in Image Image.gz Image.lz4; do
             if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
               FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
               if [ -n "$FOUND" ]; then
-                echo "Found in bazel-out: $FOUND"
-                cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/" 2>/dev/null || true
+                cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/"
               fi
             fi
           done
 
-          echo "=== Build output ==="
-          ls -lah $GITHUB_WORKSPACE/dist/ || echo "No output found"
+          echo "=== Build artifacts ==="
+          ls -lah $GITHUB_WORKSPACE/dist/
+
+          # Get actual kernel version
+          if [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+            BUILT_VER=$(strings $GITHUB_WORKSPACE/dist/Image | grep "Linux version" | head -1)
+            echo "BUILT_KERNEL_VERSION=$BUILT_VER" >> $GITHUB_ENV
+            echo "Built: $BUILT_VER"
+          fi
 
       - name: Verify Build
         run: |
-          echo "=== dist contents ==="
-          ls -la dist/
-          for f in Image Image.gz Image.lz4 boot.img boot-gz.img; do
-            if [ -f "dist/$f" ]; then
-              echo "Found: $f ($(du -h dist/$f | cut -f1))"
-            fi
-          done
-          if [ -f "dist/Image" ]; then
-            strings dist/Image | grep "Linux version" | head -1
-          fi
-
-      # ===== BOOT.IMG 128MB =====
-      - name: Generate Boot Images (128MB)
-        run: |
-          cd $GITHUB_WORKSPACE
-
-          STAG=""
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
-          BASE_NAME="Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-KSU_Next${STAG}-fire-$(date +%Y%m%d)"
-          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
-
-          # Look for boot.img from GKI build output
-          BOOT_IMG=""
-          for f in dist/boot.img dist/boot-gz.img; do
+          HAS_IMAGE=false
+          for f in dist/Image dist/Image.gz dist/Image.lz4; do
             if [ -f "$f" ]; then
-              BOOT_IMG="$f"
-              echo "Found GKI boot image: $BOOT_IMG ($(du -h $BOOT_IMG | cut -f1))"
-              break
+              echo "Found: $f ($(du -h $f | cut -f1))"
+              HAS_IMAGE=true
             fi
           done
-
-          if [ -z "$BOOT_IMG" ]; then
-            echo "WARNING: No boot.img found from GKI build, skipping boot.img generation"
-            echo "BOOTIMG_OK=false" >> $GITHUB_ENV
-          else
-            # Download magiskboot for permissive variant
-            mkdir -p magiskboot
-            MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases 2>/dev/null | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' 2>/dev/null | head -n1)
-
-            MAGISKBOOT_OK=false
-            if [ -n "$MAGISKBOOT_DLINK" ] && [ "$MAGISKBOOT_DLINK" != "null" ]; then
-              echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
-              if aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z 2>/dev/null; then
-                7z e magiskboot.7z native/out/x86_64/magiskboot -omagiskboot/ 2>/dev/null || true
-                if [ -f "magiskboot/magiskboot" ]; then
-                  chmod +x magiskboot/magiskboot
-                  MAGISKBOOT_OK=true
-                fi
-                rm -f magiskboot.7z
-              fi
-            fi
-
-            # === Enforcing boot.img (128MB) ===
-            echo "=== Generating boot.img (Enforcing) ==="
-            cp "$BOOT_IMG" "dist/${BASE_NAME}.img"
-            truncate -s 134217728 "dist/${BASE_NAME}.img"
-            echo "Enforcing: $(du -h dist/${BASE_NAME}.img | cut -f1)"
-
-            # === Permissive boot.img (128MB) ===
-            if [ "$MAGISKBOOT_OK" = "true" ]; then
-              echo "=== Generating boot.img (Permissive SELinux) ==="
-              cd magiskboot
-              cp "$GITHUB_WORKSPACE/$BOOT_IMG" boot.img
-              ./magiskboot unpack -h boot.img
-              if [ -f "header" ]; then
-                sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
-                ./magiskboot repack boot.img
-                truncate -s 134217728 new-boot.img
-                mv new-boot.img "$GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img"
-                echo "Permissive: $(du -h $GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img | cut -f1)"
-              else
-                echo "WARNING: magiskboot unpack did not produce header, copying enforcing as permissive"
-                cp "$GITHUB_WORKSPACE/dist/${BASE_NAME}.img" "$GITHUB_WORKSPACE/dist/${BASE_NAME}-Permissive.img"
-              fi
-              cd $GITHUB_WORKSPACE
-            else
-              echo "WARNING: magiskboot not available, copying enforcing as permissive"
-              cp "dist/${BASE_NAME}.img" "dist/${BASE_NAME}-Permissive.img"
-            fi
-
-            echo "BOOTIMG_OK=true" >> $GITHUB_ENV
-            echo "=== Boot images created ==="
-            ls -lah dist/*.img
+          if [ "$HAS_IMAGE" = "false" ]; then
+            echo "BUILD FAILED: No kernel image found!"
+            exit 1
           fi
 
-      # ===== ANYKERNEL3 ZIP =====
+      # ===== REPACK STOCK BOOT.IMG =====
+      - name: Setup Magiskboot
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/magiskboot
+          MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases 2>/dev/null \
+            | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' 2>/dev/null | head -n1)
+
+          if [ -n "$MAGISKBOOT_DLINK" ] && [ "$MAGISKBOOT_DLINK" != "null" ]; then
+            echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
+            aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
+            7z e magiskboot.7z native/out/x86_64/magiskboot -o$GITHUB_WORKSPACE/magiskboot/
+            chmod +x $GITHUB_WORKSPACE/magiskboot/magiskboot
+            rm -f magiskboot.7z
+            echo "MAGISKBOOT=$GITHUB_WORKSPACE/magiskboot/magiskboot" >> $GITHUB_ENV
+            echo "MAGISKBOOT_OK=true" >> $GITHUB_ENV
+          else
+            echo "WARNING: Could not download magiskboot"
+            echo "MAGISKBOOT_OK=false" >> $GITHUB_ENV
+          fi
+
+      - name: Repack Stock Boot Image
+        if: ${{ inputs.stock_boot_url != '' }}
+        run: |
+          cd $GITHUB_WORKSPACE/magiskboot
+          STOCK_URL="${{ inputs.stock_boot_url }}"
+
+          echo "Downloading stock boot.img: $STOCK_URL"
+          aria2c -s16 -x16 -k1M "$STOCK_URL" -o stock_boot.img
+
+          STOCK_SIZE=$(stat -c%s stock_boot.img)
+          echo "Stock boot.img size: $STOCK_SIZE bytes"
+
+          if [ "${{ env.MAGISKBOOT_OK }}" != "true" ]; then
+            echo "ERROR: magiskboot not available, cannot repack"
+            exit 1
+          fi
+
+          MAGISKBOOT="${{ env.MAGISKBOOT }}"
+
+          # Unpack stock boot
+          $MAGISKBOOT unpack -h stock_boot.img
+          echo "=== Unpacked stock boot ==="
+          ls -lah
+
+          # Find our built kernel image
+          KERNEL_IMG=""
+          if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
+            KERNEL_IMG="$GITHUB_WORKSPACE/dist/Image.gz"
+          elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
+            KERNEL_IMG="$GITHUB_WORKSPACE/dist/Image.lz4"
+          elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+            KERNEL_IMG="$GITHUB_WORKSPACE/dist/Image"
+          fi
+
+          if [ -z "$KERNEL_IMG" ]; then
+            echo "ERROR: No kernel image found in dist/"
+            exit 1
+          fi
+
+          # Replace kernel
+          echo "Replacing kernel with: $KERNEL_IMG"
+          rm -f kernel
+          cp "$KERNEL_IMG" kernel
+
+          # Repack — Enforcing
+          echo "=== Repacking boot.img (Enforcing) ==="
+          $MAGISKBOOT repack stock_boot.img
+          truncate -s ${{ env.BOOT_PARTITION_SIZE }} new-boot.img
+          mv new-boot.img $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Enforcing.img
+          echo "Enforcing boot.img: $(du -h $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Enforcing.img | cut -f1)"
+
+          # Repack — Permissive
+          echo "=== Repacking boot.img (Permissive) ==="
+          if [ -f "header" ]; then
+            sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
+            $MAGISKBOOT repack stock_boot.img
+            truncate -s ${{ env.BOOT_PARTITION_SIZE }} new-boot.img
+            mv new-boot.img $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Permissive.img
+            echo "Permissive boot.img: $(du -h $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Permissive.img | cut -f1)"
+          fi
+
+          echo "REPACK_OK=true" >> $GITHUB_ENV
+
+      # ===== ANYKERNEL3 =====
       - name: Package AnyKernel3
         run: |
+          STAG=""
+          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
+          KSUTAG=""
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU_Next"; fi
+          BASE_NAME="Castorice-GKI-6.6${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
+          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
+
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
@@ -400,7 +507,7 @@ jobs:
           # osm0sis @ xda-developers
           properties() { '
           kernel.string=Castorice GKI Kernel by naidrahiqa
-          do.devicecheck=0
+          do.devicecheck=1
           do.modules=0
           do.systemless=1
           do.cleanup=1
@@ -408,6 +515,7 @@ jobs:
           device.name1=fire
           device.name2=Redmi 12
           supported.versions=15
+          supported.patchlevels=
           '; }
           block=boot;
           is_slot_device=auto;
@@ -418,6 +526,7 @@ jobs:
           write_boot;
           AKEOF
 
+          # Copy kernel image
           if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
             cp $GITHUB_WORKSPACE/dist/Image.gz .
           elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
@@ -426,26 +535,22 @@ jobs:
             cp $GITHUB_WORKSPACE/dist/Image.lz4 .
           fi
 
-          zip -r9 "$GITHUB_WORKSPACE/dist/${ZIP_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
+          zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
-      - name: Copy Output
+      # ===== OUTPUT =====
+      - name: Prepare Output
         run: |
           mkdir -p out
-          # boot.img variants (128MB, ready to fastboot flash)
-          cp dist/${ZIP_NAME}.img out/ 2>/dev/null || true
-          cp dist/${ZIP_NAME}-Permissive.img out/ 2>/dev/null || true
-          # AnyKernel3 zip (flash via recovery)
+          cp dist/Castorice-GKI-boot-*.img out/ 2>/dev/null || true
           cp dist/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
-          # Raw kernel images
           cp dist/Image* out/ 2>/dev/null || true
-          cp dist/boot.img out/ 2>/dev/null || true
           echo "=== Final output ==="
           ls -lah out/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: "Castorice-GKI-6.6.${{ inputs.kernel_sublevel }}-fire"
+          name: "Castorice-GKI-6.6-fire"
           path: out/*
           if-no-files-found: warn
           compression-level: 9
@@ -454,37 +559,43 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v6.6.${{ inputs.kernel_sublevel }}-castorice-gki-${{ github.run_number }}"
-          name: "Castorice GKI 6.6.${{ inputs.kernel_sublevel }} - Redmi 12 Fire"
+          tag_name: "v6.6-castorice-gki-${{ github.run_number }}"
+          name: "Castorice GKI 6.6 — Redmi 12 Fire"
           body: |
-            ## ⚡ Castorice GKI Kernel for Redmi 12 (fire)
-            
+            ## ⚡ Castorice GKI Kernel for Redmi 12 (fire) — HyperOS 2
+
             ### Kernel Info
-            - **Kernel**: 6.6.${{ inputs.kernel_sublevel }}-Castorice
             - **Type**: GKI (Generic Kernel Image)
+            - **KMI**: `6.6-${{ env.ANDROID_VERSION }}-${{ env.KMI_GENERATION }}`
             - **KernelSU-Next**: v${{ env.KSU_VERSION }}
             - **SUSFS**: ${{ inputs.enable_susfs }}
-            - **Boot Partition**: 128MB (A/B dual slot)
-            
+            - **Toolchain**: Kleaf/Bazel (AOSP)
+
+            ### Features
+            - 🛡️ KernelSU-Next + SUSFS (root hiding)
+            - 🧠 Memory: ZRAM writeback, KSM, THP, compaction
+            - 💾 I/O: BFQ scheduler
+            - 🌐 Network: TCP BBR, FQ, IPSet
+            - 📦 Module compat: MODVERSIONS disabled
+
             ### Downloads
             | File | Method | SELinux |
             |------|--------|---------|
-            | `*.img` | `fastboot flash boot` | Enforcing |
+            | `*-Enforcing.img` | `fastboot flash boot` | Enforcing |
             | `*-Permissive.img` | `fastboot flash boot` | Permissive |
             | `*-AnyKernel3.zip` | Flash via Recovery | Enforcing |
-            
+
+            ### Flash Guide
+            ```bash
+            fastboot flash boot Castorice-GKI-boot-Enforcing.img
+            fastboot reboot
+            ```
+
             ### Compatibility
-            - ✅ HyperOS 2.x (Android 15)
-            - ✅ LCD 0c/0d: **SAFE** (vendor modules untouched)
-            - ✅ A/B dual slot: boot.img = 128MB
-            
-            ### Performance
-            - schedutil governor
-            - TCP BBR congestion control
-            - mq-deadline I/O scheduler
-            - LTO=fast build
-            
-            > ⚠️ **NOT compatible** with MIUI 14 / HyperOS 1.x. Use Legacy 4.19 version instead.
+            - ✅ HyperOS 2.x (Android 15) — kernel 6.6
+            - ❌ MIUI 14 / HyperOS 1.x — use Legacy 4.19
+
+            > ⚠️ Always use `fastboot boot <img>` to TEST before permanent flash!
           files: |
             out/*.img
             out/*.zip
