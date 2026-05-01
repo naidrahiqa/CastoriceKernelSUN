@@ -3,10 +3,10 @@ name: Build Castorice GKI (6.6)
 on:
   workflow_dispatch:
     inputs:
-      stock_boot_url:
-        description: "Direct URL to stock boot.img (HyperOS 2). Leave empty to skip boot.img repack."
-        required: false
-        default: ""
+      author_name:
+        description: "Kernel Author Name"
+        required: true
+        default: "Castorice"
       enable_susfs:
         description: "Enable SUSFS"
         required: true
@@ -33,15 +33,11 @@ env:
   KMI_GENERATION: "8"
   KERNEL_NAME: Castorice
   DEVICE_CODE: fire
-  BOOT_PARTITION_SIZE: "134217728"
   # Placeholders for dynamically set variables to prevent IDE warnings
   KSU_DIR: ""
   KSU_VERSION: ""
   SUSFS_OK: ""
   BUILT_KERNEL_VERSION: ""
-  MAGISKBOOT: ""
-  MAGISKBOOT_OK: ""
-  REPACK_OK: ""
   ZIP_NAME: ""
 
 jobs:
@@ -410,10 +406,10 @@ jobs:
           CONFIG_MODULE_SIG_ALL=n
           EOF
 
-          # --- Memory Optimization ---
+          # --- Memory & CPU Optimization ---
           cat >> $DEFCONFIG << 'EOF'
 
-          # Memory Optimization
+          # Memory & CPU Optimization
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
           CONFIG_ZSMALLOC=y
@@ -421,6 +417,9 @@ jobs:
           CONFIG_KSM=y
           CONFIG_TRANSPARENT_HUGEPAGE=y
           CONFIG_SLAB_FREELIST_RANDOM=y
+          CONFIG_HZ_1000=y
+          CONFIG_LRU_GEN=y
+          CONFIG_LRU_GEN_ENABLED=y
           EOF
 
           # --- I/O Optimization ---
@@ -573,89 +572,6 @@ jobs:
             exit 1
           fi
 
-      # ===== REPACK STOCK BOOT.IMG =====
-      - name: Setup Magiskboot
-        run: |
-          mkdir -p $GITHUB_WORKSPACE/magiskboot
-          MAGISKBOOT_DLINK=$(curl -sL https://api.github.com/repos/xiaoxindada/magisk_bins_ndk/releases 2>/dev/null \
-            | jq -r '.[0].assets[] | select(.name | endswith(".7z")) | .browser_download_url' 2>/dev/null | head -n1)
-
-          if [ -n "$MAGISKBOOT_DLINK" ] && [ "$MAGISKBOOT_DLINK" != "null" ]; then
-            echo "Downloading magiskboot: $MAGISKBOOT_DLINK"
-            aria2c -s16 -x16 -k1M "$MAGISKBOOT_DLINK" -o magiskboot.7z
-            7z e magiskboot.7z native/out/x86_64/magiskboot -o$GITHUB_WORKSPACE/magiskboot/
-            chmod +x $GITHUB_WORKSPACE/magiskboot/magiskboot
-            rm -f magiskboot.7z
-            echo "MAGISKBOOT=$GITHUB_WORKSPACE/magiskboot/magiskboot" >> $GITHUB_ENV
-            echo "MAGISKBOOT_OK=true" >> $GITHUB_ENV
-          else
-            echo "WARNING: Could not download magiskboot"
-            echo "MAGISKBOOT_OK=false" >> $GITHUB_ENV
-          fi
-
-      - name: Repack Stock Boot Image
-        if: ${{ inputs.stock_boot_url != '' }}
-        run: |
-          cd $GITHUB_WORKSPACE/magiskboot
-          STOCK_URL="${{ inputs.stock_boot_url }}"
-
-          echo "Downloading stock boot.img: $STOCK_URL"
-          aria2c -s16 -x16 -k1M "$STOCK_URL" -o stock_boot.img
-
-          STOCK_SIZE=$(stat -c%s stock_boot.img)
-          echo "Stock boot.img size: $STOCK_SIZE bytes"
-
-          if [ "${{ env.MAGISKBOOT_OK }}" != "true" ]; then
-            echo "ERROR: magiskboot not available, cannot repack"
-            exit 1
-          fi
-
-          MAGISKBOOT="${{ env.MAGISKBOOT }}"
-
-          # Unpack stock boot
-          $MAGISKBOOT unpack -h stock_boot.img
-          echo "=== Unpacked stock boot ==="
-          ls -lah
-
-          # Find our built kernel image
-          KERNEL_IMG=""
-          if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
-            KERNEL_IMG="$GITHUB_WORKSPACE/dist/Image.gz"
-          elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
-            KERNEL_IMG="$GITHUB_WORKSPACE/dist/Image.lz4"
-          elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
-            KERNEL_IMG="$GITHUB_WORKSPACE/dist/Image"
-          fi
-
-          if [ -z "$KERNEL_IMG" ]; then
-            echo "ERROR: No kernel image found in dist/"
-            exit 1
-          fi
-
-          # Replace kernel
-          echo "Replacing kernel with: $KERNEL_IMG"
-          rm -f kernel
-          cp "$KERNEL_IMG" kernel
-
-          # Repack — Enforcing
-          echo "=== Repacking boot.img (Enforcing) ==="
-          $MAGISKBOOT repack stock_boot.img
-          truncate -s ${{ env.BOOT_PARTITION_SIZE }} new-boot.img
-          mv new-boot.img $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Enforcing.img
-          echo "Enforcing boot.img: $(du -h $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Enforcing.img | cut -f1)"
-
-          # Repack — Permissive
-          echo "=== Repacking boot.img (Permissive) ==="
-          if [ -f "header" ]; then
-            sed -i '/cmdline=/ s/$/ androidboot.selinux=permissive/' header
-            $MAGISKBOOT repack stock_boot.img
-            truncate -s ${{ env.BOOT_PARTITION_SIZE }} new-boot.img
-            mv new-boot.img $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Permissive.img
-            echo "Permissive boot.img: $(du -h $GITHUB_WORKSPACE/dist/Castorice-GKI-boot-Permissive.img | cut -f1)"
-          fi
-
-          echo "REPACK_OK=true" >> $GITHUB_ENV
-
       # ===== ANYKERNEL3 =====
       - name: Package AnyKernel3
         run: |
@@ -673,7 +589,7 @@ jobs:
           # AnyKernel3 Ramdisk Mod Script
           # osm0sis @ xda-developers
           properties() { '
-          kernel.string=Castorice GKI Kernel by naidrahiqa
+          kernel.string=Castorice GKI Kernel by ${{ inputs.author_name }}
           do.devicecheck=1
           do.modules=0
           do.systemless=1
@@ -708,7 +624,6 @@ jobs:
       - name: Prepare Output
         run: |
           mkdir -p out
-          cp dist/Castorice-GKI-boot-*.img out/ 2>/dev/null || true
           cp dist/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
           cp dist/Image* out/ 2>/dev/null || true
           echo "=== Final output ==="
@@ -746,25 +661,18 @@ jobs:
             - 📦 Module compat: MODVERSIONS disabled
 
             ### Downloads
-            | File | Method | SELinux |
-            |------|--------|---------|
-            | `*-Enforcing.img` | `fastboot flash boot` | Enforcing |
-            | `*-Permissive.img` | `fastboot flash boot` | Permissive |
-            | `*-AnyKernel3.zip` | Flash via Recovery | Enforcing |
+            | File | Method |
+            |------|--------|
+            | `*-AnyKernel3.zip` | Flash via Custom Recovery or Kernel Flasher |
+            | `Image*` | Raw kernel image |
 
             ### Flash Guide
-            ```bash
-            fastboot flash boot Castorice-GKI-boot-Enforcing.img
-            fastboot reboot
-            ```
+            Flash the `AnyKernel3.zip` via custom recovery (TWRP/OrangeFox) or use Kernel Flasher app.
 
             ### Compatibility
             - ✅ HyperOS 2.x (Android 15) — kernel 6.6
             - ❌ MIUI 14 / HyperOS 1.x — use Legacy 4.19
-
-            > ⚠️ Always use `fastboot boot <img>` to TEST before permanent flash!
           files: |
-            out/*.img
             out/*.zip
             out/Image*
           draft: false
