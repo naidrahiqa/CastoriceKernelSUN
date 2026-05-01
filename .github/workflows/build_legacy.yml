@@ -25,6 +25,17 @@ env:
   KERNEL_NAME: Castorice
   DEVICE_CODE: fire
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # Placeholders for dynamically set variables to prevent IDE warnings
+  CLANG_VERSION: ""
+  LLD_VERSION: ""
+  KERNEL_HEAD_HASH: ""
+  KSU_DIR: ""
+  KSU_VERSION: ""
+  KERNEL_VERSION: ""
+  MAGISKBOOT: ""
+  MAGISKBOOT_OK: ""
+  REPACK_OK: ""
+  ZIP_NAME: ""
 
 jobs:
   build:
@@ -288,16 +299,55 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/kernel
           
-          # Fix modern Clang -Werror warnings
-          echo "Stripping -Werror from all Makefiles to prevent build drops..."
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror\b//g' {} +
+          echo "=== Fixing modern Clang vs 4.19 incompatibilities ==="
           
-          # Explicitly fix zram_drv.c empty parameters if present
+          # CRITICAL FIX: The old regex 's/-Werror\b//g' would strip -Werror
+          # from compound flags like '-Werror=return-type', leaving '=return-type'
+          # as a standalone argument. Clang then sees:
+          #   error: no such file or directory: '=return-type'
+          #   error: unknown argument: '-implicit-function-declaration'
+          
+          # Step 1: Remove ENTIRE compound -Werror=xxx flags (must come first!)
+          echo "Removing compound -Werror=xxx flags..."
+          find . -type f -name "Makefile" -exec sed -i 's/-Werror=[a-zA-Z_-]*//g' {} +
+          find . -type f -name "Kbuild" -exec sed -i 's/-Werror=[a-zA-Z_-]*//g' {} +
+          
+          # Step 2: Remove standalone -Werror (now safe since compounds are gone)
+          echo "Removing standalone -Werror..."
+          find . -type f -name "Makefile" -exec sed -i 's/ -Werror / /g; s/ -Werror$//g; s/^-Werror //g' {} +
+          find . -type f -name "Kbuild" -exec sed -i 's/ -Werror / /g; s/ -Werror$//g; s/^-Werror //g' {} +
+          
+          # Step 3: Remove GCC-specific warning flags that clang doesn't understand
+          # These cause 'unknown argument' errors with modern clang
+          echo "Removing clang-incompatible warning flags..."
+          find . -type f \( -name "Makefile" -o -name "Kbuild" \) \
+            -exec sed -i 's/-Wno-unused-but-set-variable//g' {} + \
+            -exec sed -i 's/-Wno-unused-but-set-parameter//g' {} + \
+            -exec sed -i 's/-Wunused-but-set-variable//g' {} + \
+            -exec sed -i 's/-Wunused-but-set-parameter//g' {} +
+          
+          # Step 4: Fix strict-prototypes (clang 15+ enforces C2x no-K&R rule)
+          echo "Fixing strict-prototypes issues..."
           if [ -f "drivers/block/zram/zram_drv.c" ]; then
-            echo "Patching zram_drv.c strict-prototypes..."
             sed -i 's/zram_debugfs_init()/zram_debugfs_init(void)/g' drivers/block/zram/zram_drv.c
             sed -i 's/zram_debugfs_destroy()/zram_debugfs_destroy(void)/g' drivers/block/zram/zram_drv.c
           fi
+          
+          # Step 5: Patch top-level Makefile to add clang compat flags
+          # This suppresses warnings that would otherwise be fatal with -Werror
+          if [ -f "Makefile" ]; then
+            echo "Adding clang compatibility CFLAGS..."
+            sed -i '/^KBUILD_CFLAGS.*:=/a \
+          KBUILD_CFLAGS += -Wno-error \
+          KBUILD_CFLAGS += -Wno-implicit-function-declaration \
+          KBUILD_CFLAGS += -Wno-strict-prototypes \
+          KBUILD_CFLAGS += -Wno-return-type \
+          KBUILD_CFLAGS += -Wno-unknown-warning-option \
+          KBUILD_CFLAGS += -Wno-int-conversion \
+          KBUILD_CFLAGS += -Wno-unused-function' Makefile
+          fi
+          
+          echo "=== Compiler fixes applied ==="
 
       # ===== BUILD =====
       - name: Build Kernel

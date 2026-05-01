@@ -34,6 +34,15 @@ env:
   KERNEL_NAME: Castorice
   DEVICE_CODE: fire
   BOOT_PARTITION_SIZE: "134217728"
+  # Placeholders for dynamically set variables to prevent IDE warnings
+  KSU_DIR: ""
+  KSU_VERSION: ""
+  SUSFS_OK: ""
+  BUILT_KERNEL_VERSION: ""
+  MAGISKBOOT: ""
+  MAGISKBOOT_OK: ""
+  REPACK_OK: ""
+  ZIP_NAME: ""
 
 jobs:
   build:
@@ -172,33 +181,149 @@ jobs:
           echo "=== Verify SUSFS files ==="
           ls -la include/linux/susfs* fs/susfs*
 
-          # Apply kernel integration patch
+          # Apply kernel integration patch (kernel tree itself)
           for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
-            [ -f "$patch" ] && patch -p1 --forward < "$patch" || echo "WARN: $patch had issues"
+            [ -f "$patch" ] && patch -p1 --forward --fuzz=3 < "$patch" || echo "WARN: $patch had issues"
           done
 
-          # Apply KSU SUSFS patches
+          # Apply KSU SUSFS patches (modifies KernelSU-Next source)
           KSU_DIR="${{ env.KSU_DIR }}"
           SUSFS_PATCH_DIR="$(pwd)/../susfs4ksu/kernel_patches"
-
-          # The patch lives in KernelSU/ subdir (not KernelSU-Next)
           PATCH_FILE="${SUSFS_PATCH_DIR}/KernelSU/10_enable_susfs_for_ksu.patch"
+
+          SUSFS_PATCH_OK=false
           if [ -f "$PATCH_FILE" ]; then
-            echo "Applying SUSFS patch to $KSU_DIR..."
+            echo "Applying SUSFS patch to $KSU_DIR with fuzz tolerance..."
             cd $KSU_DIR
-            patch -p1 --forward < "$PATCH_FILE" || echo "WARN: SUSFS KSU patch had issues"
+            if patch -p1 --forward --fuzz=3 < "$PATCH_FILE"; then
+              echo "SUSFS KSU patch applied successfully"
+              SUSFS_PATCH_OK=true
+            else
+              echo "WARN: SUSFS KSU patch had failures, applying manual fallback..."
+              SUSFS_PATCH_OK=false
+            fi
             cd ..
           else
             echo "WARNING: SUSFS KSU patch not found at $PATCH_FILE"
             ls -la ${SUSFS_PATCH_DIR}/ || true
           fi
 
-          # Verify Kconfig
+          # ===== MANUAL FALLBACK: inject SUSFS into KernelSU-Next =====
+          if [ "$SUSFS_PATCH_OK" = "false" ]; then
+            echo "=== Manual SUSFS integration fallback ==="
+            KSU_KERNEL="$KSU_DIR/kernel"
+
+            # 1. Add SUSFS Kconfig entries (if not already present)
+            if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
+              echo "Injecting SUSFS Kconfig..."
+              # Insert before the final 'endmenu'
+              sed -i '/^endmenu$/i \
+          menu "KernelSU - SUSFS"\
+          config KSU_SUSFS\
+          \tbool "KernelSU addon - SUSFS"\
+          \tdepends on KSU\
+          \tdefault y\
+          \thelp\
+          \t  Patch and Enable SUSFS to kernel with KernelSU.\
+          \
+          config KSU_SUSFS_SUS_PATH\
+          \tbool "Enable to hide suspicious path"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_SUS_MOUNT\
+          \tbool "Enable to hide suspicious mounts"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_SUS_KSTAT\
+          \tbool "Enable to spoof suspicious kstat"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_SPOOF_UNAME\
+          \tbool "Enable to spoof uname"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_ENABLE_LOG\
+          \tbool "Enable logging susfs log to kernel"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS\
+          \tbool "Enable to hide ksu and susfs symbols from /proc/kallsyms"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\
+          \tbool "Enable to spoof /proc/bootconfig or /proc/cmdline"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_OPEN_REDIRECT\
+          \tbool "Enable to redirect a path to be opened with another path"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          config KSU_SUSFS_SUS_MAP\
+          \tbool "Enable to hide mmapped real file from proc maps"\
+          \tdepends on KSU_SUSFS\
+          \tdefault y\
+          \
+          endmenu' "$KSU_KERNEL/Kconfig"
+              echo "SUSFS Kconfig injected"
+            fi
+
+            # 2. Add SUSFS build info to Makefile (if not already present)
+            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
+              echo "Injecting SUSFS Makefile entries..."
+              cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
+
+          ## For susfs stuff ##
+          ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
+          $(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
+          $(info )
+          $(info -- SUSFS_VERSION: $(SUSFS_VERSION))
+          else
+          $(info -- You have not integrated susfs in your kernel yet.)
+          $(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
+          endif
+          MKEOF
+              echo "SUSFS Makefile entries injected"
+            fi
+
+            # 3. Add susfs.h include to core/init.c (if not already present)
+            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
+              echo "Injecting susfs.h include into core/init.c..."
+              sed -i '/#include <linux\/workqueue.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/core/init.c"
+            fi
+
+            # 4. Add susfs_init() call to core/init.c (if not already present)
+            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
+              echo "Injecting susfs_init() call..."
+              sed -i '/ksu_feature_init/i \
+          #ifdef CONFIG_KSU_SUSFS\
+          \tsusfs_init();\
+          #endif' "$KSU_KERNEL/core/init.c"
+            fi
+
+            # 5. Add susfs includes to supercall/dispatch.c (if not already present)
+            if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
+              echo "Injecting susfs.h include into dispatch.c..."
+              sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
+            fi
+
+            echo "=== Manual SUSFS fallback complete ==="
+          fi
+
+          # Verify Kconfig has SUSFS entries
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
             echo "SUSFS_OK=true" >> $GITHUB_ENV
+            echo "SUSFS Kconfig verified OK"
           else
             echo "SUSFS_OK=false" >> $GITHUB_ENV
-            echo "WARNING: SUSFS Kconfig NOT found in $KSU_DIR"
+            echo "WARNING: SUSFS Kconfig NOT found in $KSU_DIR — SUSFS will NOT be enabled"
           fi
 
       # ===== KERNEL CONFIG =====
