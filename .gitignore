@@ -4,3 +4,10 @@ dist/
 out/
 kernel/
 ak3/
+runs.json
+gki_logs/
+legacy_logs/
+logs/
+gki_logs.zip
+legacy_logs.zip
+*.log

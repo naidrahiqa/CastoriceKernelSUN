@@ -289,7 +289,7 @@ jobs:
           # Branding / Vermagic (MUST MATCH STOCK OR WIFI BREAKS)
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
-          sed -i "/CONFIG_LOCALVERSION=\"/s/.$/-perf-g2da4f2613486\"/" $DEFCONFIG
+          sed -i 's/CONFIG_LOCALVERSION=".*"/CONFIG_LOCALVERSION="-Castorice-perf-g2da4f2613486"/' $DEFCONFIG
 
           echo "=== Defconfig tail ==="
           tail -40 $DEFCONFIG
@@ -472,10 +472,16 @@ jobs:
           DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
           if [ -f "$DTB" ]; then cp "$DTB" ./dtb; fi
 
-          chmod +x tools/x86_64/magiskboot
-          ./tools/x86_64/magiskboot split Image.gz-dtb
-          mv kernel Image
-          rm -f Image.gz-dtb
+          if [ -f "tools/x86_64/magiskboot" ]; then
+            chmod +x tools/x86_64/magiskboot
+            ./tools/x86_64/magiskboot split Image.gz-dtb || echo "WARN: magiskboot split failed"
+            if [ -f "kernel" ]; then
+              mv kernel Image
+              rm -f Image.gz-dtb
+            fi
+          else
+            echo "WARN: AnyKernel3 magiskboot not found, keeping Image.gz-dtb as-is"
+          fi
 
           echo "• Built with Castorice Performance Profile" >> banner
 

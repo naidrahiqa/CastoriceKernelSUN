@@ -138,11 +138,20 @@ jobs:
         run: |
           cd kernel/common
 
-          # Clone KernelSU-Next directly from dev branch
-          # The dev branch has ALL required APIs: ksu_late_loaded, KERNEL_SU_CONTEXT,
-          # ksu_syscall_hook_manager_exit — needed for SUSFS compatibility
-          echo "Cloning KernelSU-Next dev branch directly..."
-          git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+          # Clone KernelSU-Next latest stable release
+          echo "Fetching latest stable KernelSU-Next release..."
+          KSU_TAG=$(curl -sL https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest \
+            | jq -r '.tag_name')
+
+          if [ -z "$KSU_TAG" ] || [ "$KSU_TAG" = "null" ]; then
+            echo "WARN: Could not fetch latest release tag, falling back to default branch"
+            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+            KSU_TAG="default"
+          else
+            echo "Cloning KernelSU-Next $KSU_TAG (latest stable)..."
+            git clone --depth=1 --branch "$KSU_TAG" \
+              https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+          fi
 
           # Integrate into kernel build (symlink driver)
           ln -sf "$(pwd)/KernelSU-Next/kernel" "drivers/kernelsu"
@@ -161,7 +170,7 @@ jobs:
           KSU_VERSION=$(cd $KSU_DIR && git rev-list --count HEAD)
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
-          echo "KernelSU-Next installed — version $KSU_VERSION (dev branch)"
+          echo "KernelSU-Next installed — version $KSU_VERSION ($KSU_TAG)"
 
       # ===== SUSFS =====
       - name: Setup SUSFS

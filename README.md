@@ -76,7 +76,7 @@ fastboot reboot
 ### GKI 6.6 (HyperOS 2)
 - **KMI**: `6.6-android15-8` (must match device!)
 - **Source**: Android Common Kernel (`common-android15-6.6`)
-- **KernelSU**: `next` branch (kprobes hook)
+- **KernelSU**: Latest stable release (kprobes hook)
 - **Boot image**: Repacked from stock boot.img via magiskboot
 - **Module compat**: `CONFIG_MODVERSIONS=n` (allows vendor module loading)
 
