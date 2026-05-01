@@ -307,9 +307,9 @@ jobs:
           export KBUILD_BUILD_USER=Castorice
           export KBUILD_BUILD_HOST=naidrahiqa
           export KBUILD_BUILD_VERSION=1
-          export PATH="$GITHUB_WORKSPACE/ZyClang/bin:$PATH"
 
-          ARGS="ARCH=arm64 \
+          ARGS="PATH=$GITHUB_WORKSPACE/ZyClang/bin:$PATH \
+            ARCH=arm64 \
             SUBARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -327,16 +327,10 @@ jobs:
             HOSTLD=ld.lld \
             HOSTCC=clang \
             HOSTCXX=clang++ \
-            HOSTCFLAGS=-fcommon \
-            KCPPFLAGS=-fcommon \
             LLVM=1"
 
-          export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=return-type -Wno-error=unknown-warning-option -Wno-strict-prototypes"
-          export KBUILD_CFLAGS="-Wno-error=implicit-function-declaration -Wno-error=return-type -Wno-error=unknown-warning-option -Wno-strict-prototypes"
-          export HOSTCFLAGS="-fcommon"
-          export KBUILD_HOSTCFLAGS="-fcommon"
-
           # Generate .config
+          rm -rf out
           make O=out $ARGS fire_defconfig
 
           KERNEL_VERSION=$(make O=out $ARGS kernelversion 2>/dev/null | grep "4.19")
