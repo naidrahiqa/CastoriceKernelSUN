@@ -275,11 +275,10 @@ jobs:
           echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> $DEFCONFIG
           echo "CONFIG_IP_SET_LIST_SET=y" >> $DEFCONFIG
 
-          # Branding
+          # Branding / Vermagic (MUST MATCH STOCK OR WIFI BREAKS)
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
-          echo 'CONFIG_LOCALVERSION="-Castorice"' >> $DEFCONFIG
-          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          sed -i "/CONFIG_LOCALVERSION=\"/s/.$/-perf-g2da4f2613486\"/" $DEFCONFIG
 
           echo "=== Defconfig tail ==="
           tail -40 $DEFCONFIG
@@ -328,6 +327,8 @@ jobs:
             HOSTLD=ld.lld \
             HOSTCC=clang \
             HOSTCXX=clang++ \
+            HOSTCFLAGS=-fcommon \
+            KCPPFLAGS=-fcommon \
             LLVM=1"
 
           export KCFLAGS="-Wno-error=implicit-function-declaration -Wno-error=return-type -Wno-error=unknown-warning-option -Wno-strict-prototypes"
@@ -419,34 +420,22 @@ jobs:
           BASE_NAME="Castorice-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
+          # Use Alexjr2's preconfigured AnyKernel3 for fire
+          git clone --depth=1 https://github.com/Alexjr2/AnyKernel3.git -b android-4.19 ak3
           cd ak3
 
-          cat > anykernel.sh << 'AKEOF'
-          # AnyKernel3 Ramdisk Mod Script
-          # osm0sis @ xda-developers
-          properties() { '
-          kernel.string=Castorice Legacy Kernel by naidrahiqa
-          do.devicecheck=1
-          do.modules=0
-          do.systemless=1
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=fire
-          device.name2=Redmi 12
-          supported.versions=13-14
-          '; }
-          block=boot;
-          is_slot_device=auto;
-          ramdisk_compression=auto;
-          patch_vbmeta_flag=auto;
-          . tools/ak3-core.sh;
-          dump_boot;
-          write_boot;
-          AKEOF
-
           cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb .
-          zip -r9 "$GITHUB_WORKSPACE/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
+          DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
+          if [ -f "$DTB" ]; then cp "$DTB" ./dtb; fi
+
+          chmod +x tools/x86_64/magiskboot
+          ./tools/x86_64/magiskboot split Image.gz-dtb
+          mv kernel Image
+          rm -f Image.gz-dtb
+
+          echo "• Built with Castorice Performance Profile" >> banner
+
+          zip -r9 "$GITHUB_WORKSPACE/${BASE_NAME}-AnyKernel3.zip" * -x ".git*" "*.md" "LICENSE"
 
       - name: Prepare Output
         run: |
