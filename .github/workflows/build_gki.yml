@@ -187,6 +187,14 @@ jobs:
             done
           done
 
+          # FIX: ksu_late_loaded was removed in latest KernelSU-Next, causing compile errors with SUSFS
+          echo "Fixing ksu_late_loaded error in $KSU_DIR/core/init.c..."
+          if [ -f "$KSU_DIR/core/init.c" ]; then
+            sed -i 's/if (!ksu_late_loaded)/if (1)/g' $KSU_DIR/core/init.c
+            sed -i 's/ksu_late_loaded/0/g' $KSU_DIR/core/init.c
+            echo "Fixed ksu_late_loaded in init.c"
+          fi
+
           # Verify Kconfig
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
             echo "SUSFS_OK=true" >> $GITHUB_ENV
