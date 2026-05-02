@@ -172,6 +172,10 @@ jobs:
       - name: Setup SUSFS
         if: ${{ inputs.enable_susfs == true }}
         run: |
+          # Git identity needed for git commit/apply --3way used below
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
           cd kernel
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
             -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || \
