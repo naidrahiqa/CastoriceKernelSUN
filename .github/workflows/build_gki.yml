@@ -179,33 +179,65 @@ jobs:
             -b gki-${ANDROID_VERSION}-6.6
 
           cd common
-          # Copy SUSFS source files
+
+          # --- Step 1: Copy SUSFS kernel source files ---
+          echo "=== Copying SUSFS source files ==="
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-
-          echo "=== Verify SUSFS files ==="
           ls -la include/linux/susfs* fs/susfs*
 
-          # Apply kernel integration patch (kernel tree itself)
+          # --- Step 2: Apply kernel tree integration patch ---
+          echo "=== Applying kernel tree SUSFS patch ==="
           for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
-            [ -f "$patch" ] && patch -p1 --forward --fuzz=3 < "$patch" || echo "WARN: $patch had issues"
+            if [ -f "$patch" ]; then
+              echo "Applying: $patch"
+              git add -A && git commit -m "pre-susfs-kernel-patch" --allow-empty -q
+              if git apply --3way "$patch"; then
+                echo "Kernel SUSFS patch applied cleanly via 3-way merge"
+              elif patch -p1 --forward --fuzz=3 < "$patch"; then
+                echo "Kernel SUSFS patch applied via fuzz fallback"
+              else
+                echo "WARN: Kernel SUSFS patch had issues (continuing)"
+              fi
+            fi
           done
 
-          # Apply KSU SUSFS patches (modifies KernelSU-Next source)
+          # --- Step 3: Apply KSU SUSFS patch (modifies KernelSU-Next source) ---
+          echo "=== Applying SUSFS patch to KernelSU-Next ==="
           KSU_DIR="${{ env.KSU_DIR }}"
           SUSFS_PATCH_DIR="$(pwd)/../susfs4ksu/kernel_patches"
           PATCH_FILE="${SUSFS_PATCH_DIR}/KernelSU/10_enable_susfs_for_ksu.patch"
 
           SUSFS_PATCH_OK=false
           if [ -f "$PATCH_FILE" ]; then
-            echo "Applying SUSFS patch to $KSU_DIR with fuzz tolerance..."
-            cd $KSU_DIR
-            if patch -p1 --forward --fuzz=3 < "$PATCH_FILE"; then
-              echo "SUSFS KSU patch applied successfully"
+            cd "$KSU_DIR"
+            # Commit current state so git apply --3way works
+            git add -A && git commit -m "pre-susfs-ksu-patch" --allow-empty -q
+
+            # Try git apply with 3-way merge first (best for handling line offsets)
+            if git apply --3way "$PATCH_FILE" 2>&1; then
+              echo "SUSFS KSU patch applied cleanly via 3-way merge"
               SUSFS_PATCH_OK=true
             else
-              echo "WARN: SUSFS KSU patch had failures, applying manual fallback..."
-              SUSFS_PATCH_OK=false
+              echo "3-way merge had conflicts, trying with reject..."
+              # Reset and try patch with --reject to see what fails
+              git checkout -- . 2>/dev/null || true
+              if patch -p1 --forward --fuzz=3 --no-backup-if-mismatch < "$PATCH_FILE"; then
+                echo "SUSFS KSU patch applied via fuzz fallback"
+                SUSFS_PATCH_OK=true
+              else
+                echo "Patch had rejections, cleaning up .rej files..."
+                find . -name "*.rej" -exec echo "REJECTED: {}" \; -exec cat {} \; -exec rm {} \;
+                find . -name "*.orig" -delete 2>/dev/null || true
+                # Check if the critical changes were applied despite some rejects
+                if grep -q "susfs_init" kernel/core/init.c 2>/dev/null && \
+                   grep -q "CONFIG_KSU_SUSFS" kernel/Kconfig 2>/dev/null; then
+                  echo "Critical SUSFS changes are present despite some rejected hunks"
+                  SUSFS_PATCH_OK=true
+                else
+                  SUSFS_PATCH_OK=false
+                fi
+              fi
             fi
             cd ..
           else
@@ -213,76 +245,75 @@ jobs:
             ls -la ${SUSFS_PATCH_DIR}/ || true
           fi
 
-          # ===== MANUAL FALLBACK: inject SUSFS into KernelSU-Next =====
+          # --- Step 4: Manual fallback ONLY if patch completely failed ---
           if [ "$SUSFS_PATCH_OK" = "false" ]; then
-            echo "=== Manual SUSFS integration fallback ==="
+            echo "=== Manual SUSFS integration (patch failed completely) ==="
             KSU_KERNEL="$KSU_DIR/kernel"
 
-            # 1. Add SUSFS Kconfig entries (if not already present)
+            # Inject SUSFS Kconfig
             if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
-              echo "Injecting SUSFS Kconfig..."
-              # Insert before the final 'endmenu'
-              sed -i '/^endmenu$/i \
-          menu "KernelSU - SUSFS"\
-          config KSU_SUSFS\
-          \tbool "KernelSU addon - SUSFS"\
-          \tdepends on KSU\
-          \tdefault y\
-          \thelp\
-          \t  Patch and Enable SUSFS to kernel with KernelSU.\
-          \
-          config KSU_SUSFS_SUS_PATH\
-          \tbool "Enable to hide suspicious path"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_SUS_MOUNT\
-          \tbool "Enable to hide suspicious mounts"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_SUS_KSTAT\
-          \tbool "Enable to spoof suspicious kstat"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_SPOOF_UNAME\
-          \tbool "Enable to spoof uname"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_ENABLE_LOG\
-          \tbool "Enable logging susfs log to kernel"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS\
-          \tbool "Enable to hide ksu and susfs symbols from /proc/kallsyms"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\
-          \tbool "Enable to spoof /proc/bootconfig or /proc/cmdline"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_OPEN_REDIRECT\
-          \tbool "Enable to redirect a path to be opened with another path"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          config KSU_SUSFS_SUS_MAP\
-          \tbool "Enable to hide mmapped real file from proc maps"\
-          \tdepends on KSU_SUSFS\
-          \tdefault y\
-          \
-          endmenu' "$KSU_KERNEL/Kconfig"
-              echo "SUSFS Kconfig injected"
+              cat >> "$KSU_KERNEL/Kconfig" << 'KEOF'
+
+          menu "KernelSU - SUSFS"
+          config KSU_SUSFS
+          	bool "KernelSU addon - SUSFS"
+          	depends on KSU
+          	default y
+          	help
+          	  Patch and Enable SUSFS to kernel with KernelSU.
+
+          config KSU_SUSFS_SUS_PATH
+          	bool "Enable to hide suspicious path"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SUS_MOUNT
+          	bool "Enable to hide suspicious mounts"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SUS_KSTAT
+          	bool "Enable to spoof suspicious kstat"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SPOOF_UNAME
+          	bool "Enable to spoof uname"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_ENABLE_LOG
+          	bool "Enable logging susfs log to kernel"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+          	bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+          	bool "Enable to spoof /proc/bootconfig or /proc/cmdline"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_OPEN_REDIRECT
+          	bool "Enable to redirect a path to be opened with another path"
+          	depends on KSU_SUSFS
+          	default y
+
+          config KSU_SUSFS_SUS_MAP
+          	bool "Enable to hide mmapped real file from proc maps"
+          	depends on KSU_SUSFS
+          	default y
+
+          endmenu
+          KEOF
+              echo "SUSFS Kconfig appended"
             fi
 
-            # 2. Add SUSFS build info to Makefile (if not already present)
+            # Inject SUSFS Makefile entries
             if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-              echo "Injecting SUSFS Makefile entries..."
               cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
 
           ## For susfs stuff ##
@@ -295,59 +326,44 @@ jobs:
           $(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
           endif
           MKEOF
-              echo "SUSFS Makefile entries injected"
             fi
 
-            # 3. Add susfs.h include to core/init.c (if not already present)
+            # Inject susfs.h include into core/init.c
             if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
-              echo "Injecting susfs.h include into core/init.c..."
               sed -i '/#include <linux\/workqueue.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/core/init.c"
             fi
 
-            # 4. Add susfs_init() call to core/init.c (if not already present)
+            # Inject susfs_init() call into core/init.c
             if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-              echo "Injecting susfs_init() call..."
               sed -i '/ksu_feature_init/i \
           #ifdef CONFIG_KSU_SUSFS\
           \tsusfs_init();\
           #endif' "$KSU_KERNEL/core/init.c"
             fi
 
-            # 5. Add susfs includes to supercall/dispatch.c (if not already present)
+            # Inject susfs includes into supercall/dispatch.c
             if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
-              echo "Injecting susfs.h include into dispatch.c..."
               sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
             fi
 
             echo "=== Manual SUSFS fallback complete ==="
           fi
 
-          # ===== KSU API COMPATIBILITY SHIMS =====
-          # KernelSU-Next v3.x renamed APIs. SUSFS patches may use old names.
-          # Old: ksu_syscall_hook_manager_init/exit, ksu_late_loaded
-          # New: ksu_syscall_hook_init/exit, (removed ksu_late_loaded)
-          echo "=== Applying KSU API compatibility fixes ==="
+          # --- Step 5: Post-patch validation (NO destructive sed fixups!) ---
+          echo "=== Validating SUSFS integration ==="
 
-          # Fix in all KSU and kernel source files
-          find . -type f -name "*.c" -o -name "*.h" | xargs grep -l "ksu_syscall_hook_manager_init\|ksu_syscall_hook_manager_exit\|ksu_late_loaded" 2>/dev/null | while read f; do
-            echo "Fixing API names in: $f"
-            sed -i 's/ksu_syscall_hook_manager_init/ksu_syscall_hook_init/g' "$f"
-            sed -i 's/ksu_syscall_hook_manager_exit/ksu_syscall_hook_exit/g' "$f"
-            # Remove lines referencing ksu_late_loaded (no longer exists)
-            sed -i '/ksu_late_loaded/d' "$f"
-          done
-
-          # Also create a compat header in case any file includes it
-          cat > include/linux/ksu_compat.h << 'COMPAT_EOF'
-          #ifndef _KSU_COMPAT_H
-          #define _KSU_COMPAT_H
-          /* KernelSU-Next API compatibility shims */
-          #define ksu_syscall_hook_manager_init ksu_syscall_hook_init
-          #define ksu_syscall_hook_manager_exit ksu_syscall_hook_exit
-          #endif
-          COMPAT_EOF
-
-          echo "KSU API compatibility fixes applied"
+          # Verify init.c compiles: check for balanced braces and return statements
+          KSU_INIT="$KSU_DIR/kernel/core/init.c"
+          if [ -f "$KSU_INIT" ]; then
+            OPEN=$(grep -c '{' "$KSU_INIT" || true)
+            CLOSE=$(grep -c '}' "$KSU_INIT" || true)
+            echo "init.c brace count: open=$OPEN close=$CLOSE"
+            if [ "$OPEN" != "$CLOSE" ]; then
+              echo "ERROR: Unbalanced braces in init.c! Dumping file for debug:"
+              cat -n "$KSU_INIT"
+              exit 1
+            fi
+          fi
 
           # Verify Kconfig has SUSFS entries
           if grep -r "CONFIG_KSU_SUSFS" $KSU_DIR/kernel/Kconfig 2>/dev/null; then
@@ -355,8 +371,14 @@ jobs:
             echo "SUSFS Kconfig verified OK"
           else
             echo "SUSFS_OK=false" >> $GITHUB_ENV
-            echo "WARNING: SUSFS Kconfig NOT found in $KSU_DIR — SUSFS will NOT be enabled"
+            echo "WARNING: SUSFS Kconfig NOT found — SUSFS will NOT be enabled"
           fi
+
+          # Show final state of critical files
+          echo "=== Final init.c ==="
+          head -50 "$KSU_DIR/kernel/core/init.c" 2>/dev/null || true
+          echo "=== Final Kconfig (SUSFS section) ==="
+          grep -A2 "KSU_SUSFS" "$KSU_DIR/kernel/Kconfig" 2>/dev/null | head -20 || true
 
       # ===== KERNEL CONFIG =====
       - name: Configure Kernel
