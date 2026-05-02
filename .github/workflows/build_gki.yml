@@ -353,7 +353,29 @@ jobs:
             echo "=== Manual SUSFS fallback complete ==="
           fi
 
-          # --- Step 5: Post-patch validation (NO destructive sed fixups!) ---
+          # --- Step 5: Safe KSU API Compatibility Fixes ---
+          # KSU-Next v3.2.0 removed `ksu_late_loaded` and renamed KSU kprobe API.
+          # The SUSFS patch expects the old KSU structure.
+          # CRITICAL: We DO NOT delete lines here (like /ksu_late_loaded/d), because 
+          # that breaks brace matching (e.g., deleting 'if (ksu_late_loaded) {' leaves an orphaned '}').
+          # Instead, we safely replace the variables with valid C syntax.
+          echo "=== Applying Safe KSU API Fixes ==="
+          find . -type f -name "*.c" -o -name "*.h" | while read f; do
+            # Safely replace ksu_late_loaded with false so if(ksu_late_loaded) becomes if(false)
+            sed -i 's/\bksu_late_loaded\b/false/g' "$f"
+            # Update renamed APIs
+            sed -i 's/\bksu_syscall_hook_manager_init\b/ksu_syscall_hook_init/g' "$f"
+            sed -i 's/\bksu_syscall_hook_manager_exit\b/ksu_syscall_hook_exit/g' "$f"
+          done
+
+          # Include stdbool.h in KSU init.c to ensure 'false' is defined
+          KSU_INIT="$KSU_DIR/kernel/core/init.c"
+          if [ -f "$KSU_INIT" ] && ! grep -q "stdbool.h" "$KSU_INIT"; then
+            sed -i '1i #include <linux/types.h>\n#include <linux/stddef.h>' "$KSU_INIT"
+          fi
+          echo "Safe KSU API fixes applied"
+
+          # --- Step 6: Post-patch validation ---
           echo "=== Validating SUSFS integration ==="
 
           # Verify init.c compiles: check for balanced braces and return statements
