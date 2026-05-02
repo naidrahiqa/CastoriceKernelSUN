@@ -296,55 +296,59 @@ jobs:
       - name: Fix Compiler Errors
         run: |
           cd $GITHUB_WORKSPACE/kernel
-          
+
           echo "=== Fixing modern Clang vs 4.19 incompatibilities ==="
-          
-          # CRITICAL FIX: The old regex 's/-Werror\b//g' would strip -Werror
-          # from compound flags like '-Werror=return-type', leaving '=return-type'
-          # as a standalone argument. Clang then sees:
-          #   error: no such file or directory: '=return-type'
-          #   error: unknown argument: '-implicit-function-declaration'
-          
-          # Step 1: Remove ENTIRE compound -Werror=xxx flags (must come first!)
+
+          # Step 1: Remove ENTIRE compound -Werror=xxx flags from all Makefiles
+          # Must come BEFORE removing standalone -Werror to avoid leaving orphan '=xxx'
           echo "Removing compound -Werror=xxx flags..."
-          find . -type f -name "Makefile" -exec sed -i 's/-Werror=[a-zA-Z_-]*//g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/-Werror=[a-zA-Z_-]*//g' {} +
-          
-          # Step 2: Remove standalone -Werror (now safe since compounds are gone)
+          find . -type f \( -name "Makefile" -o -name "Kbuild" \) \
+            -exec sed -i 's/-Werror=[a-zA-Z_-]*//g' {} +
+
+          # Step 2: Remove standalone -Werror (safe now since compounds are gone)
           echo "Removing standalone -Werror..."
-          find . -type f -name "Makefile" -exec sed -i 's/ -Werror / /g; s/ -Werror$//g; s/^-Werror //g' {} +
-          find . -type f -name "Kbuild" -exec sed -i 's/ -Werror / /g; s/ -Werror$//g; s/^-Werror //g' {} +
-          
+          find . -type f \( -name "Makefile" -o -name "Kbuild" \) \
+            -exec sed -i 's/ -Werror / /g; s/ -Werror$//g; s/^-Werror //g' {} +
+
           # Step 3: Remove GCC-specific warning flags that clang doesn't understand
-          # These cause 'unknown argument' errors with modern clang
           echo "Removing clang-incompatible warning flags..."
           find . -type f \( -name "Makefile" -o -name "Kbuild" \) \
             -exec sed -i 's/-Wno-unused-but-set-variable//g' {} + \
             -exec sed -i 's/-Wno-unused-but-set-parameter//g' {} + \
             -exec sed -i 's/-Wunused-but-set-variable//g' {} + \
             -exec sed -i 's/-Wunused-but-set-parameter//g' {} +
-          
+
           # Step 4: Fix strict-prototypes (clang 15+ enforces C2x no-K&R rule)
           echo "Fixing strict-prototypes issues..."
           if [ -f "drivers/block/zram/zram_drv.c" ]; then
             sed -i 's/zram_debugfs_init()/zram_debugfs_init(void)/g' drivers/block/zram/zram_drv.c
             sed -i 's/zram_debugfs_destroy()/zram_debugfs_destroy(void)/g' drivers/block/zram/zram_drv.c
           fi
-          
-          # Step 5: Patch top-level Makefile to add clang compat flags
-          # This suppresses warnings that would otherwise be fatal with -Werror
+
+          # Step 5: Add clang compatibility CFLAGS
+          # CRITICAL: Append at END of Makefile, NOT inside the KBUILD_CFLAGS := block!
+          # The old sed '/^KBUILD_CFLAGS.*:=/a ...' was inserting lines in the
+          # middle of a multi-line backslash-continuation block, breaking Makefile syntax.
+          # Error was: "Makefile:447: *** recipe commences before first target. Stop."
           if [ -f "Makefile" ]; then
-            echo "Adding clang compatibility CFLAGS..."
-            # Use individual appends to avoid Makefile syntax errors from leading whitespace
-            sed -i '/^KBUILD_CFLAGS.*:=/a KBUILD_CFLAGS += -Wno-error' Makefile
-            sed -i '/^KBUILD_CFLAGS += -Wno-error$/a KBUILD_CFLAGS += -Wno-implicit-function-declaration' Makefile
-            sed -i '/^KBUILD_CFLAGS += -Wno-implicit-function-declaration$/a KBUILD_CFLAGS += -Wno-strict-prototypes' Makefile
-            sed -i '/^KBUILD_CFLAGS += -Wno-strict-prototypes$/a KBUILD_CFLAGS += -Wno-return-type' Makefile
-            sed -i '/^KBUILD_CFLAGS += -Wno-return-type$/a KBUILD_CFLAGS += -Wno-unknown-warning-option' Makefile
-            sed -i '/^KBUILD_CFLAGS += -Wno-unknown-warning-option$/a KBUILD_CFLAGS += -Wno-int-conversion' Makefile
-            sed -i '/^KBUILD_CFLAGS += -Wno-int-conversion$/a KBUILD_CFLAGS += -Wno-unused-function' Makefile
+            echo "Adding clang compatibility CFLAGS (appending to end of Makefile)..."
+            cat >> Makefile << 'CLANG_COMPAT_EOF'
+
+          # Clang compatibility flags (appended by CI)
+          KBUILD_CFLAGS += -Wno-error
+          KBUILD_CFLAGS += -Wno-implicit-function-declaration
+          KBUILD_CFLAGS += -Wno-strict-prototypes
+          KBUILD_CFLAGS += -Wno-return-type
+          KBUILD_CFLAGS += -Wno-unknown-warning-option
+          KBUILD_CFLAGS += -Wno-int-conversion
+          KBUILD_CFLAGS += -Wno-unused-function
+          KBUILD_CFLAGS += -Wno-misleading-indentation
+          KBUILD_CFLAGS += -Wno-bool-operation
+          KBUILD_CFLAGS += -Wno-uninitialized
+          CLANG_COMPAT_EOF
+            echo "Clang CFLAGS appended successfully"
           fi
-          
+
           echo "=== Compiler fixes applied ==="
 
       # ===== BUILD =====
