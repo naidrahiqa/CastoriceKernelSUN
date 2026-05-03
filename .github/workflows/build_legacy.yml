@@ -291,6 +291,22 @@ jobs:
                 } >> "$KSU_KERNEL/Makefile"
               fi
 
+              # 2b. Inject SUSFS source compilation into KSU Makefile (Fix undefined symbols)
+              if ! grep -q "susfs.o" "$KSU_KERNEL/Makefile" 2>/dev/null; then
+                {
+                  echo ''
+                  echo '# SUSFS object files (compiled when CONFIG_KSU_SUSFS=y)'
+                  echo 'ifdef CONFIG_KSU_SUSFS'
+                  echo 'obj-y += ../../fs/susfs.o'
+                  echo 'endif'
+                } >> "$KSU_KERNEL/Makefile"
+              fi
+
+              # 2c. Ensure SUSFS header is accessible
+              if [ ! -f "include/linux/susfs.h" ]; then
+                cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ 2>/dev/null || true
+              fi
+
               # 3. Inject susfs.h include into core/init.c
               if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
                 sed -i '/#include <linux\/workqueue.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/core/init.c"
