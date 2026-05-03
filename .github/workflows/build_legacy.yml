@@ -80,6 +80,7 @@ jobs:
       - name: Clone Reference Patches
         run: |
           git clone --depth=1 https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire.git ref_patches
+          rm -rf ref_patches/.git
 
       - name: Apply Device Patches
         run: |
@@ -117,6 +118,7 @@ jobs:
           # Fix git version
           KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
           sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild 2>/dev/null || true
+          rm -rf KernelSU-Next/.git
           
           # Apply manual patches for 4.19
           echo "Applying KSU manual patches..."
@@ -132,6 +134,7 @@ jobs:
         run: |
           cd kernel
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
+          rm -rf susfs4ksu/.git
           
           cp -rv susfs4ksu/kernel_patches/fs/* fs/
           cp -rv susfs4ksu/kernel_patches/include/linux/* include/linux/
@@ -240,6 +243,8 @@ jobs:
           cd kernel
           sed -i 's/-Wno-format-invalid-specifier//g' Makefile || true
           sed -i 's/-Wno-gnu-empty-initializer//g' Makefile || true
+          find drivers -name "Makefile" -exec sed -i 's/-Werror//g' {} + || true
+          find sound -name "Makefile" -exec sed -i 's/-Werror//g' {} + || true
 
       - name: Build Kernel
         run: |

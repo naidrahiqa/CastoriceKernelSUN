@@ -623,6 +623,9 @@ jobs:
           for f in build.config.gki build.config.gki.aarch64; do
             [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
           done
+          
+          # Fix KMI strict mode missing module_layout because of CONFIG_MODVERSIONS=n
+          sed -i '/module_layout/d' android/abi_gki_aarch64* 2>/dev/null || true
 
           # Bypass ABI check script
           PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
