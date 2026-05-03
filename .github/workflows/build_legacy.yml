@@ -490,7 +490,8 @@ jobs:
           rm -rf out
           make O=out $ARGS fire_defconfig
 
-          KERNEL_VERSION=$(make O=out $ARGS kernelversion 2>/dev/null | grep "4.19")
+          KERNEL_VERSION=$(make -s O=out $ARGS kernelversion 2>/dev/null)
+          if [ -z "$KERNEL_VERSION" ]; then KERNEL_VERSION="4.19"; fi
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
           echo "=== Building Linux $KERNEL_VERSION ==="
 
@@ -515,8 +516,10 @@ jobs:
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           KSUTAG=""
-          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU_Next"; fi
-          BASE_NAME="Castorice-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU"; fi
+          
+          # Clean versioning for the output zip
+          BASE_NAME="Castorice-Legacy-v${KERNEL_VERSION}${KSUTAG}${STAG}-Redmi12-$(date +%Y%m%d)"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
           # Use Alexjr2's preconfigured AnyKernel3 for fire

@@ -36,7 +36,8 @@ env:
   # Placeholders for dynamically set variables to prevent IDE warnings
   KSU_DIR: ""
   KSU_VERSION: ""
-  SUSFS_OK: ""
+  # FIX #1: SUSFS_OK default diset "false" bukan "" agar kondisi if tidak ambiguous
+  SUSFS_OK: "false"
   BUILT_KERNEL_VERSION: ""
   ZIP_NAME: ""
 
@@ -128,10 +129,12 @@ jobs:
             fi
           done
 
-          # Patch stamp.bzl if it has KMI generation
+          # FIX #2: stamp.bzl — tambahkan sed aktual, bukan cuma echo kosong
           STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
           if [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE"; then
-            echo "Checking stamp.bzl for KMI generation..."
+            echo "Patching stamp.bzl KMI generation..."
+            sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
+            echo "stamp.bzl patched"
           fi
 
       # ===== KERNELSU-NEXT =====
@@ -157,10 +160,19 @@ jobs:
 
           # Integrate into kernel build (copy driver instead of symlink for Bazel)
           cp -r "$(pwd)/KernelSU-Next/kernel" "drivers/kernelsu"
-          
+
           # Fix uapi symlink for Bazel sandbox by physically copying it
-          rm -f "drivers/kernelsu/include/uapi"
-          cp -r "$(pwd)/KernelSU-Next/uapi" "drivers/kernelsu/include/uapi"
+          # Search for uapi/app_profile.h dynamically to handle varying KernelSU-Next repos
+          rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
+          mkdir -p "drivers/kernelsu/uapi" "drivers/kernelsu/include/uapi"
+          
+          if [ -d "$(pwd)/KernelSU-Next/kernel/uapi" ]; then
+            cp -r "$(pwd)/KernelSU-Next/kernel/uapi"/* "drivers/kernelsu/uapi/" 2>/dev/null || true
+            cp -r "$(pwd)/KernelSU-Next/kernel/uapi"/* "drivers/kernelsu/include/uapi/" 2>/dev/null || true
+          elif [ -d "$(pwd)/KernelSU-Next/uapi" ]; then
+            cp -r "$(pwd)/KernelSU-Next/uapi"/* "drivers/kernelsu/uapi/" 2>/dev/null || true
+            cp -r "$(pwd)/KernelSU-Next/uapi"/* "drivers/kernelsu/include/uapi/" 2>/dev/null || true
+          fi
 
           # Add to Makefile if not present
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -172,11 +184,18 @@ jobs:
             echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
           fi
 
-          KSU_DIR="KernelSU-Next"
-          KSU_VERSION=$(cd $KSU_DIR && git rev-list --count HEAD)
+          # FIX #3: KSU_DIR diset ke path relatif dari kernel/common
+          KSU_DIR="$(pwd)/KernelSU-Next"
+          KSU_VERSION=$(cd "$KSU_DIR" && git rev-list --count HEAD)
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
           echo "KernelSU-Next installed — version $KSU_VERSION ($KSU_TAG)"
+
+          # FIX #4: Kbuild failing due to git missing in bazel sandbox
+          if [ -f "drivers/kernelsu/Kbuild" ]; then
+            sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild
+            sed -i "s/KSU_VERSION_TAG := .*/KSU_VERSION_TAG := $KSU_TAG/" drivers/kernelsu/Kbuild
+          fi
 
       # ===== SUSFS =====
       - name: Setup SUSFS
@@ -198,7 +217,7 @@ jobs:
           echo "=== Copying SUSFS source files ==="
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          ls -la include/linux/susfs* fs/susfs*
+          ls -la include/linux/susfs* fs/susfs* 2>/dev/null || true
 
           # --- Step 2: Apply kernel tree integration patch ---
           echo "=== Applying kernel tree SUSFS patch ==="
@@ -217,18 +236,17 @@ jobs:
           done
 
           # --- Step 3: Integrate SUSFS into KernelSU-Next ---
-          # KernelSU-Next v3.2.0 is fundamentally incompatible with the legacy 
-          # '10_enable_susfs_for_ksu.patch'. Applying it causes severe C syntax 
-          # corruption and undefined linker symbols. 
-          # Therefore, we bypass the patch entirely and cleanly inject the 
-          # necessary SUSFS initialization into the pristine KSU-Next source.
           echo "=== Integrating SUSFS into KernelSU-Next (Clean Manual Method) ==="
-          KSU_DIR="${{ env.KSU_DIR }}"
+
           KSU_KERNEL="drivers/kernelsu"
 
-          # 1. Inject SUSFS Kconfig
-          if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
-            cat >> "$KSU_KERNEL/Kconfig" << 'KEOF'
+          if [ ! -d "$KSU_KERNEL" ]; then
+            echo "WARN: $KSU_KERNEL not found — skipping KSU-SUSFS integration"
+          else
+
+            # 1. Inject SUSFS Kconfig
+            if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
+              cat >> "$KSU_KERNEL/Kconfig" << 'KEOF'
 
           menu "KernelSU - SUSFS"
           config KSU_SUSFS
@@ -285,12 +303,12 @@ jobs:
 
           endmenu
           KEOF
-            echo "SUSFS Kconfig injected successfully"
-          fi
+              echo "SUSFS Kconfig injected successfully"
+            fi
 
-          # 2. Inject SUSFS Makefile entries
-          if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-            cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
+            # 2. Inject SUSFS Makefile entries
+            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
+              cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
 
           ## For susfs stuff ##
           ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
@@ -302,58 +320,84 @@ jobs:
           $(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
           endif
           MKEOF
-            echo "SUSFS Makefile entries injected successfully"
-          fi
-
-          # 3. Inject susfs.h include into core/init.c
-          if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
-            sed -i '/#include <linux\/workqueue.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/core/init.c"
-          fi
-
-          # 4. Inject susfs_init() call into core/init.c
-          if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-            sed -i '/ksu_feature_init/i \
-          #ifdef CONFIG_KSU_SUSFS\
-          \tsusfs_init();\
-          #endif' "$KSU_KERNEL/core/init.c"
-          fi
-
-          # 5. Inject susfs includes into supercall/dispatch.c
-          if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
-            sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
-          fi
-
-          echo "=== Clean SUSFS Integration Complete ==="
-
-          # --- Step 4: Post-integration validation ---
-          echo "=== Validating SUSFS configuration ==="
-
-          # Verify init.c compiles conceptually: check for balanced braces
-          KSU_INIT="drivers/kernelsu/core/init.c"
-          if [ -f "$KSU_INIT" ]; then
-            OPEN=$(grep -c '{' "$KSU_INIT" || true)
-            CLOSE=$(grep -c '}' "$KSU_INIT" || true)
-            if [ "$OPEN" != "$CLOSE" ]; then
-              echo "ERROR: Unbalanced braces in init.c! This should never happen with clean integration."
-              exit 1
+              echo "SUSFS Makefile entries injected successfully"
             fi
-            echo "init.c syntax check OK"
-          fi
 
-          # Verify Kconfig has SUSFS entries
-          if grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null; then
-            echo "SUSFS_OK=true" >> $GITHUB_ENV
-            echo "SUSFS Kconfig verified OK"
-          else
-            echo "SUSFS_OK=false" >> $GITHUB_ENV
-            echo "WARNING: SUSFS Kconfig NOT found — SUSFS will NOT be enabled"
-          fi
+            # 3. Inject susfs.h include into core/init.c
+            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
+              sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/core/init.c"
+            fi
 
-          # Show final state of critical files
-          echo "=== Final init.c ==="
-          head -50 "drivers/kernelsu/core/init.c" 2>/dev/null || true
-          echo "=== Final Kconfig (SUSFS section) ==="
-          grep -A2 "KSU_SUSFS" "drivers/kernelsu/Kconfig" 2>/dev/null | head -20 || true
+            # 4. Inject susfs_init() call into core/init.c
+            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
+              INIT_FILE="$KSU_KERNEL/core/init.c"
+              python3 - "$INIT_FILE" << 'PYEOF'
+          import sys, re
+
+          path = sys.argv[1]
+          with open(path, 'r') as f:
+              content = f.read()
+
+          injection = (
+              "#ifdef CONFIG_KSU_SUSFS\n"
+              "\tsusfs_init();\n"
+              "#endif\n"
+          )
+
+          if 'susfs_init' not in content and 'ksu_feature_init' in content:
+              content = content.replace('ksu_feature_init', injection + '\tksu_feature_init', 1)
+              with open(path, 'w') as f:
+                  f.write(content)
+              print("susfs_init injected before ksu_feature_init")
+          else:
+              print("Skipped: susfs_init already present or ksu_feature_init not found")
+          PYEOF
+            fi
+
+            # 5. Inject susfs includes into supercall/dispatch.c
+            if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
+              sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
+            fi
+
+            echo "=== Clean SUSFS Integration Complete ==="
+
+            # --- Step 4: Post-integration validation ---
+            echo "=== Validating SUSFS configuration ==="
+
+            KSU_INIT="drivers/kernelsu/core/init.c"
+            if [ -f "$KSU_INIT" ]; then
+              python3 - "$KSU_INIT" << 'PYEOF'
+          import sys
+
+          path = sys.argv[1]
+          with open(path, 'r') as f:
+              lines = f.readlines()
+
+          open_count = 0
+          close_count = 0
+          for line in lines:
+              stripped = line.split('//')[0]
+              open_count += stripped.count('{')
+              close_count += stripped.count('}')
+
+          if open_count != close_count:
+              print(f"ERROR: Unbalanced braces in init.c! open={open_count} close={close_count}")
+              sys.exit(1)
+          else:
+              print(f"init.c syntax check OK (braces: {open_count}/{close_count})")
+          PYEOF
+            fi
+
+            # Verify Kconfig has SUSFS entries
+            if grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null; then
+              echo "SUSFS_OK=true" >> $GITHUB_ENV
+              echo "SUSFS Kconfig verified OK"
+            else
+              echo "SUSFS_OK=false" >> $GITHUB_ENV
+              echo "WARNING: SUSFS Kconfig NOT found — SUSFS will NOT be enabled"
+            fi
+
+          fi
 
       # ===== KERNEL CONFIG =====
       - name: Configure Kernel
@@ -370,8 +414,7 @@ jobs:
           EOF
           fi
 
-          # --- SUSFS ---
-          if [ "${{ env.SUSFS_OK }}" = "true" ] && [ "${{ inputs.enable_susfs }}" = "true" ]; then
+          if [ "$SUSFS_OK" = "true" ] && [ "${{ inputs.enable_susfs }}" = "true" ]; then
             cat >> $DEFCONFIG << 'EOF'
 
           # SUSFS
@@ -575,8 +618,10 @@ jobs:
           STAG=""
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           KSUTAG=""
-          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU_Next"; fi
-          BASE_NAME="Castorice-GKI-6.6${KSUTAG}${STAG}-fire-$(date +%Y%m%d)"
+          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU"; fi
+          
+          # Clean versioning for the output zip
+          BASE_NAME="Castorice-GKI-v6.6${KSUTAG}${STAG}-Redmi12-$(date +%Y%m%d)"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
@@ -606,13 +651,16 @@ jobs:
           write_boot;
           AKEOF
 
-          # Copy kernel image
+          # Copy kernel image — prioritas: Image.gz > Image > Image.lz4
           if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
-            cp $GITHUB_WORKSPACE/dist/Image.gz .
+            cp "$GITHUB_WORKSPACE/dist/Image.gz" .
           elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
-            cp $GITHUB_WORKSPACE/dist/Image .
+            cp "$GITHUB_WORKSPACE/dist/Image" .
           elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
-            cp $GITHUB_WORKSPACE/dist/Image.lz4 .
+            cp "$GITHUB_WORKSPACE/dist/Image.lz4" .
+          else
+            echo "ERROR: No kernel image found to package!"
+            exit 1
           fi
 
           zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
@@ -621,8 +669,10 @@ jobs:
       - name: Prepare Output
         run: |
           mkdir -p out
-          cp dist/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
-          cp dist/Image* out/ 2>/dev/null || true
+          [ -f "dist/${ZIP_NAME}-AnyKernel3.zip" ] && cp "dist/${ZIP_NAME}-AnyKernel3.zip" out/ || true
+          for img in dist/Image dist/Image.gz dist/Image.lz4; do
+            [ -f "$img" ] && cp "$img" out/ || true
+          done
           echo "=== Final output ==="
           ls -lah out/
 
