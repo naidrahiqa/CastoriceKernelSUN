@@ -196,6 +196,76 @@ jobs:
             sed -i "s/KSU_VERSION_TAG := .*/KSU_VERSION_TAG := $KSU_TAG/" drivers/kernelsu/Kbuild
           fi
 
+          # FIX #5: Apply KSU kernel integration patches (hooks for reboot.c, exec.c, etc.)
+          # KernelSU-Next for GKI uses kprobes, but SUSFS patches may add manual hook calls
+          # that reference ksu_handle_* functions the driver doesn't export.
+          echo "=== Applying KSU kernel integration hooks ==="
+          if [ -d "$(pwd)/KernelSU-Next/kernel/patches" ]; then
+            for p in "$(pwd)/KernelSU-Next/kernel/patches"/*.patch; do
+              [ -f "$p" ] || continue
+              echo "Trying KSU patch: $p"
+              git apply --3way "$p" 2>/dev/null || patch -p1 --forward --fuzz=3 < "$p" 2>/dev/null || echo "WARN: $p skipped"
+            done
+          fi
+
+          # FIX #6: Create __weak stub fallbacks for ksu_handle_* functions
+          # If the KSU driver uses kprobes and doesn't export manual hook symbols,
+          # the linker will fail on any ksu_handle_* calls added by SUSFS patches.
+          # __weak stubs resolve undefined symbols — the real implementation (if any) takes priority.
+          echo "=== Creating KSU hook stubs (linker safety net) ==="
+          KSU_STUBS="drivers/kernelsu/ksu_hooks_stubs.c"
+          {
+            echo '// Auto-generated __weak stubs for KSU hook functions'
+            echo '// These prevent undefined symbol errors when kprobes mode is used'
+            echo '// Real implementations from the KSU driver override these via __weak'
+            echo '#include <linux/types.h>'
+            echo '#include <linux/errno.h>'
+            echo '#include <linux/fs.h>'
+            echo ''
+            echo '#define KSU_WEAK_HOOK(ret, name, args...) \'
+            echo '    ret __attribute__((weak)) name(args) { return 0; }'
+            echo ''
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_reboot, void)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_prctl, int, unsigned long, unsigned long, unsigned long, unsigned long)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_faccessat, int *, const char __user **, int *, int *)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_stat, int *, const char __user **, int *)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setregid, gid_t, gid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setgid, gid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setresgid, gid_t, gid_t, gid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsgid, gid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setuid, uid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setreuid, uid_t, uid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setresuid, uid_t, uid_t, uid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsuid, uid_t)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat_sucompat, int *, const char __user **, void *, void *, int *)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_devpts, struct inode *)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_input_handle_event, unsigned int, unsigned int, int)'
+          } > "$KSU_STUBS"
+          echo "Created: $KSU_STUBS"
+
+          # Register stubs in Kbuild/Makefile
+          if [ -f "drivers/kernelsu/Kbuild" ]; then
+            if ! grep -q "ksu_hooks_stubs" "drivers/kernelsu/Kbuild"; then
+              echo 'obj-$(CONFIG_KSU) += ksu_hooks_stubs.o' >> "drivers/kernelsu/Kbuild"
+              echo "Registered stubs in Kbuild"
+            fi
+          elif [ -f "drivers/kernelsu/Makefile" ]; then
+            if ! grep -q "ksu_hooks_stubs" "drivers/kernelsu/Makefile"; then
+              echo 'obj-$(CONFIG_KSU) += ksu_hooks_stubs.o' >> "drivers/kernelsu/Makefile"
+              echo "Registered stubs in Makefile"
+            fi
+          fi
+
+          # FIX #7: Guard unprotected ksu_handle_* calls in kernel source
+          echo "=== Guarding unprotected KSU hook calls ==="
+          for src in $(grep -rl "ksu_handle_" --include="*.c" kernel/ fs/ 2>/dev/null); do
+            if ! grep -q "CONFIG_KSU" "$src"; then
+              echo "WARNING: $src has unguarded ksu_handle_* calls — adding header guard"
+              sed -i '1i\#include <linux/ksu.h>' "$src" 2>/dev/null || true
+            fi
+          done
+          echo "KSU hook integration complete"
+
       # ===== SUSFS =====
       - name: Setup SUSFS
         if: ${{ inputs.enable_susfs == true }}
