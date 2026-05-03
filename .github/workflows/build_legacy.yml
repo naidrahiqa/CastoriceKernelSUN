@@ -3,6 +3,10 @@ name: Build Castorice Legacy (4.19)
 on:
   workflow_dispatch:
     inputs:
+      custom_name:
+        description: "Kernel Custom Name (Castorice-<THIS>-vN)"
+        required: true
+        default: "Starter"
       author_name:
         description: "Kernel Author Name"
         required: true
@@ -352,20 +356,43 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
           fi
 
-          # Memory & CPU Optimization
+          # ===== LATENCY & RESPONSIVENESS (Rhythm Game Focus) =====
+          echo "" >> $DEFCONFIG
+          echo "# Latency & Responsiveness (Rhythm Game)" >> $DEFCONFIG
+          echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
+          echo "CONFIG_HZ_300=n" >> $DEFCONFIG
+          echo "CONFIG_HZ_250=n" >> $DEFCONFIG
+          echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
+          echo "CONFIG_PREEMPT_VOLUNTARY=n" >> $DEFCONFIG
+          echo "CONFIG_HIGH_RES_TIMERS=y" >> $DEFCONFIG
+          echo "CONFIG_NO_HZ=y" >> $DEFCONFIG
+          echo "CONFIG_SND_HRTIMER=y" >> $DEFCONFIG
+
+          # ===== SCHEDULER & POWER (Daily Use Focus) =====
+          echo "" >> $DEFCONFIG
+          echo "# Scheduler & Power Management" >> $DEFCONFIG
+          echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> $DEFCONFIG
+          echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
+          echo "CONFIG_CPU_FREQ_GOV_POWERSAVE=y" >> $DEFCONFIG
+          echo "CONFIG_SCHED_MC=y" >> $DEFCONFIG
+          echo "CONFIG_ENERGY_MODEL=y" >> $DEFCONFIG
+
+          # ===== MEMORY (Snappy Daily Multitasking) =====
           echo "" >> $DEFCONFIG
           echo "# Memory Optimization" >> $DEFCONFIG
           echo "CONFIG_ZRAM=y" >> $DEFCONFIG
           echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG
+          echo "CONFIG_CRYPTO_LZ4=y" >> $DEFCONFIG
+          echo "CONFIG_CRYPTO_ZSTD=y" >> $DEFCONFIG
           echo "CONFIG_COMPACTION=y" >> $DEFCONFIG
           echo "CONFIG_KSM=y" >> $DEFCONFIG
-          echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
 
-          # Networking (stable performance)
+          # ===== NETWORKING (Stable Ping) =====
           echo "" >> $DEFCONFIG
           echo "# Networking Performance" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
 
@@ -391,13 +418,20 @@ jobs:
           echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> $DEFCONFIG
           echo "CONFIG_IP_SET_LIST_SET=y" >> $DEFCONFIG
 
-          # Branding / Vermagic (MUST MATCH STOCK OR WIFI BREAKS)
+          # ===== SERIAL VERSIONING =====
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
-          sed -i 's/CONFIG_LOCALVERSION=".*"/CONFIG_LOCALVERSION="-Castorice-perf-g2da4f2613486"/' $DEFCONFIG
+          CUSTOM_NAME="${{ inputs.custom_name }}"
+          BUILD_VER="${{ github.run_number }}"
+          LOCALVER="-Castorice-${CUSTOM_NAME}-v${BUILD_VER}"
+          # Remove existing LOCALVERSION line then append new one
+          sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
+          echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          echo "LOCALVERSION set to: ${LOCALVER}"
 
           echo "=== Defconfig tail ==="
-          tail -40 $DEFCONFIG
+          tail -50 $DEFCONFIG
 
       # ===== COMPILER FIXES (Modern Clang vs 4.19) =====
       - name: Fix Compiler Errors
@@ -517,9 +551,11 @@ jobs:
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
           KSUTAG=""
           if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU"; fi
-          
-          # Clean versioning for the output zip
-          BASE_NAME="Castorice-Legacy-v${KERNEL_VERSION}${KSUTAG}${STAG}-Redmi12-$(date +%Y%m%d)"
+
+          # Serial Versioning: Castorice-<CustomName>-v<Build>
+          CUSTOM_NAME="${{ inputs.custom_name }}"
+          BUILD_VER="${{ github.run_number }}"
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Legacy-${KERNEL_VERSION}${KSUTAG}${STAG}-Redmi12"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
           # Use Alexjr2's preconfigured AnyKernel3 for fire
@@ -543,7 +579,7 @@ jobs:
 
           echo "• Built with Castorice Performance Profile" >> banner
           if [ -f "anykernel.sh" ]; then
-            sed -i "s/kernel.string=.*/kernel.string=Castorice Legacy Kernel by ${{ inputs.author_name }}/g" anykernel.sh
+            sed -i "s/kernel.string=.*/kernel.string=Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} by ${{ inputs.author_name }}/g" anykernel.sh
           fi
 
           zip -r9 "$GITHUB_WORKSPACE/${BASE_NAME}-AnyKernel3.zip" * -x ".git*" "*.md" "LICENSE"
@@ -568,35 +604,36 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v4.19-castorice-legacy-${{ github.run_number }}"
-          name: "Castorice Legacy ${{ env.KERNEL_VERSION }} — Redmi 12 Fire"
+          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-Legacy"
+          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • Legacy ${{ env.KERNEL_VERSION }}"
           body: |
-            ## ⚡ Castorice Legacy Kernel for Redmi 12 (fire)
-            
+            ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
+
             ### Kernel Info
-            - **Kernel**: ${{ env.KERNEL_VERSION }}-Castorice
-            - **Type**: Legacy (non-GKI)
-            - **KernelSU-Next**: v${{ env.KSU_VERSION }} (Legacy Manual Hook)
+            - **Build**: `Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}`
+            - **Base**: Linux ${{ env.KERNEL_VERSION }} (Legacy / non-GKI)
+            - **KernelSU-Next**: v${{ env.KSU_VERSION }} (Manual Hook)
             - **SUSFS**: ${{ inputs.enable_susfs }}
             - **Toolchain**: ${{ env.CLANG_VERSION }}
-            
-            ### Features
-            - 🛡️ KernelSU-Next + SUSFS
-            - 🧠 Memory: ZRAM, KSM, compaction
-            - 🌐 Network: TCP BBR, IPSet, TTL
-            - 🖥️ LCD 0c/0d: FIXED
-            
+
+            ### Performance Profile
+            - 🎮 **Rhythm Game**: HZ_1000, Full PREEMPT, HRTIMER audio
+            - ⚡ **Daily Use**: EAS schedutil, deep-sleep idle, LZ4 ZRAM
+            - 🌐 **Network**: TCP BBR, FQ scheduler, IPSet
+            - 🧠 **Memory**: ZRAM, KSM, compaction
+            - 🖥️ **Display**: LCD 0c/0d touchscreen FIXED
+
             ### Downloads
             | File | Method |
             |------|--------|
-            | `*-AnyKernel3.zip` | Flash via Custom Recovery or Kernel Flasher |
+            | `*-AnyKernel3.zip` | Flash via Custom Recovery / Kernel Flasher |
             | `Image.gz-dtb` | Raw kernel image |
-            
+
             ### Compatibility
             - ✅ MIUI 14.x (Android 13)
             - ✅ HyperOS 1.x (Android 14)
-            - ❌ HyperOS 2.x (Android 15) → Use GKI 6.6
-            
+            - ❌ HyperOS 2.x (Android 15) → Use GKI 6.6 build
+
           files: |
             out/*.zip
             out/Image.gz-dtb
