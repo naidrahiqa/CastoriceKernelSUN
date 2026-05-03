@@ -49,6 +49,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cleanup Broken Submodules
+        run: |
+          rm -f .gitmodules
+          git rm --cached temp_susfs || true
+          git config --remove-section submodule.temp_susfs || true
+
       - name: Maximize Disk Space
         run: |
           echo "=== Before cleanup ==="
@@ -151,6 +157,10 @@ jobs:
 
           # Integrate into kernel build (copy driver instead of symlink for Bazel)
           cp -r "$(pwd)/KernelSU-Next/kernel" "drivers/kernelsu"
+          
+          # Fix uapi symlink for Bazel sandbox by physically copying it
+          rm -f "drivers/kernelsu/include/uapi"
+          cp -r "$(pwd)/KernelSU-Next/uapi" "drivers/kernelsu/include/uapi"
 
           # Add to Makefile if not present
           if ! grep -q "kernelsu" drivers/Makefile; then
@@ -331,7 +341,7 @@ jobs:
           fi
 
           # Verify Kconfig has SUSFS entries
-          if grep -r "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null; then
+          if grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null; then
             echo "SUSFS_OK=true" >> $GITHUB_ENV
             echo "SUSFS Kconfig verified OK"
           else

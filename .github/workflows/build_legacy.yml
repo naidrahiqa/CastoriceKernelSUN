@@ -44,7 +44,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cleanup Broken Submodules
-        run: rm -f .gitmodules
+        run: |
+          rm -f .gitmodules
+          git rm --cached temp_susfs || true
+          git config --remove-section submodule.temp_susfs || true
 
       - name: Maximize Disk Space
         run: |
@@ -186,14 +189,115 @@ jobs:
             sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
             sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
 
-            # Fix task_work_add compatibility
+            # Fix task_work_add compatibility for 4.19 (TWA_RESUME -> true)
             if [ -d "KernelSU-Next" ]; then
-              sed -i "/task_work_add(tsk, cb, TWA_RESUME);/c\\
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\\
-          \\ttask_work_add(tsk, cb, TWA_RESUME);\\
-          #else\\
-          \\ttask_work_add(tsk, cb, true);\\
-          #endif" ./KernelSU-Next/kernel/allowlist.c 2>/dev/null || true
+              find ./KernelSU-Next/kernel -type f -name "*.c" -exec sed -i 's/TWA_RESUME/true/g' {} +
+            elif [ -d "KernelSU" ]; then
+              find ./KernelSU/kernel -type f -name "*.c" -exec sed -i 's/TWA_RESUME/true/g' {} +
+            fi
+
+            # --- Integrate SUSFS into KernelSU-Next ---
+            echo "=== Integrating SUSFS into KernelSU-Next (Legacy) ==="
+            KSU_KERNEL="KernelSU-Next/kernel"
+            if [ ! -d "$KSU_KERNEL" ]; then KSU_KERNEL="KernelSU/kernel"; fi
+
+            if [ -d "$KSU_KERNEL" ]; then
+              # 1. Inject SUSFS Kconfig
+              if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
+                cat >> "$KSU_KERNEL/Kconfig" << 'KEOF'
+
+            menu "KernelSU - SUSFS"
+            config KSU_SUSFS
+            	bool "KernelSU addon - SUSFS"
+            	depends on KSU
+            	default y
+            	help
+            	  Patch and Enable SUSFS to kernel with KernelSU.
+
+            config KSU_SUSFS_SUS_PATH
+            	bool "Enable to hide suspicious path"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SUS_MOUNT
+            	bool "Enable to hide suspicious mounts"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SUS_KSTAT
+            	bool "Enable to spoof suspicious kstat"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SPOOF_UNAME
+            	bool "Enable to spoof uname"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_ENABLE_LOG
+            	bool "Enable logging susfs log to kernel"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+            	bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+            	bool "Enable to spoof /proc/bootconfig or /proc/cmdline"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_OPEN_REDIRECT
+            	bool "Enable to redirect a path to be opened with another path"
+            	depends on KSU_SUSFS
+            	default y
+
+            config KSU_SUSFS_SUS_MAP
+            	bool "Enable to hide mmapped real file from proc maps"
+            	depends on KSU_SUSFS
+            	default y
+
+            endmenu
+            KEOF
+              fi
+
+              # 2. Inject SUSFS Makefile entries
+              if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
+                cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
+
+            ## For susfs stuff ##
+            ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
+            $(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
+            $(info )
+            $(info -- SUSFS_VERSION: $(SUSFS_VERSION))
+            else
+            $(info -- You have not integrated susfs in your kernel yet.)
+            $(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
+            endif
+            MKEOF
+              fi
+
+              # 3. Inject susfs.h include into core/init.c
+              if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
+                sed -i '/#include <linux\/workqueue.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/core/init.c"
+              fi
+
+              # 4. Inject susfs_init() call into core/init.c
+              if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
+                sed -i '/ksu_feature_init/i \
+            #ifdef CONFIG_KSU_SUSFS\
+            \tsusfs_init();\
+            #endif' "$KSU_KERNEL/core/init.c"
+              fi
+
+              # 5. Inject susfs includes into supercall.c or dispatch.c
+              if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
+                sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
+              elif [ -f "$KSU_KERNEL/supercall/supercall.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/supercall.c"; then
+                sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/supercall.c"
+              fi
             fi
           fi
 
