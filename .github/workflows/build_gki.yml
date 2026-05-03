@@ -654,7 +654,6 @@ jobs:
           echo "=== Building Castorice GKI Kernel ==="
           tools/bazel build \
             --config=fast \
-            --//common:kmi_symbol_list_strict_mode=False \
             //common:kernel_aarch64_dist 2>&1
           echo "=== Build completed ==="
         env:
@@ -667,7 +666,6 @@ jobs:
 
           tools/bazel run \
             --config=fast \
-            --//common:kmi_symbol_list_strict_mode=False \
             //common:kernel_aarch64_dist \
             -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
 

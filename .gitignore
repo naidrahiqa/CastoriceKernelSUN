@@ -11,3 +11,5 @@ logs/
 gki_logs.zip
 legacy_logs.zip
 *.log
+error_gki.txt
+error_legacy.txt

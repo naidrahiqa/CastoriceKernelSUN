@@ -89,6 +89,9 @@ jobs:
           patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch || true
           patch -p1 --forward < ../ref_patches/primary_display_fix.patch || true
           
+          # Fix zram deprecated declaration
+          sed -i 's/static struct zram_pages_life \*init_pages_life()/static struct zram_pages_life \*init_pages_life(void)/g' drivers/block/zram/zram_drv.c 2>/dev/null || true
+          
           # MTK ACCDET CONFLICT FIX
           sed -i 's/EXPORT_SYMBOL(accdet_read_audio_res);/\/\/EXPORT_SYMBOL(accdet_read_audio_res);/g' sound/soc/codecs/mt6357-accdet.c 2>/dev/null || true
           sed -i 's/EXPORT_SYMBOL(accdet_late_init);/\/\/EXPORT_SYMBOL(accdet_late_init);/g' sound/soc/codecs/mt6357-accdet.c 2>/dev/null || true
@@ -138,6 +141,9 @@ jobs:
           if ! grep -q "susfs.o" fs/Makefile; then
             echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
           fi
+          
+          # Fix missing susfs_def.h from older patches by pointing to susfs.h
+          find fs/ include/ -type f -exec sed -i 's/susfs_def.h/susfs.h/g' {} +
           
           # Integrate SUSFS into KSU
           if [ -d "drivers/kernelsu" ]; then
