@@ -406,7 +406,7 @@ jobs:
                 echo ''
                 echo '## For susfs stuff ##'
                 echo 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)'
-                echo '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '"'"'^#define SUSFS_VERSION'"'"' | cut -d'"'"' '"'"' -f3 | sed '"'"'s/"//g'"'"'))'
+                echo '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E "^#define SUSFS_VERSION" | cut -d" " -f3 | sed "s/\"//g"))'
                 echo '$(info )'
                 echo '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))'
                 echo 'else'
@@ -530,11 +530,13 @@ jobs:
           echo "" >> $DEFCONFIG
           echo "# Latency & Responsiveness (Rhythm Game)" >> $DEFCONFIG
           echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
+          echo "CONFIG_HZ=1000" >> $DEFCONFIG
           echo "CONFIG_HZ_250=n" >> $DEFCONFIG
           echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
           echo "CONFIG_PREEMPT_VOLUNTARY=n" >> $DEFCONFIG
           echo "CONFIG_HIGH_RES_TIMERS=y" >> $DEFCONFIG
           echo "CONFIG_SND_HRTIMER=y" >> $DEFCONFIG
+          echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n" >> $DEFCONFIG
 
           # ===== MEMORY & CPU (Daily Use Focus) =====
           echo "" >> $DEFCONFIG
@@ -561,7 +563,9 @@ jobs:
           echo "# Networking" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> $DEFCONFIG
           echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
+          echo "CONFIG_DEFAULT_NET_SCH=\"fq\"" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
           echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
           echo "CONFIG_IP_SET=y" >> $DEFCONFIG

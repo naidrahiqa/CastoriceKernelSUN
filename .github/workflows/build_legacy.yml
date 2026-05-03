@@ -145,48 +145,48 @@ jobs:
             sed -i 's/ksu_core_init(/susfs_init();\n    ksu_core_init(/g' drivers/kernelsu/core/init.c 2>/dev/null || true
             sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
             
-            cat << 'EOF' >> drivers/kernelsu/Kconfig
-          config KSU_SUSFS
-            bool "KernelSU addon - SUSFS"
-            depends on KSU
-            default y
-          config KSU_SUSFS_SUS_PATH
-            bool "Enable to hide suspicious path"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_SUS_MOUNT
-            bool "Enable to hide suspicious mounts"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_SUS_KSTAT
-            bool "Enable to spoof suspicious kstat"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_SPOOF_UNAME
-            bool "Enable to spoof uname"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_ENABLE_LOG
-            bool "Enable logging susfs log to kernel"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-            bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-            bool "Enable to spoof bootconfig or cmdline"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_OPEN_REDIRECT
-            bool "Enable open redirect"
-            depends on KSU_SUSFS
-            default y
-          config KSU_SUSFS_SUS_MAP
-            bool "Enable to hide mmapped real file from proc maps"
-            depends on KSU_SUSFS
-            default y
-          EOF
+            {
+              echo 'config KSU_SUSFS'
+              echo '  bool "KernelSU addon - SUSFS"'
+              echo '  depends on KSU'
+              echo '  default y'
+              echo 'config KSU_SUSFS_SUS_PATH'
+              echo '  bool "Enable to hide suspicious path"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_SUS_MOUNT'
+              echo '  bool "Enable to hide suspicious mounts"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_SUS_KSTAT'
+              echo '  bool "Enable to spoof suspicious kstat"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_SPOOF_UNAME'
+              echo '  bool "Enable to spoof uname"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_ENABLE_LOG'
+              echo '  bool "Enable logging susfs log to kernel"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS'
+              echo '  bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG'
+              echo '  bool "Enable to spoof bootconfig or cmdline"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_OPEN_REDIRECT'
+              echo '  bool "Enable open redirect"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+              echo 'config KSU_SUSFS_SUS_MAP'
+              echo '  bool "Enable to hide mmapped real file from proc maps"'
+              echo '  depends on KSU_SUSFS'
+              echo '  default y'
+            } >> drivers/kernelsu/Kconfig
           fi
 
       - name: Configure Defconfig
@@ -206,12 +206,21 @@ jobs:
           
           # Optimization
           echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
+          echo "CONFIG_HZ=1000" >> $DEFCONFIG
           echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
+          echo "CONFIG_PREEMPT_VOLUNTARY=n" >> $DEFCONFIG
+          
+          # Memory
           echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG
           echo "CONFIG_ZRAM=y" >> $DEFCONFIG
           echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> $DEFCONFIG
           echo "CONFIG_ZRAM_WRITEBACK=y" >> $DEFCONFIG
+          
+          # Network & IO
           echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> $DEFCONFIG
+          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
+          echo "CONFIG_DEFAULT_NET_SCH=\"fq\"" >> $DEFCONFIG
           
           # Localversion
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
@@ -221,8 +230,6 @@ jobs:
       - name: Patch Clang Warnings
         run: |
           cd kernel
-          find . -name "Makefile" -exec sed -i 's/-Werror//g' {} +
-          find . -name "Kbuild" -exec sed -i 's/-Werror//g' {} +
           sed -i 's/-Wno-format-invalid-specifier//g' Makefile || true
           sed -i 's/-Wno-gnu-empty-initializer//g' Makefile || true
 
@@ -253,25 +260,25 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
           
-          cat << EOF > anykernel.sh
-          properties() {
-            kernel.string=Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} by ${{ inputs.author_name }}
-            do.devicecheck=1
-            do.modules=0
-            do.systemless=1
-            do.cleanup=1
-            device.name1=fire
-            device.name2=Redmi 12
-            supported.versions=13,14
-          }
-          block=boot;
-          is_slot_device=auto;
-          ramdisk_compression=auto;
-          patch_vbmeta_flag=auto;
-          . tools/ak3-core.sh;
-          dump_boot;
-          write_boot;
-          EOF
+          {
+            echo 'properties() {'
+            echo '  kernel.string=Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} by ${{ inputs.author_name }}'
+            echo '  do.devicecheck=1'
+            echo '  do.modules=0'
+            echo '  do.systemless=1'
+            echo '  do.cleanup=1'
+            echo '  device.name1=fire'
+            echo '  device.name2=Redmi 12'
+            echo '  supported.versions=13,14'
+            echo '}'
+            echo 'block=boot;'
+            echo 'is_slot_device=auto;'
+            echo 'ramdisk_compression=auto;'
+            echo 'patch_vbmeta_flag=auto;'
+            echo '. tools/ak3-core.sh;'
+            echo 'dump_boot;'
+            echo 'write_boot;'
+          } > anykernel.sh
           
           cp ../kernel/out/arch/arm64/boot/Image.gz-dtb . || true
           BASE_NAME="Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-Legacy-4.19-Redmi12"
