@@ -26,19 +26,11 @@ permissions:
   contents: write
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ANDROID_VERSION: android15
   KERNEL_VERSION: "6.6"
-  # KMI_GENERATION MUST match your device's KMI exactly!
-  # Check: adb shell uname -r → 6.6.58-android15-8-xxx
   KMI_GENERATION: "8"
   KERNEL_NAME: Castorice
   DEVICE_CODE: fire
-  KSU_DIR: ""
-  KSU_VERSION: ""
-  SUSFS_OK: "false"
-  BUILT_KERNEL_VERSION: ""
-  ZIP_NAME: ""
 
 jobs:
   build:
@@ -49,770 +41,221 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cleanup Broken Submodules
-        run: |
-          rm -f .gitmodules
-          git rm --cached temp_susfs || true
-          git config --remove-section submodule.temp_susfs || true
-
       - name: Maximize Disk Space
         run: |
-          echo "=== Before cleanup ==="
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo rm -rf /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
-          sudo rm -rf /usr/local/share/chromium /usr/local/share/powershell
-          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel || true
-          sudo apt-get autoremove -y
-          sudo apt-get clean
-          echo "=== After cleanup ==="
-          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
+          sudo apt-get autoremove -y && sudo apt-get clean
 
       - name: Setup Swap
         run: |
-          sudo swapoff /mnt/swapfile 2>/dev/null || true
-          sudo rm -f /mnt/swapfile
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-          free -h
+          sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
 
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev \
-            python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch \
-            binutils libncurses-dev pkg-config ninja-build zstd aria2 p7zip-full
+            python3 zip unzip kmod lz4 jq patch binutils pkg-config ninja-build zstd aria2 p7zip-full
 
-      - name: Install repo tool
+      - name: Setup repo
         run: |
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      # ===== KERNEL SOURCE (ACK) =====
-      - name: Sync Android Common Kernel
+      - name: Sync Kernel Source
         run: |
-          mkdir -p kernel
-          cd kernel
-          repo init -u https://android.googlesource.com/kernel/manifest \
-            -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
-          echo "=== Kernel version ==="
-          cd common && make kernelversion
+          mkdir -p kernel && cd kernel
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
-      # ===== MATCH DEVICE KMI =====
-      - name: Set KMI Generation to Match Device
+      - name: Set KMI Generation
         run: |
           cd kernel/common
-          echo "Device KMI: ${KERNEL_VERSION}-${ANDROID_VERSION}-${KMI_GENERATION}"
-
-          # Set KMI_GENERATION in build.config.common
-          if [ -f "build.config.common" ]; then
-            if grep -q "KMI_GENERATION" build.config.common; then
-              sed -i "s/KMI_GENERATION=.*/KMI_GENERATION=${KMI_GENERATION}/" build.config.common
-            else
-              echo "KMI_GENERATION=${KMI_GENERATION}" >> build.config.common
-            fi
-            echo "build.config.common KMI_GENERATION set:"
-            grep KMI_GENERATION build.config.common
-          fi
-
-          # Also patch Bazel/Kleaf config if present
-          for f in build.config.gki build.config.gki.aarch64; do
-            if [ -f "$f" ] && grep -q "KMI_GENERATION" "$f"; then
-              sed -i "s/KMI_GENERATION=.*/KMI_GENERATION=${KMI_GENERATION}/" "$f"
-              echo "$f patched"
-            fi
-          done
-
-          # FIX #2: stamp.bzl — tambahkan sed aktual, bukan cuma echo kosong
+          sed -i "s/KMI_GENERATION=.*/KMI_GENERATION=${KMI_GENERATION}/" build.config.common || echo "KMI_GENERATION=${KMI_GENERATION}" >> build.config.common
           STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
-          if [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE"; then
-            echo "Patching stamp.bzl KMI generation..."
+          if [ -f "$STAMP_FILE" ]; then
             sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
-            echo "stamp.bzl patched"
           fi
 
-      # ===== KERNELSU-NEXT =====
       - name: Setup KernelSU-Next
         if: ${{ inputs.enable_ksu == true }}
         run: |
           cd kernel/common
-
-          # Clone KernelSU-Next latest stable release
-          echo "Fetching latest stable KernelSU-Next release..."
-          KSU_TAG=$(curl -sL https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest \
-            | jq -r '.tag_name')
-
-          if [ -z "$KSU_TAG" ] || [ "$KSU_TAG" = "null" ]; then
-            echo "WARN: Could not fetch latest release tag, falling back to default branch"
-            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-            KSU_TAG="default"
-          else
-            echo "Cloning KernelSU-Next $KSU_TAG (latest stable)..."
-            git clone --depth=1 --branch "$KSU_TAG" \
-              https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
-          fi
-
-          # Integrate into kernel build (copy driver instead of symlink for Bazel)
-          cp -r "$(pwd)/KernelSU-Next/kernel" "drivers/kernelsu"
-
-          # Fix uapi symlink for Bazel sandbox by physically copying it
-          # Search for uapi/app_profile.h dynamically to handle varying KernelSU-Next repos
-          rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
-          mkdir -p "drivers/kernelsu/uapi" "drivers/kernelsu/include/uapi"
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
           
-          if [ -d "$(pwd)/KernelSU-Next/kernel/uapi" ]; then
-            cp -r "$(pwd)/KernelSU-Next/kernel/uapi"/* "drivers/kernelsu/uapi/" 2>/dev/null || true
-            cp -r "$(pwd)/KernelSU-Next/kernel/uapi"/* "drivers/kernelsu/include/uapi/" 2>/dev/null || true
-          elif [ -d "$(pwd)/KernelSU-Next/uapi" ]; then
-            cp -r "$(pwd)/KernelSU-Next/uapi"/* "drivers/kernelsu/uapi/" 2>/dev/null || true
-            cp -r "$(pwd)/KernelSU-Next/uapi"/* "drivers/kernelsu/include/uapi/" 2>/dev/null || true
-          fi
-
-          # Add to Makefile if not present
+          # Fix symlink for Bazel sandbox
+          rm -rf drivers/kernelsu
+          cp -r KernelSU-Next/kernel drivers/kernelsu
+          
           if ! grep -q "kernelsu" drivers/Makefile; then
-            echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           fi
-
-          # Add Kconfig include if not present
-          if ! grep -q "kernelsu/Kconfig" drivers/Kconfig; then
-            echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
-          fi
-
-          # FIX #3: KSU_DIR diset ke path relatif dari kernel/common
-          KSU_DIR="$(pwd)/KernelSU-Next"
-          KSU_VERSION=$(cd "$KSU_DIR" && git rev-list --count HEAD)
+          
+          # Fix git version in Bazel
+          KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
+          sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild 2>/dev/null || true
+          
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-          echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
-          echo "KernelSU-Next installed — version $KSU_VERSION ($KSU_TAG)"
 
-          # FIX #4: Kbuild failing due to git missing in bazel sandbox
-          if [ -f "drivers/kernelsu/Kbuild" ]; then
-            sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild
-            sed -i "s/KSU_VERSION_TAG := .*/KSU_VERSION_TAG := $KSU_TAG/" drivers/kernelsu/Kbuild
-          fi
-
-          # FIX #5: Apply KSU kernel integration patches (hooks for reboot.c, exec.c, etc.)
-          # KernelSU-Next for GKI uses kprobes, but SUSFS patches may add manual hook calls
-          # that reference ksu_handle_* functions the driver doesn't export.
-          echo "=== Applying KSU kernel integration hooks ==="
-          if [ -d "$(pwd)/KernelSU-Next/kernel/patches" ]; then
-            for p in "$(pwd)/KernelSU-Next/kernel/patches"/*.patch; do
-              [ -f "$p" ] || continue
-              echo "Applying KSU patch: $p"
-              if ! git apply --3way "$p" 2>/dev/null; then
-                if ! patch -p1 --forward --fuzz=3 < "$p" 2>/dev/null; then
-                  echo "WARN: Failed to apply $p (continuing anyway)"
-                fi
-              fi
-            done
-          fi
-
-          # FIX #6: Create __weak stubs fallbacks for ksu_handle_* functions
-          # If the KSU driver uses kprobes and doesn't export manual hook symbols,
-          # the linker will fail on any ksu_handle_* calls added by SUSFS patches.
-          # __weak stubs resolve undefined symbols — the real implementation (if any) takes priority.
-          echo "=== Creating KSU hook stubs (linker safety net) ==="
-          KSU_STUBS="drivers/kernelsu/ksu_hooks_stubs.c"
-          {
-            echo '// Auto-generated __weak stubs for KSU/SUSFS hook functions'
-            echo '// These prevent undefined symbol errors when using kprobes'
-            echo '#include <linux/types.h>'
-            echo '#include <linux/errno.h>'
-            echo '#include <linux/fs.h>'
-            echo ''
-            echo '#define KSU_WEAK_HOOK(ret, name, ...) \'
-            echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return 0; }'
-            echo ''
-            echo '#define KSU_WEAK_HOOK_BOOL(ret, name, ...) \'
-            echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return false; }'
-            echo ''
-            echo '// KSU hooks'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_reboot, void)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_prctl, int p1, unsigned long p2, unsigned long p3, unsigned long p4, unsigned long p5)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_faccessat, int *p1, const char __user **p2, int *p3, int *p4)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_stat, int *p1, const char __user **p2, int *p3)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setregid, gid_t p1, gid_t p2)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setgid, gid_t p1)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setresgid, gid_t p1, gid_t p2, gid_t p3)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsgid, gid_t p1)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setuid, uid_t p1)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setreuid, uid_t p1, uid_t p2)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setresuid, uid_t p1, uid_t p2, uid_t p3)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsuid, uid_t p1)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat_sucompat, int *p1, struct filename **p2, void *p3, void *p4, int *p5)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat, int p1, struct filename *p2, void *p3, void *p4, int p5)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_devpts, struct inode *p1)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_input_handle_event, unsigned int p1, unsigned int p2, int p3)'
-            echo 'KSU_WEAK_HOOK_BOOL(bool, ksu_is_input_hook_enabled, void)'
-            echo 'KSU_WEAK_HOOK_BOOL(bool, ksu_is_init_rc_hook_enabled, void)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_read, void)'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_vfs_fstat, void)'
-            echo ''
-            echo '// SUSFS hooks'
-            echo 'u32 __attribute__((weak)) susfs_ksu_sid = 0;'
-            echo 'u32 __attribute__((weak)) susfs_priv_app_sid = 0;'
-            echo 'bool __attribute__((weak)) susfs_is_current_ksu_domain(void) { return false; }'
-            echo 'bool __attribute__((weak)) susfs_is_current_zygote_domain(void) { return false; }'
-            echo 'KSU_WEAK_HOOK(int, ksu_handle_slow_avc_audit_new, void)'
-          } > "$KSU_STUBS"
-          echo "Created: $KSU_STUBS"
-
-          # Register stubs in Kbuild/Makefile
-          if [ -f "drivers/kernelsu/Kbuild" ]; then
-            if ! grep -q "ksu_hooks_stubs" "drivers/kernelsu/Kbuild"; then
-              echo 'obj-$(CONFIG_KSU) += ksu_hooks_stubs.o' >> "drivers/kernelsu/Kbuild"
-              echo "Registered stubs in Kbuild"
-            fi
-          elif [ -f "drivers/kernelsu/Makefile" ]; then
-            if ! grep -q "ksu_hooks_stubs" "drivers/kernelsu/Makefile"; then
-              echo 'obj-$(CONFIG_KSU) += ksu_hooks_stubs.o' >> "drivers/kernelsu/Makefile"
-              echo "Registered stubs in Makefile"
-            fi
-          fi
-
-          # FIX #7: Guard unprotected ksu_handle_* calls in kernel source
-          echo "=== Guarding unprotected KSU hook calls ==="
-          for src in $(grep -rl "ksu_handle_" --include="*.c" kernel/ fs/ 2>/dev/null); do
-            if ! grep -q "CONFIG_KSU" "$src"; then
-              echo "WARNING: $src has unguarded ksu_handle_* calls — adding header guard"
-              sed -i '1i\#include <linux/ksu.h>' "$src" 2>/dev/null || true
-            fi
-          done
-          echo "KSU hook integration complete"
-
-      # ===== SUSFS =====
       - name: Setup SUSFS
         if: ${{ inputs.enable_susfs == true }}
         run: |
-          # Git identity needed for git commit/apply --3way used below
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          cd kernel
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
-            -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || \
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
-            -b gki-${ANDROID_VERSION}-6.6
-
-          cd common
-
-          # --- Step 1: Copy SUSFS kernel source files ---
-          echo "=== Copying SUSFS source files ==="
-          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
-          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          ls -la include/linux/susfs* fs/susfs* 2>/dev/null || true
-
-          # --- Step 1b: Register susfs.o in fs/Makefile ---
-          if [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile"; then
-            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
-            echo "Registered susfs.o in fs/Makefile"
+          cd kernel/common
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
+          
+          cp -rv susfs4ksu/kernel_patches/fs/* fs/
+          cp -rv susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          if ! grep -q "susfs.o" fs/Makefile; then
+            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
           fi
-
-          # --- Step 2: Apply kernel tree integration patch ---
-          echo "=== Applying kernel tree SUSFS patch ==="
-          for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
-            if [ -f "$patch" ]; then
-              echo "Applying: $patch"
-              git add -A && git commit -m "pre-susfs-kernel-patch" --allow-empty -q
-              if git apply --3way "$patch"; then
-                echo "Kernel SUSFS patch applied cleanly via 3-way merge"
-              elif patch -p1 --forward --fuzz=3 < "$patch"; then
-                echo "Kernel SUSFS patch applied via fuzz fallback"
-              else
-                echo "WARN: Kernel SUSFS patch had issues (continuing)"
-              fi
-            fi
+          
+          # Apply SUSFS patches
+          for patch in susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
+            patch -p1 --forward < "$patch" || true
           done
-
-          # --- Step 3: Integrate SUSFS into KernelSU-Next ---
-          echo "=== Integrating SUSFS into KernelSU-Next (Clean Manual Method) ==="
-
-          KSU_KERNEL="drivers/kernelsu"
-
-          if [ ! -d "$KSU_KERNEL" ]; then
-            echo "WARN: $KSU_KERNEL not found — skipping KSU-SUSFS integration"
-          else
-
-            # 1. Inject SUSFS Kconfig
-            if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
-              {
-                echo ''
-                echo 'menu "KernelSU - SUSFS"'
-                echo 'config KSU_SUSFS'
-                printf '\tbool "KernelSU addon - SUSFS"\n'
-                printf '\tdepends on KSU\n'
-                printf '\tdefault y\n'
-                printf '\thelp\n'
-                printf '\t  Patch and Enable SUSFS to kernel with KernelSU.\n'
-                echo ''
-                echo 'config KSU_SUSFS_SUS_PATH'
-                printf '\tbool "Enable to hide suspicious path"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_SUS_MOUNT'
-                printf '\tbool "Enable to hide suspicious mounts"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_SUS_KSTAT'
-                printf '\tbool "Enable to spoof suspicious kstat"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_SPOOF_UNAME'
-                printf '\tbool "Enable to spoof uname"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_ENABLE_LOG'
-                printf '\tbool "Enable logging susfs log to kernel"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS'
-                printf '\tbool "Enable to hide ksu and susfs symbols from /proc/kallsyms"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG'
-                printf '\tbool "Enable to spoof /proc/bootconfig or /proc/cmdline"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_OPEN_REDIRECT'
-                printf '\tbool "Enable to redirect a path to be opened with another path"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'config KSU_SUSFS_SUS_MAP'
-                printf '\tbool "Enable to hide mmapped real file from proc maps"\n'
-                printf '\tdepends on KSU_SUSFS\n'
-                printf '\tdefault y\n'
-                echo ''
-                echo 'endmenu'
-              } >> "$KSU_KERNEL/Kconfig"
-              echo "SUSFS Kconfig injected successfully"
-            fi
-
-            # 2. Inject SUSFS Makefile entries
-            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-              {
-                echo ''
-                echo '## For susfs stuff ##'
-                echo 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)'
-                echo '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '"'"'^#define SUSFS_VERSION'"'"' | cut -d'"'"' '"'"' -f3 | sed '"'"'s/"//g'"'"'))'
-                echo '$(info )'
-                echo '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))'
-                echo 'else'
-                echo '$(info -- You have not integrated susfs in your kernel yet.)'
-                echo '$(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)'
-                echo 'endif'
-              } >> "$KSU_KERNEL/Makefile"
-              echo "SUSFS Makefile entries injected successfully"
-            fi
-
-            # 3. Inject susfs.h include into core/init.c
-            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
-              sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/core/init.c"
-            fi
-
-            # 4. Inject susfs_init() call into core/init.c
-            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-              INIT_FILE="$KSU_KERNEL/core/init.c"
-              # Write inject script to temp file (keeps YAML valid)
-              INJECT_PY=$(mktemp /tmp/inject_susfs_XXXXXX.py)
-              echo 'import sys' > "$INJECT_PY"
-              echo 'path = sys.argv[1]' >> "$INJECT_PY"
-              echo 'with open(path, "r") as f: content = f.read()' >> "$INJECT_PY"
-              echo 'injection = "#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n"' >> "$INJECT_PY"
-              echo 'if "susfs_init" not in content and "ksu_feature_init" in content:' >> "$INJECT_PY"
-              echo '    content = content.replace("ksu_feature_init", injection + "\tksu_feature_init", 1)' >> "$INJECT_PY"
-              echo '    with open(path, "w") as f: f.write(content)' >> "$INJECT_PY"
-              echo '    print("susfs_init injected before ksu_feature_init")' >> "$INJECT_PY"
-              echo 'else: print("Skipped: susfs_init already present or ksu_feature_init not found")' >> "$INJECT_PY"
-              python3 "$INJECT_PY" "$INIT_FILE"
-              rm -f "$INJECT_PY"
-            fi
-
-            # 5. Inject susfs includes into supercall/dispatch.c
-            if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
-              sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
-            fi
-
-            echo "=== Clean SUSFS Integration Complete ==="
-
-            # --- Step 4: Post-integration validation ---
-            echo "=== Validating SUSFS configuration ==="
-
-            KSU_INIT="drivers/kernelsu/core/init.c"
-            if [ -f "$KSU_INIT" ]; then
-              # Write validation script to temp file (keeps YAML valid)
-              VALIDATE_PY=$(mktemp /tmp/validate_braces_XXXXXX.py)
-              echo 'import sys' > "$VALIDATE_PY"
-              echo 'path = sys.argv[1]' >> "$VALIDATE_PY"
-              echo 'with open(path, "r") as f: lines = f.readlines()' >> "$VALIDATE_PY"
-              echo 'oc = sum(l.split("//")[0].count("{") for l in lines)' >> "$VALIDATE_PY"
-              echo 'cc = sum(l.split("//")[0].count("}") for l in lines)' >> "$VALIDATE_PY"
-              echo 'if oc != cc: print(f"ERROR: Unbalanced braces! open={oc} close={cc}"); sys.exit(1)' >> "$VALIDATE_PY"
-              echo 'else: print(f"init.c syntax check OK (braces: {oc}/{cc})")' >> "$VALIDATE_PY"
-              python3 "$VALIDATE_PY" "$KSU_INIT"
-              rm -f "$VALIDATE_PY"
-            fi
-
-            # Verify Kconfig has SUSFS entries
-            if grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null; then
-              echo "SUSFS_OK=true" >> $GITHUB_ENV
-              echo "SUSFS Kconfig verified OK"
-            else
-              echo "SUSFS_OK=false" >> $GITHUB_ENV
-              echo "WARNING: SUSFS Kconfig NOT found — SUSFS will NOT be enabled"
-            fi
-
+          
+          # Integrate SUSFS into KSU
+          if [ -d "drivers/kernelsu" ]; then
+            sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' drivers/kernelsu/core/init.c 2>/dev/null || true
+            sed -i 's/ksu_core_init(/susfs_init();\n    ksu_core_init(/g' drivers/kernelsu/core/init.c 2>/dev/null || true
+            sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
+            
+            cat << 'EOF' >> drivers/kernelsu/Kconfig
+          config KSU_SUSFS
+            bool "KernelSU addon - SUSFS"
+            depends on KSU
+            default y
+          config KSU_SUSFS_SUS_PATH
+            bool "Enable to hide suspicious path"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_SUS_MOUNT
+            bool "Enable to hide suspicious mounts"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_SUS_KSTAT
+            bool "Enable to spoof suspicious kstat"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_SPOOF_UNAME
+            bool "Enable to spoof uname"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_ENABLE_LOG
+            bool "Enable logging susfs log to kernel"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+            bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+            bool "Enable to spoof bootconfig or cmdline"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_OPEN_REDIRECT
+            bool "Enable open redirect"
+            depends on KSU_SUSFS
+            default y
+          config KSU_SUSFS_SUS_MAP
+            bool "Enable to hide mmapped real file from proc maps"
+            depends on KSU_SUSFS
+            default y
+          EOF
           fi
 
-      # ===== KERNEL CONFIG =====
-      - name: Configure Kernel
+      - name: Configure Defconfig
         run: |
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-
-          # --- KernelSU ---
-          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
-            echo "" >> $DEFCONFIG
-            echo "# KernelSU-Next" >> $DEFCONFIG
-            echo "CONFIG_KSU=y" >> $DEFCONFIG
-            
-            # Verify CONFIG_KSU is enabled
-            if grep -q "CONFIG_KSU=y" $DEFCONFIG; then
-              echo "✓ CONFIG_KSU enabled in defconfig"
-            else
-              echo "✗ CONFIG_KSU not found in defconfig!"
-              exit 1
-            fi
-          fi
-
-          # --- SUSFS ---
-          if [ "$SUSFS_OK" = "true" ] && [ "${{ inputs.enable_susfs }}" = "true" ]; then
-            echo "" >> $DEFCONFIG
-            echo "# SUSFS" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
-          fi
-
-          # --- Module Loading (CRITICAL: allow vendor modules) ---
-          echo "" >> $DEFCONFIG
-          echo "# Module Compatibility" >> $DEFCONFIG
-          echo "CONFIG_MODVERSIONS=n" >> $DEFCONFIG
-          echo "CONFIG_MODULE_SIG_FORCE=n" >> $DEFCONFIG
-          echo "CONFIG_MODULE_SIG_ALL=n" >> $DEFCONFIG
-
-          # ===== LATENCY & RESPONSIVENESS (Rhythm Game Focus) =====
-          echo "" >> $DEFCONFIG
-          echo "# Latency & Responsiveness (Rhythm Game)" >> $DEFCONFIG
+          
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
+          
+          # Optimization
           echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
-          echo "CONFIG_HZ_250=n" >> $DEFCONFIG
           echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
-          echo "CONFIG_PREEMPT_VOLUNTARY=n" >> $DEFCONFIG
-          echo "CONFIG_HIGH_RES_TIMERS=y" >> $DEFCONFIG
-          echo "CONFIG_SND_HRTIMER=y" >> $DEFCONFIG
-
-          # ===== MEMORY & CPU (Daily Use Focus) =====
-          echo "" >> $DEFCONFIG
-          echo "# Memory & CPU Optimization" >> $DEFCONFIG
-          # IMPORTANT: Do not set ZRAM=y or ZSMALLOC=y in GKI, it breaks Bazel module extraction!
           echo "CONFIG_ZRAM_WRITEBACK=y" >> $DEFCONFIG
-          echo "CONFIG_CRYPTO_LZ4=y" >> $DEFCONFIG
-          echo "CONFIG_CRYPTO_ZSTD=y" >> $DEFCONFIG
-          echo "CONFIG_COMPACTION=y" >> $DEFCONFIG
-          echo "CONFIG_KSM=y" >> $DEFCONFIG
-          echo "CONFIG_TRANSPARENT_HUGEPAGE=y" >> $DEFCONFIG
-          echo "CONFIG_SLAB_FREELIST_RANDOM=y" >> $DEFCONFIG
-          echo "CONFIG_LRU_GEN=y" >> $DEFCONFIG
-          echo "CONFIG_LRU_GEN_ENABLED=y" >> $DEFCONFIG
-
-          # ===== I/O Optimization =====
-          echo "" >> $DEFCONFIG
-          echo "# I/O Optimization" >> $DEFCONFIG
-          echo "CONFIG_IOSCHED_BFQ=y" >> $DEFCONFIG
-          echo "CONFIG_BFQ_GROUP_IOSCHED=y" >> $DEFCONFIG
-
-          # ===== NETWORKING (Stable Ping) =====
-          echo "" >> $DEFCONFIG
-          echo "# Networking" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
-          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_MAX=65534" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_BITMAP_IP=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_BITMAP_IPMAC=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_BITMAP_PORT=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_IP=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_IPMARK=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_IPPORT=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_IPPORTIP=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_IPPORTNET=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_IPMAC=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_MAC=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_NETPORTNET=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_NET=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_NETNET=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_NETPORT=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET_LIST_SET=y" >> $DEFCONFIG
-
-          # ===== SERIAL VERSIONING =====
-          CUSTOM_NAME="${{ inputs.custom_name }}"
-          BUILD_VER="${{ github.run_number }}"
-          LOCALVER="-Castorice-${CUSTOM_NAME}-v${BUILD_VER}"
+          
+          # Localversion
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
-          echo "" >> $DEFCONFIG
-          echo "# Branding" >> $DEFCONFIG
+          LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}"
           echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
-          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
-          echo "LOCALVERSION set to: ${LOCALVER}"
 
-          echo "=== Defconfig additions ==="
-          tail -60 $DEFCONFIG
-
-      # ===== BUILD SYSTEM PATCHES =====
-      - name: Patch Build System
+      - name: Bypass KMI Strict
         run: |
           cd kernel/common
-
-          # Remove protected exports (prevents build failures)
-          rm -rf android/abi_gki_protected_exports_* || true
           if [ -f "BUILD.bazel" ]; then
-            sed -i '/abi_gki_protected_exports/d' BUILD.bazel
-            sed -i '/protected_exports/d' BUILD.bazel
-            sed -i '/check_defconfig/d' BUILD.bazel
             sed -i '/kmi_symbol_list_strict_mode/d' BUILD.bazel
             sed -i 's/trim_nonlisted_kmi = True/trim_nonlisted_kmi = False/g' BUILD.bazel
           fi
 
-          if [ -f "modules.bzl" ] && grep -q 'protected_modules = ' modules.bzl; then
-            sed -i 's/protected_modules = \[.*\]/protected_modules = []/' modules.bzl
-          fi
-
-          for f in build.config.gki build.config.gki.aarch64; do
-            [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
-          done
-
-          # Bypass ABI check script
-          PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
-          if [ -f "$PROT_SCRIPT" ]; then
-            perl -i -pe 's/^(\s*)return 1$/$1return 0/g' "$PROT_SCRIPT"
-          fi
-
-          # Clean dirty flags
-          if [ -f "../build/kernel/kleaf/impl/stamp.bzl" ]; then
-            sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' ../build/kernel/kleaf/impl/stamp.bzl
-          fi
-          sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
-          : > .scmversion
-
-          echo "Build system patched"
-
-      - name: Commit Changes
-        run: |
-          cd kernel/common
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Castorice: GKI kernel with KSU+SUSFS+optimizations" || true
-
-      # ===== BUILD =====
       - name: Build Kernel
         run: |
           cd kernel
-          echo "=== Building Castorice GKI Kernel ==="
-          tools/bazel build \
-            --config=fast \
-            --//common:kmi_symbol_list_strict_mode=False \
-            //common:kernel_aarch64_dist 2>&1
-          echo "=== Build completed ==="
+          tools/bazel build --config=fast --//common:kmi_symbol_list_strict_mode=False //common:kernel_aarch64_dist
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: Extract Build Output
+      - name: Extract Build Artifacts
         run: |
-          mkdir -p $GITHUB_WORKSPACE/dist
-          cd kernel
+          mkdir -p dist
+          find kernel/bazel-out -name "Image" -type f -exec cp {} dist/ \;
+          find kernel/bazel-out -name "Image.gz" -type f -exec cp {} dist/ \;
+          find kernel/bazel-out -name "Image.lz4" -type f -exec cp {} dist/ \;
 
-          tools/bazel run \
-            --config=fast \
-            --//common:kmi_symbol_list_strict_mode=False \
-            //common:kernel_aarch64_dist \
-            -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
-
-          # Search bazel-out for missing artifacts
-          for artifact in Image Image.gz Image.lz4; do
-            if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
-              FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
-              if [ -n "$FOUND" ]; then
-                cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/"
-              fi
-            fi
-          done
-
-          echo "=== Build artifacts ==="
-          ls -lah $GITHUB_WORKSPACE/dist/
-
-          # Get actual kernel version
-          if [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
-            BUILT_VER=$(strings $GITHUB_WORKSPACE/dist/Image | grep "Linux version" | head -1)
-            echo "BUILT_KERNEL_VERSION=$BUILT_VER" >> $GITHUB_ENV
-            echo "Built: $BUILT_VER"
-          fi
-
-      - name: Verify Build
-        run: |
-          HAS_IMAGE=false
-          for f in dist/Image dist/Image.gz dist/Image.lz4; do
-            if [ -f "$f" ]; then
-              echo "Found: $f ($(du -h $f | cut -f1))"
-              HAS_IMAGE=true
-            fi
-          done
-          if [ "$HAS_IMAGE" = "false" ]; then
-            echo "BUILD FAILED: No kernel image found!"
-            exit 1
-          fi
-
-      # ===== ANYKERNEL3 =====
       - name: Package AnyKernel3
         run: |
-          STAG=""
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then STAG="-SUSFS"; fi
-          KSUTAG=""
-          if [ "${{ inputs.enable_ksu }}" = "true" ]; then KSUTAG="-KSU"; fi
-
-          # Serial Versioning: Castorice-<CustomName>-v<Build>
-          CUSTOM_NAME="${{ inputs.custom_name }}"
-          BUILD_VER="${{ github.run_number }}"
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI-6.6${KSUTAG}${STAG}-Redmi12"
-          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
-
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
+          
+          cat << EOF > anykernel.sh
+          properties() {
+            kernel.string=Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} by ${{ inputs.author_name }}
+            do.devicecheck=1
+            do.modules=0
+            do.systemless=1
+            do.cleanup=1
+            device.name1=fire
+            device.name2=Redmi 12
+            supported.versions=15
+          }
+          block=boot;
+          is_slot_device=auto;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+          . tools/ak3-core.sh;
+          dump_boot;
+          write_boot;
+          EOF
+          
+          cp ../dist/Image* . || true
+          BASE_NAME="Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-GKI-6.6-Redmi12"
+          zip -r9 "../dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
+          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-          # Write anykernel.sh
-          AUTHOR="${{ inputs.author_name }}"
-          KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} by ${AUTHOR}"
-          {
-            echo '# AnyKernel3 Ramdisk Mod Script'
-            echo '# osm0sis @ xda-developers'
-            echo "properties() { '"
-            echo "kernel.string=${KERNEL_STRING}"
-            echo 'do.devicecheck=1'
-            echo 'do.modules=0'
-            echo 'do.systemless=1'
-            echo 'do.cleanup=1'
-            echo 'do.cleanuponabort=0'
-            echo 'device.name1=fire'
-            echo 'device.name2=Redmi 12'
-            echo 'supported.versions=15'
-            echo 'supported.patchlevels='
-            echo "'; }"
-            echo 'block=boot;'
-            echo 'is_slot_device=auto;'
-            echo 'ramdisk_compression=auto;'
-            echo 'patch_vbmeta_flag=auto;'
-            echo '. tools/ak3-core.sh;'
-            echo 'dump_boot;'
-            echo 'write_boot;'
-          } > anykernel.sh
-
-          # Copy kernel image — priority: Image.gz > Image > Image.lz4
-          if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
-            cp "$GITHUB_WORKSPACE/dist/Image.gz" .
-          elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
-            cp "$GITHUB_WORKSPACE/dist/Image" .
-          elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
-            cp "$GITHUB_WORKSPACE/dist/Image.lz4" .
-          else
-            echo "ERROR: No kernel image found to package!"
-            exit 1
-          fi
-
-          zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
-
-      # ===== OUTPUT =====
-      - name: Prepare Output
-        run: |
-          mkdir -p out
-          [ -f "dist/${ZIP_NAME}-AnyKernel3.zip" ] && cp "dist/${ZIP_NAME}-AnyKernel3.zip" out/ || true
-          for img in dist/Image dist/Image.gz dist/Image.lz4; do
-            [ -f "$img" ] && cp "$img" out/ || true
-          done
-          echo "=== Final output ==="
-          ls -lah out/
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: "Castorice-GKI-6.6-fire"
-          path: out/*
-          if-no-files-found: warn
-          compression-level: 9
-          retention-days: 30
-
-      - name: Create Release
+      - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-GKI"
           name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • GKI 6.6"
           body: |
             ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
-
-            ### Kernel Info
-            - **Build**: `Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}`
-            - **Type**: GKI (Generic Kernel Image)
-            - **KMI**: `6.6-${{ env.ANDROID_VERSION }}-${{ env.KMI_GENERATION }}`
-            - **KernelSU-Next**: v${{ env.KSU_VERSION }}
-            - **SUSFS**: ${{ inputs.enable_susfs }}
-            - **Toolchain**: Kleaf/Bazel (AOSP)
-
-            ### Performance Profile
-            - 🎮 **Rhythm Game**: HZ_1000, Full PREEMPT, HRTIMER audio
-            - ⚡ **Daily Use**: LZ4/ZSTD ZRAM, KSM, THP, LRU-Gen
-            - 💾 **I/O**: BFQ scheduler
-            - 🌐 **Network**: TCP BBR, FQ, IPSet
-            - 📦 **Module compat**: MODVERSIONS disabled
-
-            ### Downloads
-            | File | Method |
-            |------|--------|
-            | `*-AnyKernel3.zip` | Flash via Custom Recovery / Kernel Flasher |
-            | `Image*` | Raw kernel image |
-
-            ### Compatibility
-            - ✅ HyperOS 2.x (Android 15) — kernel 6.6
-            - ❌ MIUI 14 / HyperOS 1.x — use Legacy 4.19 build
+            ### Info
+            - **Base**: GKI 6.6 Android 15
+            - **KernelSU-Next**: YES
+            - **SUSFS**: YES
           files: |
-            out/*.zip
-            out/Image*
-          draft: false
-          prerelease: false
+            dist/*.zip
+            dist/Image*

@@ -28,15 +28,6 @@ permissions:
 env:
   KERNEL_NAME: Castorice
   DEVICE_CODE: fire
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # Placeholders for dynamically set variables to prevent IDE warnings
-  CLANG_VERSION: ""
-  LLD_VERSION: ""
-  KERNEL_HEAD_HASH: ""
-  KSU_DIR: ""
-  KSU_VERSION: ""
-  KERNEL_VERSION: ""
-  ZIP_NAME: ""
 
 jobs:
   build:
@@ -47,34 +38,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Cleanup Broken Submodules
-        run: |
-          rm -f .gitmodules
-          git rm --cached temp_susfs 2>/dev/null || true
-          git config --remove-section submodule.temp_susfs 2>/dev/null || true
-
       - name: Maximize Disk Space
         run: |
-          echo "=== Before cleanup ==="
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo rm -rf /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
-          sudo rm -rf /usr/local/share/chromium /usr/local/share/powershell
-          sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel || true
-          sudo apt-get autoremove -y
-          sudo apt-get clean
-          echo "=== After cleanup ==="
-          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
+          sudo apt-get autoremove -y && sudo apt-get clean
 
       - name: Setup Swap
         run: |
-          sudo swapoff /mnt/swapfile 2>/dev/null || true
-          sudo rm -f /mnt/swapfile
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
-          sudo chmod 600 /mnt/swapfile
-          sudo mkswap /mnt/swapfile
-          sudo swapon /mnt/swapfile
-          free -h
+          sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
 
       - name: Install Dependencies
         run: |
@@ -88,304 +60,41 @@ jobs:
             device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev \
             jq libyaml-dev -y
 
-      # ===== TOOLCHAIN =====
-      - name: Download ZyClang (Latest)
+      - name: Download ZyClang
         run: |
+          mkdir -p clang
           ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
-          if [ -z "$ZYCLANG" ]; then echo "FATAL: Cannot resolve ZyClang latest release"; exit 1; fi
-
           ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
-          if [ -z "$ZYASSET" ]; then echo "FATAL: Cannot find ZyClang tarball asset"; exit 1; fi
-
           ZYCLANG_DLINK="https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
-          echo "Downloading: $ZYCLANG_DLINK"
-          mkdir -p "$GITHUB_WORKSPACE/ZyClang"
-          aria2c -s16 -x16 -k1M "$ZYCLANG_DLINK" -o ZyClang.tar.gz
-          tar -C "$GITHUB_WORKSPACE/ZyClang/" -zxf ZyClang.tar.gz
-          rm -f ZyClang.tar.gz
+          aria2c -x16 -s16 -k1M -o zyclang.tar.gz "$ZYCLANG_DLINK"
+          tar -xf zyclang.tar.gz -C clang/
+          rm -f zyclang.tar.gz
+          echo "Clang version:"
+          clang/bin/clang --version
 
-          # Validate toolchain binaries exist
-          if [ ! -x "$GITHUB_WORKSPACE/ZyClang/bin/clang" ]; then
-            echo "FATAL: clang binary not found after extraction"; exit 1
-          fi
-
-          CLANG_VERSION=$("$GITHUB_WORKSPACE/ZyClang/bin/clang" --version | head -n 1)
-          LLD_VERSION=$("$GITHUB_WORKSPACE/ZyClang/bin/ld.lld" --version | head -n 1)
-          echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
-          echo "LLD_VERSION=$LLD_VERSION" >> $GITHUB_ENV
-          echo "Clang: $CLANG_VERSION"
-          echo "LLD: $LLD_VERSION"
-
-      # ===== KERNEL SOURCE =====
-      - name: Clone Kernel Source (Xiaomi fire-t-oss)
+      - name: Sync Kernel Source
         run: |
-          git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git \
-            -b fire-t-oss $GITHUB_WORKSPACE/kernel
-          cd $GITHUB_WORKSPACE/kernel
-          KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)
-          echo "KERNEL_HEAD_HASH=$KERNEL_HEAD_HASH" >> $GITHUB_ENV
-          echo "Kernel HEAD: $KERNEL_HEAD_HASH"
+          git clone --depth=1 https://github.com/naidrahiqa/fire_kernel.git kernel
 
-      # ===== KERNELSU-NEXT (LEGACY) =====
-      - name: Setup KernelSU-Next (Legacy)
+      - name: Setup KernelSU-Next
         if: ${{ inputs.enable_ksu == true }}
         run: |
-          cd $GITHUB_WORKSPACE/kernel
-          curl -LSs "https://raw.githubusercontent.com/sidex15/KernelSU-Next/legacy/kernel/setup.sh" | bash -s legacy
+          cd kernel
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+          
+          # Fix git version
+          KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
+          sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild 2>/dev/null || true
+          
+          # Apply manual patches for 4.19
+          echo "Applying KSU manual patches..."
+          for patch in KernelSU-Next/kernel/patches/*.patch; do
+            patch -p1 --forward < "$patch" || true
+          done
 
-          KSU_DIR=""
-          if [ -d "KernelSU-Next" ]; then
-            KSU_DIR="KernelSU-Next"
-          elif [ -d "KernelSU" ]; then
-            KSU_DIR="KernelSU"
-          else
-            echo "ERROR: KernelSU directory not found!"
-            exit 1
-          fi
-
-          KSU_GIT_VERSION=$(cd $KSU_DIR && git rev-list --count legacy)
-          KERNELSU_VERSION=$(($KSU_GIT_VERSION + 30000 + 60))
-          echo "KSU_DIR=$KSU_DIR" >> $GITHUB_ENV
-          echo "KSU_VERSION=$KERNELSU_VERSION" >> $GITHUB_ENV
-          echo "KernelSU-Next Legacy installed - version $KERNELSU_VERSION"
-
-      # ===== SUSFS =====
-      - name: Setup SUSFS (kernel-4.19)
+      - name: Setup SUSFS
         if: ${{ inputs.enable_susfs == true }}
         run: |
-          cd $GITHUB_WORKSPACE
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b kernel-4.19
-
-          cd $GITHUB_WORKSPACE/kernel
-          # Copy SUSFS source files
-          echo "Copying SUSFS files..."
-          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
-          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          
-          echo "Verifying copied files:"
-          ls -la include/linux/susfs*
-          ls -la fs/susfs*
-          echo "SUSFS source files copied"
-
-      # ===== PATCHES =====
-      - name: Clone Reference Patches
-        run: |
-          cd $GITHUB_WORKSPACE
-          git clone --depth=1 https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire.git ref_patches
-          echo "=== Available patches ==="
-          ls -la ref_patches/patchs/ || true
-
-      - name: Apply Patches
-        run: |
-          cd $GITHUB_WORKSPACE/kernel
-
-          # Apply KSU hooks for 4.19 (manual hook, NO kprobes)
-          if [ "${{ inputs.enable_ksu }}" = "true" ]; then
-            echo "Applying KSU hooks patch..."
-            patch -p1 --forward < ../ref_patches/patchs/ksu_hooks_4.19.patch || echo "WARN: ksu_hooks patch had issues"
-
-            echo "Applying hide KSU patch..."
-            patch -p1 --forward < ../ref_patches/patchs/69_hide_ksu.patch || echo "WARN: hide_ksu patch had issues"
-          fi
-
-          # Fix kernel genheaders (build fix)
-          echo "Applying genheaders fix..."
-          patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || echo "WARN: genheaders patch had issues"
-
-          # SUSFS kernel integration patch
-          if [ "${{ inputs.enable_susfs }}" = "true" ]; then
-            echo "Applying SUSFS kernel patch..."
-            patch -p1 --forward < ../ref_patches/patchs/50_add_susfs_in_kernel-4.19.patch || echo "WARN: susfs patch had issues"
-
-            # Fix SUSFS format strings for 4.19
-            sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
-            sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
-
-            # Fix task_work_add compatibility for 4.19 (TWA_RESUME -> true)
-            if [ -d "KernelSU-Next" ]; then
-              find ./KernelSU-Next/kernel -type f -name "*.c" -exec sed -i 's/TWA_RESUME/true/g' {} +
-            elif [ -d "KernelSU" ]; then
-              find ./KernelSU/kernel -type f -name "*.c" -exec sed -i 's/TWA_RESUME/true/g' {} +
-            fi
-
-            # --- Integrate SUSFS into KernelSU-Next ---
-            echo "=== Integrating SUSFS into KernelSU-Next (Legacy) ==="
-            KSU_KERNEL="KernelSU-Next/kernel"
-            if [ ! -d "$KSU_KERNEL" ]; then KSU_KERNEL="KernelSU/kernel"; fi
-
-            if [ -d "$KSU_KERNEL" ]; then
-              # 1. Inject SUSFS Kconfig
-              if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
-                {
-                  echo ''
-                  echo 'menu "KernelSU - SUSFS"'
-                  echo 'config KSU_SUSFS'
-                  printf '\tbool "KernelSU addon - SUSFS"\n'
-                  printf '\tdepends on KSU\n'
-                  printf '\tdefault y\n'
-                  printf '\thelp\n'
-                  printf '\t  Patch and Enable SUSFS to kernel with KernelSU.\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_SUS_PATH'
-                  printf '\tbool "Enable to hide suspicious path"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_SUS_MOUNT'
-                  printf '\tbool "Enable to hide suspicious mounts"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_SUS_KSTAT'
-                  printf '\tbool "Enable to spoof suspicious kstat"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_SPOOF_UNAME'
-                  printf '\tbool "Enable to spoof uname"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_ENABLE_LOG'
-                  printf '\tbool "Enable logging susfs log to kernel"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS'
-                  printf '\tbool "Enable to hide ksu and susfs symbols from /proc/kallsyms"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG'
-                  printf '\tbool "Enable to spoof /proc/bootconfig or /proc/cmdline"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_OPEN_REDIRECT'
-                  printf '\tbool "Enable to redirect a path to be opened with another path"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'config KSU_SUSFS_SUS_MAP'
-                  printf '\tbool "Enable to hide mmapped real file from proc maps"\n'
-                  printf '\tdepends on KSU_SUSFS\n'
-                  printf '\tdefault y\n'
-                  echo ''
-                  echo 'endmenu'
-                } >> "$KSU_KERNEL/Kconfig"
-              fi
-
-              # 2. Inject SUSFS Makefile entries
-              if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-                {
-                  echo ''
-                  echo '## For susfs stuff ##'
-                  echo 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)'
-                  echo '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '"'"'^#define SUSFS_VERSION'"'"' | cut -d'"'"' '"'"' -f3 | sed '"'"'s/"//g'"'"'))'
-                  echo '$(info )'
-                  echo '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))'
-                  echo 'else'
-                  echo '$(info -- You have not integrated susfs in your kernel yet.)'
-                  echo '$(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)'
-                  echo 'endif'
-                } >> "$KSU_KERNEL/Makefile"
-              fi
-
-              # 2b. Inject SUSFS source compilation into fs/Makefile (Fix undefined symbols)
-              # NOTE: obj-y += ../../fs/susfs.o from KSU subdir is ILLEGAL in Kbuild.
-              # susfs.c must be compiled from fs/ directory via fs/Makefile.
-              if [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile"; then
-                echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
-                echo "Registered susfs.o in fs/Makefile"
-              fi
-
-              # 2c. Ensure SUSFS header is accessible
-              if [ ! -f "include/linux/susfs.h" ]; then
-                cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/ 2>/dev/null || true
-              fi
-
-              # 3. Inject susfs.h include into core/init.c
-              if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c"; then
-                sed -i '/#include <linux\/workqueue.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/core/init.c"
-              fi
-
-              # 4. Inject susfs_init() call into core/init.c
-              if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-                INIT_FILE="$KSU_KERNEL/core/init.c"
-                INJECT_PY=$(mktemp /tmp/inject_susfs_XXXXXX.py)
-                echo 'import sys' > "$INJECT_PY"
-                echo 'path = sys.argv[1]' >> "$INJECT_PY"
-                echo 'with open(path, "r") as f: content = f.read()' >> "$INJECT_PY"
-                echo 'injection = "#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n"' >> "$INJECT_PY"
-                echo 'if "susfs_init" not in content and "ksu_feature_init" in content:' >> "$INJECT_PY"
-                echo '    content = content.replace("ksu_feature_init", injection + "\tksu_feature_init", 1)' >> "$INJECT_PY"
-                echo '    with open(path, "w") as f: f.write(content)' >> "$INJECT_PY"
-                echo '    print("susfs_init injected before ksu_feature_init")' >> "$INJECT_PY"
-                echo 'else: print("Skipped: susfs_init already present or ksu_feature_init not found")' >> "$INJECT_PY"
-                python3 "$INJECT_PY" "$INIT_FILE"
-                rm -f "$INJECT_PY"
-              fi
-
-              # 5. Inject susfs includes into supercall.c or dispatch.c
-              if [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c"; then
-                sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
-              elif [ -f "$KSU_KERNEL/supercall/supercall.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/supercall.c"; then
-                sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/supercall.c"
-              fi
-
-              # 6. Create __weak stubs to prevent linker undefined symbol errors
-              echo "=== Creating KSU/SUSFS weak stubs (linker safety net) ==="
-              # We place this in fs/ instead of KSU_KERNEL to ensure it's ALWAYS compiled
-              # even if CONFIG_KSU is mysteriously dropped during make defconfig.
-              KSU_STUBS="fs/ksu_hooks_stubs.c"
-              {
-                echo '// Auto-generated __weak stubs for KSU/SUSFS hook functions'
-                echo '#include <linux/types.h>'
-                echo '#include <linux/errno.h>'
-                echo '#include <linux/fs.h>'
-                echo '#include <linux/compiler.h>'
-                echo ''
-                echo '#define KSU_WEAK_HOOK(ret, name, ...) \'
-                echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return 0; }'
-                echo ''
-                echo '#define KSU_WEAK_HOOK_BOOL(ret, name, ...) \'
-                echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return false; }'
-                echo ''
-                echo '// KSU hooks'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_reboot, void)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_prctl, int p1, unsigned long p2, unsigned long p3, unsigned long p4, unsigned long p5)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_faccessat, int *p1, const char __user **p2, int *p3, int *p4)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_stat, int *p1, const char __user **p2, int *p3)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setregid, gid_t p1, gid_t p2)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setgid, gid_t p1)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setresgid, gid_t p1, gid_t p2, gid_t p3)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsgid, gid_t p1)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setuid, uid_t p1)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setreuid, uid_t p1, uid_t p2)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setresuid, uid_t p1, uid_t p2, uid_t p3)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsuid, uid_t p1)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat_sucompat, int *p1, const char __user **p2, void *p3, void *p4, int *p5)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat, int p1, const char __user *p2, const char __user *const __user *p3, const char __user *const __user *p4, int p5)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_devpts, struct inode *p1)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_input_handle_event, unsigned int p1, unsigned int p2, int p3)'
-                echo 'KSU_WEAK_HOOK_BOOL(bool, ksu_is_input_hook_enabled, void)'
-                echo 'KSU_WEAK_HOOK_BOOL(bool, ksu_is_init_rc_hook_enabled, void)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_read, void)'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_vfs_fstat, void)'
-                echo ''
-                echo '// SUSFS hooks'
-                echo 'u32 __attribute__((weak)) susfs_ksu_sid = 0;'
-                echo 'u32 __attribute__((weak)) susfs_priv_app_sid = 0;'
-                echo 'bool __attribute__((weak)) susfs_is_current_ksu_domain(void) { return false; }'
-                echo 'bool __attribute__((weak)) susfs_is_current_zygote_domain(void) { return false; }'
-                echo 'KSU_WEAK_HOOK(int, ksu_handle_slow_avc_audit_new, void)'
-              } > "$KSU_STUBS"
-              
-              if ! grep -q "ksu_hooks_stubs.o" "fs/Makefile"; then
-                echo "obj-y += ksu_hooks_stubs.o" >> "fs/Makefile"
-                echo "Registered stubs in fs/Makefile"
-              fi
-            fi
           fi
 
           # ===== LCD 0c/0d FIX (CRITICAL FOR TOUCHSCREEN) =====
