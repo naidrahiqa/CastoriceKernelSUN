@@ -203,8 +203,12 @@ jobs:
           if [ -d "$(pwd)/KernelSU-Next/kernel/patches" ]; then
             for p in "$(pwd)/KernelSU-Next/kernel/patches"/*.patch; do
               [ -f "$p" ] || continue
-              echo "Trying KSU patch: $p"
-              git apply --3way "$p" 2>/dev/null || patch -p1 --forward --fuzz=3 < "$p" 2>/dev/null || echo "WARN: $p skipped"
+              echo "Applying KSU patch: $p"
+              if ! git apply --3way "$p" 2>/dev/null; then
+                if ! patch -p1 --forward --fuzz=3 < "$p" 2>/dev/null; then
+                  echo "WARN: Failed to apply $p (continuing anyway)"
+                fi
+              fi
             done
           fi
 
@@ -215,9 +219,8 @@ jobs:
           echo "=== Creating KSU hook stubs (linker safety net) ==="
           KSU_STUBS="drivers/kernelsu/ksu_hooks_stubs.c"
           {
-            echo '// Auto-generated __weak stubs for KSU hook functions'
-            echo '// These prevent undefined symbol errors when kprobes mode is used'
-            echo '// Real implementations from the KSU driver override these via __weak'
+            echo '// Auto-generated __weak stubs for KSU/SUSFS hook functions'
+            echo '// These prevent undefined symbol errors when using kprobes'
             echo '#include <linux/types.h>'
             echo '#include <linux/errno.h>'
             echo '#include <linux/fs.h>'
@@ -225,6 +228,7 @@ jobs:
             echo '#define KSU_WEAK_HOOK(ret, name, ...) \'
             echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return 0; }'
             echo ''
+            echo '// KSU hooks'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_reboot, void)'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_prctl, int p1, unsigned long p2, unsigned long p3, unsigned long p4, unsigned long p5)'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_faccessat, int *p1, const char __user **p2, int *p3, int *p4)'
@@ -238,8 +242,18 @@ jobs:
             echo 'KSU_WEAK_HOOK(int, ksu_handle_setresuid, uid_t p1, uid_t p2, uid_t p3)'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsuid, uid_t p1)'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat_sucompat, int *p1, const char __user **p2, void *p3, void *p4, int *p5)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat, int p1, const char __user *p2, const char __user *const __user *p3, const char __user *const __user *p4, int p5)'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_devpts, struct inode *p1)'
             echo 'KSU_WEAK_HOOK(int, ksu_handle_input_handle_event, unsigned int p1, unsigned int p2, int p3)'
+            echo 'KSU_WEAK_HOOK(int, ksu_is_input_hook_enabled, void)'
+            echo 'KSU_WEAK_HOOK(int, ksu_is_init_rc_hook_enabled, void)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_read, void)'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_vfs_fstat, void)'
+            echo ''
+            echo '// SUSFS hooks'
+            echo 'int __attribute__((weak)) susfs_ksu_sid = 0;'
+            echo 'int __attribute__((weak)) susfs_priv_app_sid = 0;'
+            echo 'int __attribute__((weak)) susfs_is_current_ksu_domain(void) { return 0; }'
           } > "$KSU_STUBS"
           echo "Created: $KSU_STUBS"
 
@@ -462,6 +476,14 @@ jobs:
             echo "" >> $DEFCONFIG
             echo "# KernelSU-Next" >> $DEFCONFIG
             echo "CONFIG_KSU=y" >> $DEFCONFIG
+            
+            # Verify CONFIG_KSU is enabled
+            if grep -q "CONFIG_KSU=y" $DEFCONFIG; then
+              echo "✓ CONFIG_KSU enabled in defconfig"
+            else
+              echo "✗ CONFIG_KSU not found in defconfig!"
+              exit 1
+            fi
           fi
 
           # --- SUSFS ---
