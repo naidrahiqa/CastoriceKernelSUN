@@ -92,17 +92,25 @@ jobs:
       - name: Download ZyClang (Latest)
         run: |
           ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
-          ZYASSET=$(curl -sL https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG | grep -oP '[^/"]+\.tar.gz' | head -n1)
-          ZYCLANG_DLINK="https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
+          if [ -z "$ZYCLANG" ]; then echo "FATAL: Cannot resolve ZyClang latest release"; exit 1; fi
 
+          ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
+          if [ -z "$ZYASSET" ]; then echo "FATAL: Cannot find ZyClang tarball asset"; exit 1; fi
+
+          ZYCLANG_DLINK="https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
           echo "Downloading: $ZYCLANG_DLINK"
-          mkdir -p $GITHUB_WORKSPACE/ZyClang
+          mkdir -p "$GITHUB_WORKSPACE/ZyClang"
           aria2c -s16 -x16 -k1M "$ZYCLANG_DLINK" -o ZyClang.tar.gz
-          tar -C $GITHUB_WORKSPACE/ZyClang/ -zxf ZyClang.tar.gz
+          tar -C "$GITHUB_WORKSPACE/ZyClang/" -zxf ZyClang.tar.gz
           rm -f ZyClang.tar.gz
 
-          CLANG_VERSION=$($GITHUB_WORKSPACE/ZyClang/bin/clang --version | head -n 1)
-          LLD_VERSION=$($GITHUB_WORKSPACE/ZyClang/bin/ld.lld --version | head -n 1)
+          # Validate toolchain binaries exist
+          if [ ! -x "$GITHUB_WORKSPACE/ZyClang/bin/clang" ]; then
+            echo "FATAL: clang binary not found after extraction"; exit 1
+          fi
+
+          CLANG_VERSION=$("$GITHUB_WORKSPACE/ZyClang/bin/clang" --version | head -n 1)
+          LLD_VERSION=$("$GITHUB_WORKSPACE/ZyClang/bin/ld.lld" --version | head -n 1)
           echo "CLANG_VERSION=$CLANG_VERSION" >> $GITHUB_ENV
           echo "LLD_VERSION=$LLD_VERSION" >> $GITHUB_ENV
           echo "Clang: $CLANG_VERSION"
@@ -208,79 +216,79 @@ jobs:
             if [ -d "$KSU_KERNEL" ]; then
               # 1. Inject SUSFS Kconfig
               if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
-                cat >> "$KSU_KERNEL/Kconfig" << 'KEOF'
-
-            menu "KernelSU - SUSFS"
-            config KSU_SUSFS
-            	bool "KernelSU addon - SUSFS"
-            	depends on KSU
-            	default y
-            	help
-            	  Patch and Enable SUSFS to kernel with KernelSU.
-
-            config KSU_SUSFS_SUS_PATH
-            	bool "Enable to hide suspicious path"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_SUS_MOUNT
-            	bool "Enable to hide suspicious mounts"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_SUS_KSTAT
-            	bool "Enable to spoof suspicious kstat"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_SPOOF_UNAME
-            	bool "Enable to spoof uname"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_ENABLE_LOG
-            	bool "Enable logging susfs log to kernel"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-            	bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-            	bool "Enable to spoof /proc/bootconfig or /proc/cmdline"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_OPEN_REDIRECT
-            	bool "Enable to redirect a path to be opened with another path"
-            	depends on KSU_SUSFS
-            	default y
-
-            config KSU_SUSFS_SUS_MAP
-            	bool "Enable to hide mmapped real file from proc maps"
-            	depends on KSU_SUSFS
-            	default y
-
-            endmenu
-            KEOF
+                {
+                  echo ''
+                  echo 'menu "KernelSU - SUSFS"'
+                  echo 'config KSU_SUSFS'
+                  printf '\tbool "KernelSU addon - SUSFS"\n'
+                  printf '\tdepends on KSU\n'
+                  printf '\tdefault y\n'
+                  printf '\thelp\n'
+                  printf '\t  Patch and Enable SUSFS to kernel with KernelSU.\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_SUS_PATH'
+                  printf '\tbool "Enable to hide suspicious path"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_SUS_MOUNT'
+                  printf '\tbool "Enable to hide suspicious mounts"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_SUS_KSTAT'
+                  printf '\tbool "Enable to spoof suspicious kstat"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_SPOOF_UNAME'
+                  printf '\tbool "Enable to spoof uname"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_ENABLE_LOG'
+                  printf '\tbool "Enable logging susfs log to kernel"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS'
+                  printf '\tbool "Enable to hide ksu and susfs symbols from /proc/kallsyms"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG'
+                  printf '\tbool "Enable to spoof /proc/bootconfig or /proc/cmdline"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_OPEN_REDIRECT'
+                  printf '\tbool "Enable to redirect a path to be opened with another path"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'config KSU_SUSFS_SUS_MAP'
+                  printf '\tbool "Enable to hide mmapped real file from proc maps"\n'
+                  printf '\tdepends on KSU_SUSFS\n'
+                  printf '\tdefault y\n'
+                  echo ''
+                  echo 'endmenu'
+                } >> "$KSU_KERNEL/Kconfig"
               fi
 
               # 2. Inject SUSFS Makefile entries
               if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-                cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
-
-            ## For susfs stuff ##
-            ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
-            $(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
-            $(info )
-            $(info -- SUSFS_VERSION: $(SUSFS_VERSION))
-            else
-            $(info -- You have not integrated susfs in your kernel yet.)
-            $(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
-            endif
-            MKEOF
+                {
+                  echo ''
+                  echo '## For susfs stuff ##'
+                  echo 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)'
+                  echo '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '"'"'^#define SUSFS_VERSION'"'"' | cut -d'"'"' '"'"' -f3 | sed '"'"'s/"//g'"'"'))'
+                  echo '$(info )'
+                  echo '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))'
+                  echo 'else'
+                  echo '$(info -- You have not integrated susfs in your kernel yet.)'
+                  echo '$(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)'
+                  echo 'endif'
+                } >> "$KSU_KERNEL/Makefile"
               fi
 
               # 3. Inject susfs.h include into core/init.c
@@ -290,10 +298,7 @@ jobs:
 
               # 4. Inject susfs_init() call into core/init.c
               if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-                sed -i '/ksu_feature_init/i \
-            #ifdef CONFIG_KSU_SUSFS\
-            \tsusfs_init();\
-            #endif' "$KSU_KERNEL/core/init.c"
+                sed -i '/ksu_feature_init/i\#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif' "$KSU_KERNEL/core/init.c"
               fi
 
               # 5. Inject susfs includes into supercall.c or dispatch.c
@@ -471,20 +476,20 @@ jobs:
           # Error was: "Makefile:447: *** recipe commences before first target. Stop."
           if [ -f "Makefile" ]; then
             echo "Adding clang compatibility CFLAGS (appending to end of Makefile)..."
-            cat >> Makefile << 'CLANG_COMPAT_EOF'
-
-          # Clang compatibility flags (appended by CI)
-          KBUILD_CFLAGS += -Wno-error
-          KBUILD_CFLAGS += -Wno-implicit-function-declaration
-          KBUILD_CFLAGS += -Wno-strict-prototypes
-          KBUILD_CFLAGS += -Wno-return-type
-          KBUILD_CFLAGS += -Wno-unknown-warning-option
-          KBUILD_CFLAGS += -Wno-int-conversion
-          KBUILD_CFLAGS += -Wno-unused-function
-          KBUILD_CFLAGS += -Wno-misleading-indentation
-          KBUILD_CFLAGS += -Wno-bool-operation
-          KBUILD_CFLAGS += -Wno-uninitialized
-          CLANG_COMPAT_EOF
+            {
+              echo ''
+              echo '# Clang compatibility flags (appended by CI)'
+              echo 'KBUILD_CFLAGS += -Wno-error'
+              echo 'KBUILD_CFLAGS += -Wno-implicit-function-declaration'
+              echo 'KBUILD_CFLAGS += -Wno-strict-prototypes'
+              echo 'KBUILD_CFLAGS += -Wno-return-type'
+              echo 'KBUILD_CFLAGS += -Wno-unknown-warning-option'
+              echo 'KBUILD_CFLAGS += -Wno-int-conversion'
+              echo 'KBUILD_CFLAGS += -Wno-unused-function'
+              echo 'KBUILD_CFLAGS += -Wno-misleading-indentation'
+              echo 'KBUILD_CFLAGS += -Wno-bool-operation'
+              echo 'KBUILD_CFLAGS += -Wno-uninitialized'
+            } >> Makefile
             echo "Clang CFLAGS appended successfully"
           fi
 
@@ -529,14 +534,19 @@ jobs:
           echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
           echo "=== Building Linux $KERNEL_VERSION ==="
 
-          # Build
+          # Build (pipe to tee means exit code comes from tee, not make)
+          # Use PIPEFAIL so make failure propagates through the pipe
+          set -o pipefail
           make O=out $ARGS -j"$(nproc --all)" 2>&1 | tee build.log
+          BUILD_RC=$?
+          set +o pipefail
 
           # Verify
           IMAGE="out/arch/arm64/boot/Image.gz-dtb"
-          if [ ! -f "$IMAGE" ]; then
-            echo "BUILD FAILED! Image.gz-dtb not found"
-            tail -100 build.log
+          if [ ! -f "$IMAGE" ] || [ "$BUILD_RC" -ne 0 ]; then
+            echo "BUILD FAILED! Exit code: $BUILD_RC"
+            echo "=== Last 150 lines of build log ==="
+            tail -150 build.log
             exit 1
           fi
           echo "BUILD SUCCESS: $IMAGE"
@@ -562,7 +572,7 @@ jobs:
           git clone --depth=1 https://github.com/Alexjr2/AnyKernel3.git -b android-4.19 ak3
           cd ak3
 
-          cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb .
+          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" .
           DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
           if [ -f "$DTB" ]; then cp "$DTB" ./dtb; fi
 
@@ -587,8 +597,8 @@ jobs:
       - name: Prepare Output
         run: |
           mkdir -p out
-          cp $GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip out/ 2>/dev/null || true
-          cp $GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb out/ 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip" out/ 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" out/ 2>/dev/null || true
           echo "=== Final output ==="
           ls -lah out/
 

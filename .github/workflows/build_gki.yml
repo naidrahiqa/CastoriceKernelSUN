@@ -245,80 +245,80 @@ jobs:
 
             # 1. Inject SUSFS Kconfig
             if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
-              cat >> "$KSU_KERNEL/Kconfig" << 'KEOF'
-
-          menu "KernelSU - SUSFS"
-          config KSU_SUSFS
-          	bool "KernelSU addon - SUSFS"
-          	depends on KSU
-          	default y
-          	help
-          	  Patch and Enable SUSFS to kernel with KernelSU.
-
-          config KSU_SUSFS_SUS_PATH
-          	bool "Enable to hide suspicious path"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_SUS_MOUNT
-          	bool "Enable to hide suspicious mounts"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_SUS_KSTAT
-          	bool "Enable to spoof suspicious kstat"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_SPOOF_UNAME
-          	bool "Enable to spoof uname"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_ENABLE_LOG
-          	bool "Enable logging susfs log to kernel"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-          	bool "Enable to hide ksu and susfs symbols from /proc/kallsyms"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          	bool "Enable to spoof /proc/bootconfig or /proc/cmdline"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_OPEN_REDIRECT
-          	bool "Enable to redirect a path to be opened with another path"
-          	depends on KSU_SUSFS
-          	default y
-
-          config KSU_SUSFS_SUS_MAP
-          	bool "Enable to hide mmapped real file from proc maps"
-          	depends on KSU_SUSFS
-          	default y
-
-          endmenu
-          KEOF
+              {
+                echo ''
+                echo 'menu "KernelSU - SUSFS"'
+                echo 'config KSU_SUSFS'
+                printf '\tbool "KernelSU addon - SUSFS"\n'
+                printf '\tdepends on KSU\n'
+                printf '\tdefault y\n'
+                printf '\thelp\n'
+                printf '\t  Patch and Enable SUSFS to kernel with KernelSU.\n'
+                echo ''
+                echo 'config KSU_SUSFS_SUS_PATH'
+                printf '\tbool "Enable to hide suspicious path"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_SUS_MOUNT'
+                printf '\tbool "Enable to hide suspicious mounts"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_SUS_KSTAT'
+                printf '\tbool "Enable to spoof suspicious kstat"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_SPOOF_UNAME'
+                printf '\tbool "Enable to spoof uname"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_ENABLE_LOG'
+                printf '\tbool "Enable logging susfs log to kernel"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS'
+                printf '\tbool "Enable to hide ksu and susfs symbols from /proc/kallsyms"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG'
+                printf '\tbool "Enable to spoof /proc/bootconfig or /proc/cmdline"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_OPEN_REDIRECT'
+                printf '\tbool "Enable to redirect a path to be opened with another path"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'config KSU_SUSFS_SUS_MAP'
+                printf '\tbool "Enable to hide mmapped real file from proc maps"\n'
+                printf '\tdepends on KSU_SUSFS\n'
+                printf '\tdefault y\n'
+                echo ''
+                echo 'endmenu'
+              } >> "$KSU_KERNEL/Kconfig"
               echo "SUSFS Kconfig injected successfully"
             fi
 
             # 2. Inject SUSFS Makefile entries
             if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-              cat >> "$KSU_KERNEL/Makefile" << 'MKEOF'
-
-          ## For susfs stuff ##
-          ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
-          $(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
-          $(info )
-          $(info -- SUSFS_VERSION: $(SUSFS_VERSION))
-          else
-          $(info -- You have not integrated susfs in your kernel yet.)
-          $(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)
-          endif
-          MKEOF
+              {
+                echo ''
+                echo '## For susfs stuff ##'
+                echo 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)'
+                echo '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '"'"'^#define SUSFS_VERSION'"'"' | cut -d'"'"' '"'"' -f3 | sed '"'"'s/"//g'"'"'))'
+                echo '$(info )'
+                echo '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))'
+                echo 'else'
+                echo '$(info -- You have not integrated susfs in your kernel yet.)'
+                echo '$(info -- Read: https://gitlab.com/simonpunk/susfs4ksu)'
+                echo 'endif'
+              } >> "$KSU_KERNEL/Makefile"
               echo "SUSFS Makefile entries injected successfully"
             fi
 
@@ -330,27 +330,19 @@ jobs:
             # 4. Inject susfs_init() call into core/init.c
             if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
               INIT_FILE="$KSU_KERNEL/core/init.c"
-              python3 - "$INIT_FILE" << 'PYEOF'
-          import sys, re
-
-          path = sys.argv[1]
-          with open(path, 'r') as f:
-              content = f.read()
-
-          injection = (
-              "#ifdef CONFIG_KSU_SUSFS\n"
-              "\tsusfs_init();\n"
-              "#endif\n"
-          )
-
-          if 'susfs_init' not in content and 'ksu_feature_init' in content:
-              content = content.replace('ksu_feature_init', injection + '\tksu_feature_init', 1)
-              with open(path, 'w') as f:
-                  f.write(content)
-              print("susfs_init injected before ksu_feature_init")
-          else:
-              print("Skipped: susfs_init already present or ksu_feature_init not found")
-          PYEOF
+              # Write inject script to temp file (keeps YAML valid)
+              INJECT_PY=$(mktemp /tmp/inject_susfs_XXXXXX.py)
+              echo 'import sys' > "$INJECT_PY"
+              echo 'path = sys.argv[1]' >> "$INJECT_PY"
+              echo 'with open(path, "r") as f: content = f.read()' >> "$INJECT_PY"
+              echo 'injection = "#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n"' >> "$INJECT_PY"
+              echo 'if "susfs_init" not in content and "ksu_feature_init" in content:' >> "$INJECT_PY"
+              echo '    content = content.replace("ksu_feature_init", injection + "\tksu_feature_init", 1)' >> "$INJECT_PY"
+              echo '    with open(path, "w") as f: f.write(content)' >> "$INJECT_PY"
+              echo '    print("susfs_init injected before ksu_feature_init")' >> "$INJECT_PY"
+              echo 'else: print("Skipped: susfs_init already present or ksu_feature_init not found")' >> "$INJECT_PY"
+              python3 "$INJECT_PY" "$INIT_FILE"
+              rm -f "$INJECT_PY"
             fi
 
             # 5. Inject susfs includes into supercall/dispatch.c
@@ -365,26 +357,17 @@ jobs:
 
             KSU_INIT="drivers/kernelsu/core/init.c"
             if [ -f "$KSU_INIT" ]; then
-              python3 - "$KSU_INIT" << 'PYEOF'
-          import sys
-
-          path = sys.argv[1]
-          with open(path, 'r') as f:
-              lines = f.readlines()
-
-          open_count = 0
-          close_count = 0
-          for line in lines:
-              stripped = line.split('//')[0]
-              open_count += stripped.count('{')
-              close_count += stripped.count('}')
-
-          if open_count != close_count:
-              print(f"ERROR: Unbalanced braces in init.c! open={open_count} close={close_count}")
-              sys.exit(1)
-          else:
-              print(f"init.c syntax check OK (braces: {open_count}/{close_count})")
-          PYEOF
+              # Write validation script to temp file (keeps YAML valid)
+              VALIDATE_PY=$(mktemp /tmp/validate_braces_XXXXXX.py)
+              echo 'import sys' > "$VALIDATE_PY"
+              echo 'path = sys.argv[1]' >> "$VALIDATE_PY"
+              echo 'with open(path, "r") as f: lines = f.readlines()' >> "$VALIDATE_PY"
+              echo 'oc = sum(l.split("//")[0].count("{") for l in lines)' >> "$VALIDATE_PY"
+              echo 'cc = sum(l.split("//")[0].count("}") for l in lines)' >> "$VALIDATE_PY"
+              echo 'if oc != cc: print(f"ERROR: Unbalanced braces! open={oc} close={cc}"); sys.exit(1)' >> "$VALIDATE_PY"
+              echo 'else: print(f"init.c syntax check OK (braces: {oc}/{cc})")' >> "$VALIDATE_PY"
+              python3 "$VALIDATE_PY" "$KSU_INIT"
+              rm -f "$VALIDATE_PY"
             fi
 
             # Verify Kconfig has SUSFS entries
@@ -629,32 +612,32 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
-          # Write anykernel.sh (unquoted heredoc so $VARS expand)
+          # Write anykernel.sh
           AUTHOR="${{ inputs.author_name }}"
           KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} by ${AUTHOR}"
-          cat > anykernel.sh << AKEOF
-# AnyKernel3 Ramdisk Mod Script
-# osm0sis @ xda-developers
-properties() { '
-kernel.string=${KERNEL_STRING}
-do.devicecheck=1
-do.modules=0
-do.systemless=1
-do.cleanup=1
-do.cleanuponabort=0
-device.name1=fire
-device.name2=Redmi 12
-supported.versions=15
-supported.patchlevels=
-'; }
-block=boot;
-is_slot_device=auto;
-ramdisk_compression=auto;
-patch_vbmeta_flag=auto;
-. tools/ak3-core.sh;
-dump_boot;
-write_boot;
-AKEOF
+          {
+            echo '# AnyKernel3 Ramdisk Mod Script'
+            echo '# osm0sis @ xda-developers'
+            echo "properties() { '"
+            echo "kernel.string=${KERNEL_STRING}"
+            echo 'do.devicecheck=1'
+            echo 'do.modules=0'
+            echo 'do.systemless=1'
+            echo 'do.cleanup=1'
+            echo 'do.cleanuponabort=0'
+            echo 'device.name1=fire'
+            echo 'device.name2=Redmi 12'
+            echo 'supported.versions=15'
+            echo 'supported.patchlevels='
+            echo "'; }"
+            echo 'block=boot;'
+            echo 'is_slot_device=auto;'
+            echo 'ramdisk_compression=auto;'
+            echo 'patch_vbmeta_flag=auto;'
+            echo '. tools/ak3-core.sh;'
+            echo 'dump_boot;'
+            echo 'write_boot;'
+          } > anykernel.sh
 
           # Copy kernel image — priority: Image.gz > Image > Image.lz4
           if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
