@@ -233,12 +233,16 @@ jobs:
                 echo "Patch had rejections, cleaning up .rej files..."
                 find . -name "*.rej" -exec echo "REJECTED: {}" \; -exec cat {} \; -exec rm {} \;
                 find . -name "*.orig" -delete 2>/dev/null || true
+                
                 # Check if the critical changes were applied despite some rejects
                 if grep -q "susfs_init" kernel/core/init.c 2>/dev/null && \
                    grep -q "CONFIG_KSU_SUSFS" kernel/Kconfig 2>/dev/null; then
                   echo "Critical SUSFS changes are present despite some rejected hunks"
                   SUSFS_PATCH_OK=true
                 else
+                  echo "CRITICAL: Patch failed entirely. Reverting partially applied broken code..."
+                  git reset --hard HEAD
+                  git clean -fd
                   SUSFS_PATCH_OK=false
                 fi
               fi
