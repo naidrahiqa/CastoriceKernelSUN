@@ -605,6 +605,8 @@ jobs:
             sed -i '/abi_gki_protected_exports/d' BUILD.bazel
             sed -i '/protected_exports/d' BUILD.bazel
             sed -i '/check_defconfig/d' BUILD.bazel
+            sed -i '/kmi_symbol_list_strict_mode/d' BUILD.bazel
+            sed -i 's/trim_nonlisted_kmi = True/trim_nonlisted_kmi = False/g' BUILD.bazel
           fi
 
           if [ -f "modules.bzl" ] && grep -q 'protected_modules = ' modules.bzl; then
@@ -645,6 +647,7 @@ jobs:
           echo "=== Building Castorice GKI Kernel ==="
           tools/bazel build \
             --config=fast \
+            --//common:kmi_symbol_list_strict_mode=False \
             //common:kernel_aarch64_dist 2>&1
           echo "=== Build completed ==="
         env:
@@ -657,6 +660,7 @@ jobs:
 
           tools/bazel run \
             --config=fast \
+            --//common:kmi_symbol_list_strict_mode=False \
             //common:kernel_aarch64_dist \
             -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
 

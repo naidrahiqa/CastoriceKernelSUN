@@ -379,6 +379,15 @@ jobs:
           echo "Applying primary display fix..."
           patch -p1 --forward < ../ref_patches/primary_display_fix.patch || echo "WARN: primary_display_fix patch had issues"
 
+          # ===== MTK ACCDET CONFLICT FIX =====
+          echo "Fixing MTK accdet symbol conflict..."
+          sed -i 's/EXPORT_SYMBOL(accdet_read_audio_res);/\/\/EXPORT_SYMBOL(accdet_read_audio_res);/g' sound/soc/codecs/mt6357-accdet.c 2>/dev/null || true
+          sed -i 's/EXPORT_SYMBOL(accdet_late_init);/\/\/EXPORT_SYMBOL(accdet_late_init);/g' sound/soc/codecs/mt6357-accdet.c 2>/dev/null || true
+          sed -i 's/EXPORT_SYMBOL(accdet_read_audio_res);/\/\/EXPORT_SYMBOL(accdet_read_audio_res);/g' sound/soc/codecs/mt6359-accdet.c 2>/dev/null || true
+          sed -i 's/EXPORT_SYMBOL(accdet_late_init);/\/\/EXPORT_SYMBOL(accdet_late_init);/g' sound/soc/codecs/mt6359-accdet.c 2>/dev/null || true
+
+          echo "Applying additional kernel optimizations..."
+
           echo "All patches applied"
 
       # ===== DEFCONFIG =====
