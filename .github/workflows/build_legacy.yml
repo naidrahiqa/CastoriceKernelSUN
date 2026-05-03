@@ -311,7 +311,19 @@ jobs:
 
               # 4. Inject susfs_init() call into core/init.c
               if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-                sed -i '/ksu_feature_init/i\#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif' "$KSU_KERNEL/core/init.c"
+                INIT_FILE="$KSU_KERNEL/core/init.c"
+                INJECT_PY=$(mktemp /tmp/inject_susfs_XXXXXX.py)
+                echo 'import sys' > "$INJECT_PY"
+                echo 'path = sys.argv[1]' >> "$INJECT_PY"
+                echo 'with open(path, "r") as f: content = f.read()' >> "$INJECT_PY"
+                echo 'injection = "#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n"' >> "$INJECT_PY"
+                echo 'if "susfs_init" not in content and "ksu_feature_init" in content:' >> "$INJECT_PY"
+                echo '    content = content.replace("ksu_feature_init", injection + "\tksu_feature_init", 1)' >> "$INJECT_PY"
+                echo '    with open(path, "w") as f: f.write(content)' >> "$INJECT_PY"
+                echo '    print("susfs_init injected before ksu_feature_init")' >> "$INJECT_PY"
+                echo 'else: print("Skipped: susfs_init already present or ksu_feature_init not found")' >> "$INJECT_PY"
+                python3 "$INJECT_PY" "$INIT_FILE"
+                rm -f "$INJECT_PY"
               fi
 
               # 5. Inject susfs includes into supercall.c or dispatch.c
@@ -331,9 +343,13 @@ jobs:
                 echo '#include <linux/types.h>'
                 echo '#include <linux/errno.h>'
                 echo '#include <linux/fs.h>'
+                echo '#include <linux/compiler.h>'
                 echo ''
                 echo '#define KSU_WEAK_HOOK(ret, name, ...) \'
                 echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return 0; }'
+                echo ''
+                echo '#define KSU_WEAK_HOOK_BOOL(ret, name, ...) \'
+                echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return false; }'
                 echo ''
                 echo '// KSU hooks'
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_reboot, void)'
@@ -352,16 +368,16 @@ jobs:
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat, int p1, const char __user *p2, const char __user *const __user *p3, const char __user *const __user *p4, int p5)'
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_devpts, struct inode *p1)'
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_input_handle_event, unsigned int p1, unsigned int p2, int p3)'
-                echo 'KSU_WEAK_HOOK(int, ksu_is_input_hook_enabled, void)'
-                echo 'KSU_WEAK_HOOK(int, ksu_is_init_rc_hook_enabled, void)'
+                echo 'KSU_WEAK_HOOK_BOOL(bool, ksu_is_input_hook_enabled, void)'
+                echo 'KSU_WEAK_HOOK_BOOL(bool, ksu_is_init_rc_hook_enabled, void)'
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_read, void)'
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_vfs_fstat, void)'
                 echo ''
                 echo '// SUSFS hooks'
-                echo 'int __attribute__((weak)) susfs_ksu_sid = 0;'
-                echo 'int __attribute__((weak)) susfs_priv_app_sid = 0;'
-                echo 'int __attribute__((weak)) susfs_is_current_ksu_domain(void) { return 0; }'
-                echo 'int __attribute__((weak)) susfs_is_current_zygote_domain(void) { return 0; }'
+                echo 'u32 __attribute__((weak)) susfs_ksu_sid = 0;'
+                echo 'u32 __attribute__((weak)) susfs_priv_app_sid = 0;'
+                echo 'bool __attribute__((weak)) susfs_is_current_ksu_domain(void) { return false; }'
+                echo 'bool __attribute__((weak)) susfs_is_current_zygote_domain(void) { return false; }'
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_slow_avc_audit_new, void)'
               } > "$KSU_STUBS"
               
@@ -614,6 +630,13 @@ jobs:
 
           # Verify
           IMAGE="out/arch/arm64/boot/Image.gz-dtb"
+          if [ ! -f "$IMAGE" ]; then
+            IMAGE="out/arch/arm64/boot/Image.gz"
+          fi
+          if [ ! -f "$IMAGE" ]; then
+            IMAGE="out/arch/arm64/boot/Image"
+          fi
+
           if [ ! -f "$IMAGE" ] || [ "$BUILD_RC" -ne 0 ]; then
             echo "BUILD FAILED! Exit code: $BUILD_RC"
             echo "=== Last 150 lines of build log ==="
@@ -643,11 +666,17 @@ jobs:
           git clone --depth=1 https://github.com/Alexjr2/AnyKernel3.git -b android-4.19 ak3
           cd ak3
 
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" .
+          IMAGE_SRC="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb"
+          if [ ! -f "$IMAGE_SRC" ]; then IMAGE_SRC="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz"; fi
+          if [ ! -f "$IMAGE_SRC" ]; then IMAGE_SRC="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image"; fi
+          
+          cp "$IMAGE_SRC" .
+          IMAGE_FILE=$(basename "$IMAGE_SRC")
+
           DTB="$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/dts/mediatek/mt6768.dtb"
           if [ -f "$DTB" ]; then cp "$DTB" ./dtb; fi
 
-          if [ -f "tools/x86_64/magiskboot" ]; then
+          if [ -f "tools/x86_64/magiskboot" ] && [ "$IMAGE_FILE" = "Image.gz-dtb" ]; then
             chmod +x tools/x86_64/magiskboot
             ./tools/x86_64/magiskboot split Image.gz-dtb || echo "WARN: magiskboot split failed"
             if [ -f "kernel" ]; then
@@ -655,7 +684,10 @@ jobs:
               rm -f Image.gz-dtb
             fi
           else
-            echo "WARN: AnyKernel3 magiskboot not found, keeping Image.gz-dtb as-is"
+            echo "INFO: Keeping $IMAGE_FILE as-is"
+            if [ "$IMAGE_FILE" != "Image" ] && [ -f "$IMAGE_FILE" ]; then
+              mv "$IMAGE_FILE" Image.gz 2>/dev/null || true
+            fi
           fi
 
           echo "• Built with Castorice Performance Profile" >> banner
@@ -669,7 +701,12 @@ jobs:
         run: |
           mkdir -p out
           cp "$GITHUB_WORKSPACE/${ZIP_NAME}-AnyKernel3.zip" out/ 2>/dev/null || true
-          cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/Image.gz-dtb" out/ 2>/dev/null || true
+          for img in Image.gz-dtb Image.gz Image; do
+            if [ -f "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/$img" ]; then
+              cp "$GITHUB_WORKSPACE/kernel/out/arch/arm64/boot/$img" out/
+              break
+            fi
+          done
           echo "=== Final output ==="
           ls -lah out/
 
