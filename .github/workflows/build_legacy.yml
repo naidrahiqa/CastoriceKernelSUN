@@ -105,9 +105,7 @@ jobs:
           patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || true
           
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then
-            patch -p1 --forward < ../ref_patches/patchs/50_add_susfs_in_kernel-4.19.patch || true
-            sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
-            sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
+            echo "SUSFS patches will be applied in Setup SUSFS step."
           fi
 
       - name: Setup KernelSU-Next
@@ -138,12 +136,16 @@ jobs:
           cp -rv susfs4ksu/kernel_patches/fs/* fs/
           cp -rv susfs4ksu/kernel_patches/include/linux/* include/linux/
           
+          # Apply the correct SUSFS patch for 4.19 from the cloned repo
+          patch -p1 --forward < susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch || true
+          
+          # Fix 32-bit/64-bit format string mismatches in susfs.c for 4.19
+          sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
+          sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
+          
           if ! grep -q "susfs.o" fs/Makefile; then
             echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
           fi
-          
-          # Fix missing susfs_def.h from older patches by pointing to susfs.h
-          find fs/ include/ -type f -exec sed -i 's/susfs_def.h/susfs.h/g' {} +
           
           # Integrate SUSFS into KSU
           if [ -d "drivers/kernelsu" ]; then
