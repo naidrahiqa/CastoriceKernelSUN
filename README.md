@@ -1,108 +1,92 @@
-# ⚡ Castorice Kernel — Redmi 12 (fire)
+<div align="center">
 
-Custom kernel for Xiaomi Redmi 12 (codename: **fire**) with **KernelSU-Next** + **SUSFS** support.
+# ⚡ Castorice KernelSUN ⚡
+**High-Performance Custom Kernel for Redmi 12 (fire)**
 
-## 🔥 Two Kernel Variants
+![Android](https://img.shields.io/badge/Android-13%20%7C%2014%20%7C%2015-3DDC84?style=for-the-badge&logo=android&logoColor=white)
+![Xiaomi](https://img.shields.io/badge/Xiaomi-HyperOS%20%7C%20MIUI-FF6900?style=for-the-badge&logo=xiaomi&logoColor=white)
+![KernelSU-Next](https://img.shields.io/badge/KernelSU--Next-Integrated-12B9A1?style=for-the-badge)
+![SUSFS](https://img.shields.io/badge/SUSFS-Supported-blueviolet?style=for-the-badge)
 
-| Variant | Kernel | ROM | Build System |
-|---------|--------|-----|-------------|
-| **GKI 6.6** | 6.6.x | HyperOS 2.x (Android 15) | Bazel/Kleaf (ACK) |
-| **Legacy 4.19** | 4.19.x | MIUI 14 / HyperOS 1.x | make + ZyClang |
+*Built with ❤️ by Castorice*
 
-> ⚠️ **Flash the correct variant for your ROM!** GKI on HyperOS 1 = bootloop. Legacy on HyperOS 2 = bootloop.
+</div>
 
-## 📋 Features
+---
 
-### Root & Security
-- **KernelSU-Next** — Kernel-based root solution
-- **SUSFS** — SUS filesystem for advanced root hiding (SUS_PATH, SUS_MOUNT, SUS_MAP, SUS_KSTAT, SPOOF_UNAME, OPEN_REDIRECT)
+## 📌 Overview
 
-### Performance
-- **Memory**: ZRAM (writeback), KSM, Transparent Hugepage, compaction
-- **I/O**: BFQ scheduler (GKI), optimized readahead
-- **Network**: TCP BBR, FQ scheduler, IPSet, TTL target
-- **LCD 0c/0d**: Touchscreen fix (Legacy only)
+**Castorice Kernel** is a highly optimized custom kernel tailored specifically for the **Xiaomi Redmi 12 (fire)**. Built to deliver maximum performance, battery efficiency, and stealthy root capabilities out-of-the-box.
 
-## 🔧 How to Build
+We maintain **two dedicated branches/variants** to ensure maximum compatibility across all MIUI and HyperOS versions.
 
-### Prerequisites
-1. Fork this repo
-2. Extract your **stock boot.img** from your current ROM:
-   ```bash
-   # On rooted device / recovery
-   adb shell su -c "dd if=/dev/block/by-name/boot_a of=/sdcard/stock_boot.img"
-   adb pull /sdcard/stock_boot.img
-   ```
-3. Upload `stock_boot.img` somewhere accessible (GitHub release, cloud storage, etc.)
+---
 
-### Run the Build
-1. Go to **Actions** tab → Select workflow
-2. Fill in **stock_boot_url** with the direct download link to your stock boot.img
-3. Enable/disable KSU and SUSFS as needed
-4. Click **Run workflow**
+## 🚀 Kernel Variants
 
-### Output Files
-| File | Description |
-|------|-------------|
-| `*-Enforcing.img` | Flashable boot.img (SELinux Enforcing) |
-| `*-Permissive.img` | Flashable boot.img (SELinux Permissive) |
-| `*-AnyKernel3.zip` | Flashable ZIP via custom recovery |
-| `Image*` | Raw kernel image |
+| Variant | Kernel Version | Supported OS | Best For | CI/CD Status |
+| :---: | :---: | :--- | :--- | :---: |
+| **🟢 GKI** | `Linux 6.6` | HyperOS 2.x (Android 15) | Daily Driver on Modern HyperOS | [![Build GKI](https://img.shields.io/github/actions/workflow/status/naidrahiqa/CastoriceKernelSUN/build_gki.yml?branch=main&label=Build%20GKI&style=flat-square)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions) |
+| **🟠 Legacy** | `Linux 4.19` | MIUI 14 (A13) & HyperOS 1 (A14) | Legacy Firmware Compatibility | [![Build Legacy](https://img.shields.io/github/actions/workflow/status/naidrahiqa/CastoriceKernelSUN/build_legacy.yml?branch=main&label=Build%20Legacy&style=flat-square)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions) |
 
-## 📱 Flash Guide
+---
 
-### Method 1: Fastboot (Recommended)
-```bash
-# ALWAYS test first with temporary boot!
-fastboot boot Castorice-*-Enforcing.img
+## ✨ Features
 
-# If it boots successfully, flash permanently:
-fastboot flash boot Castorice-*-Enforcing.img
-fastboot reboot
-```
+### 🛡️ Root & Security
+*   **KernelSU-Next Built-in:** Next-generation kernel-level root solution.
+*   **SUSFS Integration:** Advanced mount namespace and path hiding to bypass root detections (banking apps, games, etc).
+*   **Module Spoofing:** Bypass module signature enforcement on GKI builds.
 
-### Method 2: AnyKernel3 ZIP
-Flash via TWRP / custom recovery.
+### 🧠 Memory & CPU
+*   **Optimized ZRAM:** Better RAM management with LZ4 writeback.
+*   **MGLRU Enabled:** Advanced Multi-Gen LRU for smoother multitasking (GKI).
+*   **KSM & Compaction:** Reduces memory fragmentation on heavy workloads.
 
-### ⚠️ Recovery from Bootloop
-```bash
-# Flash your stock boot.img back
-fastboot flash boot stock_boot.img
-fastboot reboot
-```
+### 🌐 I/O & Networking
+*   **TCP BBR Congestion Control:** Faster network throughput and lower latency.
+*   **IPSet Enabled:** Support for advanced firewall and network routing modules.
+*   **BFQ Scheduler:** Snappier app launches and background I/O operations.
 
-## 🔑 Technical Details
+### 📱 Device Specific Fixes
+*   **LCD Touchscreen Patch:** Fixed touch registration for `0c/0d` panels (Legacy).
+*   **Primary Display Fix:** Smoother UI rendering on 90Hz panels.
 
-### GKI 6.6 (HyperOS 2)
-- **KMI**: `6.6-android15-8` (must match device!)
-- **Source**: Android Common Kernel (`common-android15-6.6`)
-- **KernelSU**: Latest stable release (kprobes hook)
-- **Boot image**: Repacked from stock boot.img via magiskboot
-- **Module compat**: `CONFIG_MODVERSIONS=n` (allows vendor module loading)
+---
 
-### Legacy 4.19 (MIUI/HyperOS 1)
-- **Source**: `MiCode/Xiaomi_Kernel_OpenSource` branch `fire-t-oss`
-- **KernelSU**: `legacy` branch (manual VFS hook)
-- **Toolchain**: ZyCromerZ Clang (latest)
-- **Boot image**: Repacked from stock boot.img via magiskboot
+## 📥 Installation Guide
 
-### Device Info
-| Property | Value |
-|----------|-------|
-| SoC | MediaTek Helio G88 (MT6768) |
-| Partition | A/B dual slot |
-| Boot size | 128 MB |
-| vendor_boot | 64 MB |
-| init_boot | ❌ Not present |
-| Bootloader | LK (Little Kernel) |
+> [!WARNING]
+> Ensure you are flashing the correct variant for your Android/HyperOS version. Flashing the wrong variant will result in a bootloop!
 
-## 📚 References
+1. Download the latest `AnyKernel3.zip` from the [Releases Tab](../../releases).
+2. Reboot your device into a Custom Recovery (TWRP / OrangeFox) or use a Kernel Flasher app (if already rooted).
+3. Flash the `Castorice-XXX-AnyKernel3.zip`.
+4. (Optional) Wipe Dalvik / Cache.
+5. Reboot to System.
+6. Install the [KernelSU-Next Manager App](https://github.com/KernelSU-Next/KernelSU-Next/releases) to manage root permissions.
 
-- [ravindu644/Android-Kernel-Tutorials](https://github.com/ravindu644/Android-Kernel-Tutorials) — Kernel building guide
-- [Alexjr2/KernelSU_Next_SUSFS_fire](https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire) — Reference build for fire
-- [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) — Root solution
-- [SUSFS4KSU](https://gitlab.com/simonpunk/susfs4ksu) — Root hiding
+---
 
-## ⚖️ License
+## 🛠️ Automated CI/CD Builds
 
-This project follows the GPL-2.0 license as required by the Linux kernel.
+This repository is powered by **GitHub Actions**. You can automatically build the kernel yourself!
+1. Fork this repository.
+2. Go to the **Actions** tab.
+3. Select either `Build Castorice GKI (6.6)` or `Build Castorice Legacy (4.19)`.
+4. Click **Run workflow**. 
+5. Grab your compiled flashable zip from the artifacts!
+
+---
+
+## 💖 Credits & Acknowledgements
+
+*   [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next) for the incredible root solution.
+*   [simonpunk](https://gitlab.com/simonpunk/susfs4ksu) for the SUSFS magic.
+*   [osm0sis](https://github.com/osm0sis/AnyKernel3) for AnyKernel3.
+*   [ZyCromerZ](https://github.com/ZyCromerZ/Clang) for the ZyClang Toolchain.
+*   [MiCode](https://github.com/MiCode/Xiaomi_Kernel_OpenSource) for the open-source kernel trees.
+
+<div align="center">
+  <p><i>Enjoying the kernel? Don't forget to star ⭐ the repository!</i></p>
+</div>
