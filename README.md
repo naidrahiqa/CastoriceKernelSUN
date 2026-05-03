@@ -8,7 +8,7 @@
 ![KernelSU-Next](https://img.shields.io/badge/KernelSU--Next-Integrated-12B9A1?style=for-the-badge)
 ![SUSFS](https://img.shields.io/badge/SUSFS-Supported-blueviolet?style=for-the-badge)
 
-*Built with ❤️ by Castorice*
+
 
 </div>
 
@@ -87,6 +87,3 @@ This repository is powered by **GitHub Actions**. You can automatically build th
 *   [ZyCromerZ](https://github.com/ZyCromerZ/Clang) for the ZyClang Toolchain.
 *   [MiCode](https://github.com/MiCode/Xiaomi_Kernel_OpenSource) for the open-source kernel trees.
 
-<div align="center">
-  <p><i>Enjoying the kernel? Don't forget to star ⭐ the repository!</i></p>
-</div>
