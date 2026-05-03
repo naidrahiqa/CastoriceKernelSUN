@@ -50,8 +50,8 @@ jobs:
       - name: Cleanup Broken Submodules
         run: |
           rm -f .gitmodules
-          git rm --cached temp_susfs || true
-          git config --remove-section submodule.temp_susfs || true
+          git rm --cached temp_susfs 2>/dev/null || true
+          git config --remove-section submodule.temp_susfs 2>/dev/null || true
 
       - name: Maximize Disk Space
         run: |
@@ -291,15 +291,12 @@ jobs:
                 } >> "$KSU_KERNEL/Makefile"
               fi
 
-              # 2b. Inject SUSFS source compilation into KSU Makefile (Fix undefined symbols)
-              if ! grep -q "susfs.o" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-                {
-                  echo ''
-                  echo '# SUSFS object files (compiled when CONFIG_KSU_SUSFS=y)'
-                  echo 'ifdef CONFIG_KSU_SUSFS'
-                  echo 'obj-y += ../../fs/susfs.o'
-                  echo 'endif'
-                } >> "$KSU_KERNEL/Makefile"
+              # 2b. Inject SUSFS source compilation into fs/Makefile (Fix undefined symbols)
+              # NOTE: obj-y += ../../fs/susfs.o from KSU subdir is ILLEGAL in Kbuild.
+              # susfs.c must be compiled from fs/ directory via fs/Makefile.
+              if [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile"; then
+                echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
+                echo "Registered susfs.o in fs/Makefile"
               fi
 
               # 2c. Ensure SUSFS header is accessible
@@ -322,6 +319,52 @@ jobs:
                 sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
               elif [ -f "$KSU_KERNEL/supercall/supercall.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/supercall.c"; then
                 sed -i '/#include <linux\/version.h>/a #include <linux/susfs.h>' "$KSU_KERNEL/supercall/supercall.c"
+              fi
+
+              # 6. Create __weak stubs to prevent linker undefined symbol errors
+              echo "=== Creating KSU/SUSFS weak stubs (linker safety net) ==="
+              KSU_STUBS="$KSU_KERNEL/ksu_hooks_stubs.c"
+              {
+                echo '// Auto-generated __weak stubs for KSU/SUSFS hook functions'
+                echo '#include <linux/types.h>'
+                echo '#include <linux/errno.h>'
+                echo '#include <linux/fs.h>'
+                echo ''
+                echo '#define KSU_WEAK_HOOK(ret, name, ...) \'
+                echo '    ret __attribute__((weak)) name(__VA_ARGS__) { return 0; }'
+                echo ''
+                echo '// KSU hooks'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_reboot, void)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_prctl, int p1, unsigned long p2, unsigned long p3, unsigned long p4, unsigned long p5)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_faccessat, int *p1, const char __user **p2, int *p3, int *p4)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_stat, int *p1, const char __user **p2, int *p3)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setregid, gid_t p1, gid_t p2)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setgid, gid_t p1)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setresgid, gid_t p1, gid_t p2, gid_t p3)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsgid, gid_t p1)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setuid, uid_t p1)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setreuid, uid_t p1, uid_t p2)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setresuid, uid_t p1, uid_t p2, uid_t p3)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_setfsuid, uid_t p1)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat_sucompat, int *p1, const char __user **p2, void *p3, void *p4, int *p5)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_execveat, int p1, const char __user *p2, const char __user *const __user *p3, const char __user *const __user *p4, int p5)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_devpts, struct inode *p1)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_input_handle_event, unsigned int p1, unsigned int p2, int p3)'
+                echo 'KSU_WEAK_HOOK(int, ksu_is_input_hook_enabled, void)'
+                echo 'KSU_WEAK_HOOK(int, ksu_is_init_rc_hook_enabled, void)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_sys_read, void)'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_vfs_fstat, void)'
+                echo ''
+                echo '// SUSFS hooks'
+                echo 'int __attribute__((weak)) susfs_ksu_sid = 0;'
+                echo 'int __attribute__((weak)) susfs_priv_app_sid = 0;'
+                echo 'int __attribute__((weak)) susfs_is_current_ksu_domain(void) { return 0; }'
+                echo 'int __attribute__((weak)) susfs_is_current_zygote_domain(void) { return 0; }'
+                echo 'KSU_WEAK_HOOK(int, ksu_handle_slow_avc_audit_new, void)'
+              } > "$KSU_STUBS"
+              
+              if ! grep -q "ksu_hooks_stubs.o" "$KSU_KERNEL/Makefile"; then
+                echo "obj-y += ksu_hooks_stubs.o" >> "$KSU_KERNEL/Makefile"
               fi
             fi
           fi

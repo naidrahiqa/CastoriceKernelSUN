@@ -254,6 +254,8 @@ jobs:
             echo 'int __attribute__((weak)) susfs_ksu_sid = 0;'
             echo 'int __attribute__((weak)) susfs_priv_app_sid = 0;'
             echo 'int __attribute__((weak)) susfs_is_current_ksu_domain(void) { return 0; }'
+            echo 'int __attribute__((weak)) susfs_is_current_zygote_domain(void) { return 0; }'
+            echo 'KSU_WEAK_HOOK(int, ksu_handle_slow_avc_audit_new, void)'
           } > "$KSU_STUBS"
           echo "Created: $KSU_STUBS"
 
@@ -301,6 +303,12 @@ jobs:
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           ls -la include/linux/susfs* fs/susfs* 2>/dev/null || true
+
+          # --- Step 1b: Register susfs.o in fs/Makefile ---
+          if [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile"; then
+            echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
+            echo "Registered susfs.o in fs/Makefile"
+          fi
 
           # --- Step 2: Apply kernel tree integration patch ---
           echo "=== Applying kernel tree SUSFS patch ==="
