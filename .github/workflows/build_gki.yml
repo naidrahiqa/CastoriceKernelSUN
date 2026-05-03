@@ -536,9 +536,8 @@ jobs:
           # ===== MEMORY & CPU (Daily Use Focus) =====
           echo "" >> $DEFCONFIG
           echo "# Memory & CPU Optimization" >> $DEFCONFIG
-          echo "CONFIG_ZRAM=y" >> $DEFCONFIG
+          # IMPORTANT: Do not set ZRAM=y or ZSMALLOC=y in GKI, it breaks Bazel module extraction!
           echo "CONFIG_ZRAM_WRITEBACK=y" >> $DEFCONFIG
-          echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG
           echo "CONFIG_CRYPTO_LZ4=y" >> $DEFCONFIG
           echo "CONFIG_CRYPTO_ZSTD=y" >> $DEFCONFIG
           echo "CONFIG_COMPACTION=y" >> $DEFCONFIG

@@ -323,7 +323,9 @@ jobs:
 
               # 6. Create __weak stubs to prevent linker undefined symbol errors
               echo "=== Creating KSU/SUSFS weak stubs (linker safety net) ==="
-              KSU_STUBS="$KSU_KERNEL/ksu_hooks_stubs.c"
+              # We place this in fs/ instead of KSU_KERNEL to ensure it's ALWAYS compiled
+              # even if CONFIG_KSU is mysteriously dropped during make defconfig.
+              KSU_STUBS="fs/ksu_hooks_stubs.c"
               {
                 echo '// Auto-generated __weak stubs for KSU/SUSFS hook functions'
                 echo '#include <linux/types.h>'
@@ -363,8 +365,9 @@ jobs:
                 echo 'KSU_WEAK_HOOK(int, ksu_handle_slow_avc_audit_new, void)'
               } > "$KSU_STUBS"
               
-              if ! grep -q "ksu_hooks_stubs.o" "$KSU_KERNEL/Makefile"; then
-                echo "obj-y += ksu_hooks_stubs.o" >> "$KSU_KERNEL/Makefile"
+              if ! grep -q "ksu_hooks_stubs.o" "fs/Makefile"; then
+                echo "obj-y += ksu_hooks_stubs.o" >> "fs/Makefile"
+                echo "Registered stubs in fs/Makefile"
               fi
             fi
           fi
