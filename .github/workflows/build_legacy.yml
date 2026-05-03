@@ -43,6 +43,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Cleanup Broken Submodules
+        run: rm -f .gitmodules
+
       - name: Maximize Disk Space
         run: |
           echo "=== Before cleanup ==="
@@ -320,10 +323,8 @@ jobs:
 
           # Step 4: Fix strict-prototypes (clang 15+ enforces C2x no-K&R rule)
           echo "Fixing strict-prototypes issues..."
-          if [ -f "drivers/block/zram/zram_drv.c" ]; then
-            sed -i 's/zram_debugfs_init()/zram_debugfs_init(void)/g' drivers/block/zram/zram_drv.c
-            sed -i 's/zram_debugfs_destroy()/zram_debugfs_destroy(void)/g' drivers/block/zram/zram_drv.c
-          fi
+          # zram_debugfs_init / destroy sed removed because they corrupt function calls.
+          # -Wno-strict-prototypes is already added below to handle this.
 
           # Step 5: Add clang compatibility CFLAGS
           # CRITICAL: Append at END of Makefile, NOT inside the KBUILD_CFLAGS := block!
