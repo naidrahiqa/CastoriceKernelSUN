@@ -520,9 +520,11 @@ jobs:
           fi
 
           # --- Module Loading (CRITICAL: allow vendor modules) ---
+          # WARNING: Do NOT disable MODVERSIONS on GKI!
+          # Vendor .ko files are compiled with MODVERSIONS=y on stock HyperOS 2.
+          # Disabling it causes all vendor modules to fail loading → kernel panic → bootloop.
           echo "" >> $DEFCONFIG
           echo "# Module Compatibility" >> $DEFCONFIG
-          echo "CONFIG_MODVERSIONS=n" >> $DEFCONFIG
           echo "CONFIG_MODULE_SIG_FORCE=n" >> $DEFCONFIG
           echo "CONFIG_MODULE_SIG_ALL=n" >> $DEFCONFIG
 
@@ -624,8 +626,8 @@ jobs:
             [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
           done
           
-          # Fix KMI strict mode missing module_layout because of CONFIG_MODVERSIONS=n
-          sed -i '/module_layout/d' android/abi_gki_aarch64* 2>/dev/null || true
+          # Fix KMI strict mode — keep module_layout since MODVERSIONS is enabled
+          # (removing module_layout would break vendor module loading)
 
           # Bypass ABI check script
           PROT_SCRIPT="../build/kernel/abi/check_buildtime_symbol_protection.py"
@@ -723,44 +725,55 @@ jobs:
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
 
-          # Write anykernel.sh
+          # Write anykernel.sh — correct AnyKernel3 format
           AUTHOR="${{ inputs.author_name }}"
           KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} by ${AUTHOR}"
-          {
-            echo '# AnyKernel3 Ramdisk Mod Script'
-            echo '# osm0sis @ xda-developers'
-            echo "properties() { '"
-            echo "kernel.string=${KERNEL_STRING}"
-            echo 'do.devicecheck=1'
-            echo 'do.modules=0'
-            echo 'do.systemless=1'
-            echo 'do.cleanup=1'
-            echo 'do.cleanuponabort=0'
-            echo 'device.name1=fire'
-            echo 'device.name2=Redmi 12'
-            echo 'supported.versions=15'
-            echo 'supported.patchlevels='
-            echo "'; }"
-            echo 'block=boot;'
-            echo 'is_slot_device=auto;'
-            echo 'ramdisk_compression=auto;'
-            echo 'patch_vbmeta_flag=auto;'
-            echo '. tools/ak3-core.sh;'
-            echo 'dump_boot;'
-            echo 'write_boot;'
-          } > anykernel.sh
+          cat > anykernel.sh << 'AKEOF'
+# AnyKernel3 Ramdisk Mod Script
+# osm0sis @ xda-developers
+properties() {
+kernel.string=KERNEL_STRING_PLACEHOLDER
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=fire
+device.name2=Redmi 12
+supported.versions=15
+supported.patchlevels=
+} # end properties
 
-          # Copy kernel image — priority: Image.gz > Image > Image.lz4
-          if [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
-            cp "$GITHUB_WORKSPACE/dist/Image.gz" .
-          elif [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
+# GKI 6.6: kernel is in boot partition, ramdisk may be in init_boot
+# Try init_boot first (Android 14+ GKI), fallback to boot
+block=boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+
+. tools/ak3-core.sh;
+dump_boot;
+write_boot;
+AKEOF
+          # Replace placeholder with actual kernel string (safe from special chars)
+          sed -i "s|KERNEL_STRING_PLACEHOLDER|${KERNEL_STRING}|" anykernel.sh
+
+          # Copy kernel image — GKI Bazel outputs plain Image, compress it
+          if [ -f "$GITHUB_WORKSPACE/dist/Image" ]; then
             cp "$GITHUB_WORKSPACE/dist/Image" .
+          elif [ -f "$GITHUB_WORKSPACE/dist/Image.gz" ]; then
+            cp "$GITHUB_WORKSPACE/dist/Image.gz" .
           elif [ -f "$GITHUB_WORKSPACE/dist/Image.lz4" ]; then
             cp "$GITHUB_WORKSPACE/dist/Image.lz4" .
           else
             echo "ERROR: No kernel image found to package!"
             exit 1
           fi
+
+          echo "=== AnyKernel3 contents ==="
+          ls -lah
+          echo "=== anykernel.sh ==="
+          cat anykernel.sh
 
           zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 

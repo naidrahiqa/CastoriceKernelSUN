@@ -87,8 +87,9 @@ jobs:
           cd kernel
           
           # LCM Fixes
-          patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch || true
-          patch -p1 --forward < ../ref_patches/primary_display_fix.patch || true
+          echo "=== Applying LCM fix ==="
+          patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch && echo "fix_lcm OK" || echo "WARN: fix_lcm failed (may already be applied)"
+          patch -p1 --forward < ../ref_patches/primary_display_fix.patch && echo "primary_display_fix OK" || echo "WARN: primary_display_fix failed"
           
           # Fix zram deprecated declaration
           sed -i 's/static struct zram_pages_life \*init_pages_life()/static struct zram_pages_life \*init_pages_life(void)/g' drivers/block/zram/zram_drv.c 2>/dev/null || true
@@ -100,10 +101,13 @@ jobs:
           sed -i 's/EXPORT_SYMBOL(accdet_late_init);/\/\/EXPORT_SYMBOL(accdet_late_init);/g' sound/soc/codecs/mt6359-accdet.c 2>/dev/null || true
 
           if [ "${{ inputs.enable_ksu }}" = "true" ]; then
-            patch -p1 --forward < ../ref_patches/patchs/ksu_hooks_4.19.patch || true
-            patch -p1 --forward < ../ref_patches/patchs/69_hide_ksu.patch || true
+            echo "=== Applying KSU hooks patch ==="
+            patch -p1 --forward < ../ref_patches/patchs/ksu_hooks_4.19.patch && echo "ksu_hooks OK" || { echo "ERROR: ksu_hooks_4.19.patch FAILED"; patch -p1 --forward < ../ref_patches/patchs/ksu_hooks_4.19.patch --dry-run 2>&1 | head -30; exit 1; }
+            echo "=== Applying 69_hide_ksu patch ==="
+            patch -p1 --forward < ../ref_patches/patchs/69_hide_ksu.patch && echo "69_hide_ksu OK" || echo "WARN: 69_hide_ksu failed"
           fi
-          patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || true
+          echo "=== Applying fix_kernel_genheaders patch ==="
+          patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch && echo "fix_kernel_genheaders OK" || echo "WARN: fix_kernel_genheaders failed"
           
           if [ "${{ inputs.enable_susfs }}" = "true" ]; then
             echo "SUSFS patches will be applied in Setup SUSFS step."
@@ -153,7 +157,7 @@ jobs:
           # Integrate SUSFS into KSU
           if [ -d "drivers/kernelsu" ]; then
             sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' drivers/kernelsu/core/init.c 2>/dev/null || true
-            sed -i 's/ksu_core_init(/susfs_init();\n    ksu_core_init(/g' drivers/kernelsu/core/init.c 2>/dev/null || true
+            sed -i '/ksu_core_init(/i\\tsusfs_init();' drivers/kernelsu/core/init.c 2>/dev/null || true
             sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
             
             {
@@ -266,7 +270,25 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
             OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            KCFLAGS="-Wno-all -Wno-error" KCPPFLAGS="-Wno-all -Wno-error"
+            KCFLAGS="-Wno-all -Wno-error" KCPPFLAGS="-Wno-all -Wno-error" \
+            2>&1 | tee build.log
+          
+          echo "=== Checking build output ==="
+          if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            echo "BUILD FAILED — Image.gz-dtb not found"
+            echo "=== Last 100 lines of build log ==="
+            tail -100 build.log
+            exit 1
+          fi
+          echo "BUILD SUCCESS"
+
+      - name: Upload Build Log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-legacy-4.19
+          path: kernel/build.log
+          retention-days: 7
 
       - name: Package AnyKernel3
         run: |
