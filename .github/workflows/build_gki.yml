@@ -812,7 +812,7 @@ jobs:
             - ⚡ **Daily Use**: LZ4/ZSTD ZRAM, KSM, THP, LRU-Gen
             - 💾 **I/O**: BFQ scheduler
             - 🌐 **Network**: TCP BBR, FQ, IPSet
-            - 📦 **Module compat**: MODVERSIONS disabled
+            - 📦 **Module compat**: MODVERSIONS enabled (required for vendor modules)
 
             ### Downloads
             | File | Method |
