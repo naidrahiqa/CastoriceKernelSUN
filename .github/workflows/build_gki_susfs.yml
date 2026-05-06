@@ -229,6 +229,9 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
             echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
+            echo "SUSFS enabled in defconfig"
+          else
+            echo "SUSFS setup failed, building without SUSFS"
           fi
           echo "" >> $DEFCONFIG
           echo "# Module Compatibility" >> $DEFCONFIG

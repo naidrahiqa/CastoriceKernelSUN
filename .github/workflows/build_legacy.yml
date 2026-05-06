@@ -116,9 +116,17 @@ jobs:
               ;;
           esac
           KSU_DIR=$(find . -maxdepth 1 -type d -name "KernelSU*" | head -n 1)
-          [ -n "$KSU_DIR" ] && KSU_VERSION=$(cd "$KSU_DIR" && git rev-list --count HEAD) || KSU_VERSION="unknown"
-          [ -f "drivers/kernelsu/Kbuild" ] && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild 2>/dev/null || true
-          [ -d "$KSU_DIR" ] && rm -rf "$KSU_DIR/.git"
+          if [ -n "$KSU_DIR" ]; then
+            KSU_VERSION=$(cd "$KSU_DIR" && git rev-list --count HEAD)
+          else
+            KSU_VERSION="unknown"
+          fi
+          if [ -f "drivers/kernelsu/Kbuild" ]; then
+            sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild || true
+          fi
+          if [ -d "$KSU_DIR" ]; then
+            rm -rf "$KSU_DIR/.git"
+          fi
           for patch in KernelSU*/kernel/patches/*.patch 2>/dev/null; do
             [ -f "$patch" ] && patch -p1 --forward < "$patch" || true
           done
