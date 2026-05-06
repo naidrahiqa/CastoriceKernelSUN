@@ -121,43 +121,51 @@ jobs:
           sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
           grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
           if [ -d "drivers/kernelsu" ]; then
-            sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' drivers/kernelsu/core/init.c 2>/dev/null || true
-            sed -i '/ksu_core_init(/i\\tsusfs_init();' drivers/kernelsu/core/init.c 2>/dev/null || true
-            sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
-            cat >> drivers/kernelsu/Kconfig << 'EOF'
-config KSU_SUSFS
-  bool "KernelSU addon - SUSFS"
-  depends on KSU
-  default y
-config KSU_SUSFS_SUS_PATH
-  bool "Hide suspicious paths"
-  depends on KSU_SUSFS
-  default y
-config KSU_SUSFS_SUS_MOUNT
-  bool "Hide suspicious mounts"
-  depends on KSU_SUSFS
-  default y
-config KSU_SUSFS_SUS_KSTAT
-  bool "Spoof kstat"
-  depends on KSU_SUSFS
-  default y
-config KSU_SUSFS_SPOOF_UNAME
-  bool "Spoof uname"
-  depends on KSU_SUSFS
-  default y
-config KSU_SUSFS_ENABLE_LOG
-  bool "Enable logging"
-  depends on KSU_SUSFS
-  default y
-config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-  bool "Hide symbols from kallsyms"
-  depends on KSU_SUSFS
-  default y
-config KSU_SUSFS_SUS_MAP
-  bool "Hide mmapped files from proc maps"
-  depends on KSU_SUSFS
-  default y
-EOF
+            if ! grep -q "susfs.h" drivers/kernelsu/core/init.c 2>/dev/null; then
+              sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' drivers/kernelsu/core/init.c
+            fi
+            if ! grep -q "susfs_init" drivers/kernelsu/core/init.c 2>/dev/null; then
+              sed -i '/ksu_core_init(/i\	susfs_init();' drivers/kernelsu/core/init.c
+            fi
+            if ! grep -q "susfs.h" drivers/kernelsu/supercall/dispatch.c 2>/dev/null; then
+              sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' drivers/kernelsu/supercall/dispatch.c
+            fi
+            if ! grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null; then
+              printf '%s\n' \
+                'config KSU_SUSFS' \
+                '  bool "KernelSU addon - SUSFS"' \
+                '  depends on KSU' \
+                '  default y' \
+                'config KSU_SUSFS_SUS_PATH' \
+                '  bool "Hide suspicious paths"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                'config KSU_SUSFS_SUS_MOUNT' \
+                '  bool "Hide suspicious mounts"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                'config KSU_SUSFS_SUS_KSTAT' \
+                '  bool "Spoof kstat"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                'config KSU_SUSFS_SPOOF_UNAME' \
+                '  bool "Spoof uname"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                'config KSU_SUSFS_ENABLE_LOG' \
+                '  bool "Enable logging"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' \
+                '  bool "Hide symbols from kallsyms"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                'config KSU_SUSFS_SUS_MAP' \
+                '  bool "Hide mmapped files from proc maps"' \
+                '  depends on KSU_SUSFS' \
+                '  default y' \
+                >> drivers/kernelsu/Kconfig
+            fi
           fi
 
       - name: Configure Defconfig
