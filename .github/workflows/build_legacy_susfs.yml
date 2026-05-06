@@ -1,4 +1,4 @@
-name: "🔥 Legacy 4.19 — KernelSU (No SUSFS)"
+name: "🔥 Legacy 4.19 — KernelSU + SUSFS"
 
 on:
   workflow_dispatch:
@@ -35,13 +35,9 @@ on:
 permissions:
   contents: write
 
-env:
-  KERNEL_NAME: Castorice
-  DEVICE_CODE: fire
-
 jobs:
   build:
-    name: "Legacy 4.19 — ${{ inputs.ksu_method }} — ${{ inputs.cpu_governor }}"
+    name: "Legacy 4.19 SUSFS — ${{ inputs.ksu_method }} — ${{ inputs.cpu_governor }}"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -101,28 +97,68 @@ jobs:
           cd kernel
           KSU_METHOD="${{ inputs.ksu_method }}"
           case "$KSU_METHOD" in
-            kernelsu-next)
-              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
-              ;;
-            wildksu)
-              git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git -b canary KernelSU
-              cp -r KernelSU/kernel drivers/kernelsu
-              ;;
-            sukisu)
-              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s tmp-builtin
-              ;;
-            rsukisu)
-              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/builtin/kernel/setup.sh" | bash -s builtin
-              ;;
+            kernelsu-next) curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash - ;;
+            wildksu) git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git -b canary KernelSU && cp -r KernelSU/kernel drivers/kernelsu ;;
+            sukisu) curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s tmp-builtin ;;
+            rsukisu) curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/builtin/kernel/setup.sh" | bash -s builtin ;;
           esac
           KSU_DIR=$(find . -maxdepth 1 -type d -name "KernelSU*" | head -n 1)
           [ -n "$KSU_DIR" ] && KSU_VERSION=$(cd "$KSU_DIR" && git rev-list --count HEAD) || KSU_VERSION="unknown"
           [ -f "drivers/kernelsu/Kbuild" ] && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild 2>/dev/null || true
           [ -d "$KSU_DIR" ] && rm -rf "$KSU_DIR/.git"
-          for patch in KernelSU*/kernel/patches/*.patch 2>/dev/null; do
-            [ -f "$patch" ] && patch -p1 --forward < "$patch" || true
-          done
+          for patch in KernelSU*/kernel/patches/*.patch 2>/dev/null; do [ -f "$patch" ] && patch -p1 --forward < "$patch" || true; done
           find . -type f -name "*.c" -path "*/KernelSU*/kernel/*" -exec sed -i 's/TWA_RESUME/true/g' {} +
+
+      - name: Setup SUSFS
+        run: |
+          cd kernel
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
+          rm -rf susfs4ksu/.git
+          cp -rv susfs4ksu/kernel_patches/fs/* fs/
+          cp -rv susfs4ksu/kernel_patches/include/linux/* include/linux/
+          patch -p1 --forward < susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch || true
+          sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
+          sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
+          grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
+          if [ -d "drivers/kernelsu" ]; then
+            sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' drivers/kernelsu/core/init.c 2>/dev/null || true
+            sed -i '/ksu_core_init(/i\\tsusfs_init();' drivers/kernelsu/core/init.c 2>/dev/null || true
+            sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' drivers/kernelsu/supercall/dispatch.c 2>/dev/null || true
+            cat >> drivers/kernelsu/Kconfig << 'EOF'
+config KSU_SUSFS
+  bool "KernelSU addon - SUSFS"
+  depends on KSU
+  default y
+config KSU_SUSFS_SUS_PATH
+  bool "Hide suspicious paths"
+  depends on KSU_SUSFS
+  default y
+config KSU_SUSFS_SUS_MOUNT
+  bool "Hide suspicious mounts"
+  depends on KSU_SUSFS
+  default y
+config KSU_SUSFS_SUS_KSTAT
+  bool "Spoof kstat"
+  depends on KSU_SUSFS
+  default y
+config KSU_SUSFS_SPOOF_UNAME
+  bool "Spoof uname"
+  depends on KSU_SUSFS
+  default y
+config KSU_SUSFS_ENABLE_LOG
+  bool "Enable logging"
+  depends on KSU_SUSFS
+  default y
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+  bool "Hide symbols from kallsyms"
+  depends on KSU_SUSFS
+  default y
+config KSU_SUSFS_SUS_MAP
+  bool "Hide mmapped files from proc maps"
+  depends on KSU_SUSFS
+  default y
+EOF
+          fi
 
       - name: Configure Defconfig
         run: |
@@ -130,10 +166,17 @@ jobs:
           DEFCONFIG="arch/arm64/configs/fire_defconfig"
           GOVERNOR="${{ inputs.cpu_governor }}"
           echo "CONFIG_KSU=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
           echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
           echo "CONFIG_HZ=1000" >> $DEFCONFIG
           echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
-          echo "CONFIG_PREEMPT_VOLUNTARY=n" >> $DEFCONFIG
           echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG
           echo "CONFIG_ZRAM=y" >> $DEFCONFIG
           echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> $DEFCONFIG
@@ -153,7 +196,7 @@ jobs:
             *) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" >> $DEFCONFIG ;;
           esac
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
-          LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}"
+          LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-SUSFS"
           echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
 
       - name: Patch Clang Warnings
@@ -170,13 +213,12 @@ jobs:
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- fire_defconfig
           make -j$(nproc) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip KCFLAGS="-Wno-all -Wno-error" KCPPFLAGS="-Wno-all -Wno-error" 2>&1 | tee build.log
           [ ! -f out/arch/arm64/boot/Image.gz-dtb ] && echo "BUILD FAILED" && tail -100 build.log && exit 1
-          echo "BUILD SUCCESS"
 
       - name: Upload Build Log (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-legacy-4.19-${{ inputs.ksu_method }}
+          name: build-log-legacy-4.19-susfs-${{ inputs.ksu_method }}
           path: kernel/build.log
           retention-days: 7
 
@@ -189,30 +231,30 @@ jobs:
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [Legacy 4.19 | ${KSU_METHOD} | ${GOVERNOR}] by ${AUTHOR}"
+          KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [Legacy 4.19 SUSFS | ${KSU_METHOD} | ${GOVERNOR}] by ${AUTHOR}"
           printf '%s\n' '# AnyKernel3' 'properties() {' "kernel.string=${KERNEL_STRING}" 'do.devicecheck=1' 'do.modules=0' 'do.systemless=1' 'do.cleanup=1' 'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=13,14' '}' 'block=boot;' 'is_slot_device=auto;' 'ramdisk_compression=auto;' 'patch_vbmeta_flag=auto;' '. tools/ak3-core.sh;' 'dump_boot;' 'write_boot;' > anykernel.sh
           cp ../kernel/out/arch/arm64/boot/Image.gz-dtb .
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Legacy-4.19-${KSU_METHOD}-${GOVERNOR}-Redmi12"
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Legacy-4.19-${KSU_METHOD}-SUSFS-${GOVERNOR}-Redmi12"
           zip -r9 "../${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
-          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-Legacy-${{ inputs.ksu_method }}"
-          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • Legacy 4.19 • ${{ inputs.ksu_method }}"
+          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-Legacy-SUSFS-${{ inputs.ksu_method }}"
+          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • Legacy 4.19 SUSFS • ${{ inputs.ksu_method }}"
           body: |
             ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
             | Info | Value |
             |------|-------|
-            | **Type** | Legacy 4.19 (No SUSFS) |
+            | **Type** | Legacy 4.19 + SUSFS |
             | **Root** | ${{ inputs.ksu_method }} |
             | **Governor** | ${{ inputs.cpu_governor }} |
-            | **SUSFS** | ❌ |
+            | **SUSFS** | ✅ |
 
-            ### Gaming Profile
+            ### Gaming Profile + SUSFS
             - HZ_1000, Full PREEMPT
             - CPU Governor: **${{ inputs.cpu_governor }}**
+            - SUSFS: path/mount/kstat hiding, uname spoofing
             - TCP BBR, LZ4 ZRAM
 
             ### Compatibility
