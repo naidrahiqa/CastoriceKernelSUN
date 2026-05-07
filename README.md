@@ -157,27 +157,82 @@ Cek kalo kernel udah ke-install:
 
 ## 🛠️ Build Sendiri (Advanced)
 
-Lo bisa build kernel sendiri dengan custom config!
+Lo bisa build kernel sendiri dengan custom config! Sekarang ada **2 cara**:
 
-### 🚀 Quick Start
+### 🎯 Cara 1: Unified Builder (Recommended!)
+
+Paling gampang - 1 workflow buat semua variant!
 
 1. **Fork** repo ini
 2. Ke tab **Actions**
-3. Pilih workflow yang lo mau:
+3. Pilih **"🎯 Unified Kernel Builder"**
+4. Klik **Run workflow**
+5. Isi form:
+   ```
+   Release Tag: v1.0              # Semua build masuk ke release ini
+   Kernel Name: Gaming            # Nama custom lo
+   Author Name: YourName          # Nama lo
+   
+   Kernel Type: gki-6.6           # Pilih: gki-6.6, legacy-4.19, atau both
+   Root Method: kernelsu-next     # KSU variant
+   Enable SUSFS: ✅               # Centang kalo mau SUSFS
+   CPU Governor: performance      # Governor default
+   Clang Toolchain: zyc-latest    # Pilih toolchain (Legacy only)
+   ```
+6. Tunggu ~20-30 menit
+7. Semua build masuk ke **1 release** dengan tag yang sama!
+
+**Keuntungan:**
+- ✅ Semua variant dalam 1 release
+- ✅ Pilih toolchain (ZyClang, Proton, Neutron)
+- ✅ Toggle SUSFS on/off
+- ✅ Build GKI + Legacy sekaligus
+
+### 🔧 Cara 2: Individual Workflows
+
+Buat yang mau kontrol lebih detail:
+
+1. **Fork** repo ini
+2. Ke tab **Actions**
+3. Pilih workflow spesifik:
    - 🟢 `GKI 6.6 — KernelSU (No SUSFS)`
    - 🟣 `GKI 6.6 — KernelSU + SUSFS`
    - 🟠 `Legacy 4.19 — KernelSU (No SUSFS)`
    - 🔴 `Legacy 4.19 — KernelSU + SUSFS`
 4. Klik **Run workflow**
-5. Isi form:
+5. Isi form + **Release Tag** (pake tag yang sama biar masuk 1 release)
+6. Tunggu build selesai
+
+### 🚀 Cara 3: Multi-Variant Matrix (Power User!)
+
+Build banyak kombinasi sekaligus:
+
+1. Pilih **"🚀 Multi-Variant Build"**
+2. Configure:
    ```
-   Custom Name: Gaming        # Nama kernel lo
-   Author Name: YourName      # Nama lo
-   Root Method: kernelsu-next # Pilih root method
-   CPU Governor: performance  # Pilih governor
+   Release Tag: v1.0
+   Build GKI: ✅
+   Build Legacy: ✅
+   Build SUSFS: ✅
+   Root Methods: kernelsu-next,wildksu
+   Governors: schedutil,performance
    ```
-6. Tunggu ~20-30 menit
-7. Download dari **Artifacts**
+3. Ini bakal build **semua kombinasi**:
+   - GKI + KSU-Next + Schedutil
+   - GKI + KSU-Next + Performance
+   - GKI + WildKSU + Schedutil
+   - GKI + WildKSU + Performance
+   - ... dan seterusnya (termasuk SUSFS variants!)
+
+### 🔨 Toolchain Options (Legacy Only)
+
+| Toolchain | Best For | Version |
+|:----------|:---------|:--------|
+| **ZyClang** | Balanced (recommended) | Auto-latest |
+| **Proton Clang** | Performance | Auto-latest |
+| **Neutron Clang** | Stability | Auto-latest |
+
+> 💡 **Note:** GKI builds always use Bazel (Google's official build system)
 
 ### 📊 Build Status
 
