@@ -58,20 +58,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Checkout
+      # ───── Environment Setup ─────
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: Maximize Disk Space
+      - name: 🧹 Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
           sudo apt-get autoremove -y && sudo apt-get clean
 
-      - name: Setup Swap
+      - name: 💾 Setup Swap (16GB)
         run: |
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
 
-      - name: Install Dependencies
+      - name: 📦 Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y aria2 git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libxml-sax-base-perl libxml-simple-perl libc6-dev-i386 lib32ncurses-dev libncurses-dev libx11-dev lib32z-dev libstdc++6 lib32stdc++6 libgl1-mesa-dev xsltproc unzip gzip device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev jq libyaml-dev -y
@@ -102,22 +103,21 @@ jobs:
               echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
               ;;
           esac
-          
           tar -xf clang.tar.gz -C clang/ && rm -f clang.tar.gz
-          echo "✅ Toolchain downloaded and extracted"
 
-      - name: Sync Kernel Source
+      - name: 🌐 Sync Kernel Source
         run: |
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b fire-t-oss kernel
           cd kernel
           echo "KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)" >> $GITHUB_ENV
 
-      - name: Clone Reference Patches
+      # ───── Patches & Features ─────
+      - name: 📥 Clone Reference Patches
         run: |
           git clone --depth=1 https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire.git ref_patches
           rm -rf ref_patches/.git
 
-      - name: Apply Device Patches
+      - name: 🩹 Apply Device Patches
         run: |
           cd kernel
           patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch || echo "WARN: fix_lcm failed"
@@ -131,7 +131,7 @@ jobs:
           patch -p1 --forward < ../ref_patches/patchs/69_hide_ksu.patch || echo "WARN: 69_hide_ksu failed"
           patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || echo "WARN: fix_kernel_genheaders failed"
 
-      - name: Setup KernelSU
+      - name: 🛡️ Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel
           KSU_METHOD="${{ inputs.ksu_method }}"
@@ -167,7 +167,8 @@ jobs:
           done
           find . -type f -name "*.c" -path "*/KernelSU*/kernel/*" -exec sed -i 's/TWA_RESUME/true/g' {} +
 
-      - name: Configure Defconfig
+      # ───── Kernel Configuration ─────
+      - name: ⚙️ Configure Defconfig
         run: |
           cd kernel
           DEFCONFIG="arch/arm64/configs/fire_defconfig"
@@ -199,14 +200,15 @@ jobs:
           LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}"
           echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
 
-      - name: Patch Clang Warnings
+      - name: 🔨 Patch Clang Warnings
         run: |
           cd kernel
           sed -i 's/-Wno-format-invalid-specifier//g' Makefile || true
           sed -i 's/-Wno-gnu-empty-initializer//g' Makefile || true
           find drivers sound -name "Makefile" -exec sed -i 's/-Werror//g' {} + || true
 
-      - name: Build Kernel
+      # ───── Build & Package ─────
+      - name: 🔨 Build Kernel
         run: |
           cd kernel
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
@@ -215,7 +217,7 @@ jobs:
           [ ! -f out/arch/arm64/boot/Image.gz-dtb ] && echo "BUILD FAILED" && tail -100 build.log && exit 1
           echo "BUILD SUCCESS"
 
-      - name: Upload Build Log (on failure)
+      - name: 📤 Upload Build Log (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -223,7 +225,7 @@ jobs:
           path: kernel/build.log
           retention-days: 7
 
-      - name: Package AnyKernel3
+      - name: 📦 Package AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3

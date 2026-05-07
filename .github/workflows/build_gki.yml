@@ -31,6 +31,16 @@ on:
           - performance
           - ondemand
           - conservative
+      clang_toolchain:
+        description: "Clang Toolchain (optional, default: Bazel's built-in)"
+        required: true
+        type: choice
+        default: "bazel-default"
+        options:
+          - bazel-default
+          - zyc-latest
+          - proton-latest
+          - neutron-latest
       release_tag:
         description: "Release Tag (same tag = same release)"
         required: true
@@ -94,6 +104,57 @@ jobs:
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: 🔨 Download Custom Toolchain (if selected)
+        if: inputs.clang_toolchain != 'bazel-default'
+        run: |
+          mkdir -p prebuilts/clang/host/linux-x86
+          cd prebuilts/clang/host/linux-x86
+          
+          TOOLCHAIN="${{ inputs.clang_toolchain }}"
+          case "$TOOLCHAIN" in
+            zyc-latest)
+              echo "🔨 Downloading ZyClang..."
+              ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
+              ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
+              mkdir -p clang-zyc && tar -xf clang.tar.gz -C clang-zyc && rm clang.tar.gz
+              echo "CUSTOM_CLANG_PATH=$(pwd)/clang-zyc" >> $GITHUB_ENV
+              echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
+              ;;
+            proton-latest)
+              echo "🔨 Downloading Proton Clang..."
+              PROTON_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.assets[0].browser_download_url')
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "$PROTON_URL"
+              mkdir -p clang-proton && tar -xf clang.tar.gz -C clang-proton && rm clang.tar.gz
+              echo "CUSTOM_CLANG_PATH=$(pwd)/clang-proton" >> $GITHUB_ENV
+              echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
+              ;;
+            neutron-latest)
+              echo "🔨 Downloading Neutron Clang..."
+              NEUTRON_URL=$(curl -s https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "$NEUTRON_URL"
+              mkdir -p clang-neutron && tar -xf clang.tar.gz -C clang-neutron && rm clang.tar.gz
+              echo "CUSTOM_CLANG_PATH=$(pwd)/clang-neutron" >> $GITHUB_ENV
+              echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
+              ;;
+          esac
+          
+          cd $GITHUB_WORKSPACE
+          echo "✅ Custom toolchain downloaded"
+
+      - name: 🔧 Configure Custom Toolchain for Bazel
+        if: inputs.clang_toolchain != 'bazel-default'
+        run: |
+          cd kernel
+          # Create custom toolchain config
+          cat > build.config.custom_clang << EOF
+CLANG_PREBUILT_BIN=$CUSTOM_CLANG_PATH/bin
+CLANG_VERSION=\$(cd \$CLANG_PREBUILT_BIN && ./clang --version | head -n1 | cut -d' ' -f4)
+PATH=\$CLANG_PREBUILT_BIN:\$PATH
+EOF
+          echo "✅ Custom toolchain configured"
+          echo "TOOLCHAIN_NAME=${{ env.TOOLCHAIN_NAME }}" >> $GITHUB_ENV
 
       # ───── Kernel Source ─────
       - name: 🌐 Sync Android Common Kernel
@@ -303,8 +364,17 @@ jobs:
             conservative) GOV_SHORT="Conservative" ;;
           esac
           
-          # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-NoSUSFS-<Gov>-Bazel-Redmi12
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-Bazel-Redmi12"
+          # Determine toolchain name
+          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
+            TOOLCHAIN_SHORT="Bazel"
+          else
+            # Get custom clang version
+            CLANG_VER=$($CUSTOM_CLANG_PATH/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+            TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}${CLANG_VER}"
+          fi
+          
+          # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-NoSUSFS-<Gov>-<Toolchain>-Redmi12
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${TOOLCHAIN_SHORT}-Redmi12"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
@@ -344,7 +414,7 @@ jobs:
             - 🏷️ Variant: GKI 6.6 (No SUSFS)
             - 🔑 Root: ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
             - ⚙️ Governor: ${{ inputs.cpu_governor }}
-            - 🔨 Toolchain: Bazel
+            - 🔨 Toolchain: ${{ inputs.clang_toolchain == 'bazel-default' && 'Bazel (default)' || env.TOOLCHAIN_NAME }}
             - 📅 Built: ${{ github.event.repository.updated_at }}
             
             **Features:**
