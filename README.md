@@ -1,225 +1,327 @@
 <div align="center">
 
-# ⚡ Castorice KernelSUN ⚡
-**High-Performance Gaming Kernel for Redmi 12 (fire)**
+# ⚡ Castorice Kernel
+### Gaming-Optimized Kernel for Redmi 12 (fire)
 
-![Android](https://img.shields.io/badge/Android-13%20%7C%2014%20%7C%2015-3DDC84?style=for-the-badge&logo=android&logoColor=white)
-![Xiaomi](https://img.shields.io/badge/Xiaomi-HyperOS%20%7C%20MIUI-FF6900?style=for-the-badge&logo=xiaomi&logoColor=white)
-![KernelSU](https://img.shields.io/badge/KernelSU-Multi--Variant-12B9A1?style=for-the-badge)
-![SUSFS](https://img.shields.io/badge/SUSFS-Optional-blueviolet?style=for-the-badge)
+[![GitHub Release](https://img.shields.io/github/v/release/naidrahiqa/CastoriceKernelSUN?style=for-the-badge&logo=github&color=success)](https://github.com/naidrahiqa/CastoriceKernelSUN/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/naidrahiqa/CastoriceKernelSUN/total?style=for-the-badge&logo=github&color=blue)](https://github.com/naidrahiqa/CastoriceKernelSUN/releases)
+[![GitHub Stars](https://img.shields.io/github/stars/naidrahiqa/CastoriceKernelSUN?style=for-the-badge&logo=github&color=yellow)](https://github.com/naidrahiqa/CastoriceKernelSUN/stargazers)
+
+![Android](https://img.shields.io/badge/Android-13%20%7C%2014%20%7C%2015-3DDC84?style=flat-square&logo=android)
+![Xiaomi](https://img.shields.io/badge/Device-Redmi%2012%20(fire)-FF6900?style=flat-square&logo=xiaomi)
+![Chipset](https://img.shields.io/badge/Chipset-MT6768-orange?style=flat-square)
 
 </div>
 
 ---
 
-## 📌 Overview
+## 👋 Halo!
 
-**Castorice Kernel** is a gaming-focused custom kernel built for the **Xiaomi Redmi 12 (fire)** with MT6768 chipset. Optimized for maximum performance, low latency, and flexible root options with multiple KernelSU variants.
+Ini adalah **Castorice Kernel** - kernel custom yang gw bikin khusus buat Redmi 12 (fire) dengan fokus ke **gaming performance** dan **root flexibility**. 
 
-We provide **4 automated workflows** covering both GKI and Legacy kernels, with optional SUSFS integration for advanced root hiding.
-
----
-
-## 🚀 Kernel Variants
-
-### 📦 Available Workflows
-
-| Workflow | Kernel | Root Options | SUSFS | Best For |
-|:---------|:-------|:-------------|:------|:---------|
-| **🟢 GKI 6.6 — KernelSU** | Linux 6.6 | KSU-Next, WildKSU, SukiSU, ReSukiSU | ❌ | HyperOS 2 (Android 15) - Daily Driver |
-| **🟣 GKI 6.6 — KernelSU + SUSFS** | Linux 6.6 | KSU-Next, WildKSU, SukiSU, ReSukiSU | ✅ | HyperOS 2 - Banking Apps & Games |
-| **🟠 Legacy 4.19 — KernelSU** | Linux 4.19 | KSU-Next, WildKSU, SukiSU, ReSukiSU | ❌ | MIUI 14 / HyperOS 1 - Daily Driver |
-| **🔴 Legacy 4.19 — KernelSU + SUSFS** | Linux 4.19 | KSU-Next, WildKSU, SukiSU, ReSukiSU | ✅ | MIUI 14 / HyperOS 1 - Banking Apps |
-
-### 🎮 Root Method Options
-
-| Method | Description | Recommended For |
-|:-------|:------------|:----------------|
-| **KernelSU-Next** | Official next-gen KernelSU | Most users (stable) |
-| **WildKSU** | Unofficial KernelSU fork with extra features | Advanced users |
-| **SukiSU** | Alternative KSU implementation | Testing/Development |
-| **ReSukiSU** | Rebuilt SukiSU variant | Experimental |
-
-### ⚙️ CPU Governor Options
-
-All workflows support custom CPU governors (switchable via kernel tuner apps):
-- **schedutil** (default) - Balanced performance & battery
-- **performance** - Maximum performance (gaming)
-- **ondemand** - Dynamic scaling
-- **conservative** - Battery saver
+Kenapa bikin ini? Karena gw pengen kernel yang:
+- ⚡ **Cepet** buat gaming (HZ_1000, full preempt)
+- 🎮 **Smooth** tanpa lag (optimized scheduler)
+- 🛡️ **Flexible** root options (4 KernelSU variants!)
+- 🔒 **Aman** dari deteksi (SUSFS optional)
+- 🔧 **Customizable** (ganti governor on-the-fly)
 
 ---
 
-## ✨ Features
+## 🎯 Pilih Kernel yang Cocok Buat Lo
 
-### 🎮 Gaming Optimizations
-- **HZ_1000:** 1000Hz timer frequency for ultra-low latency
-- **Full PREEMPT:** Preemptible kernel for smoother gaming
-- **HRTIMER:** High-resolution timers for precise frame timing
-- **All CPU Governors Built-in:** Switch governors on-the-fly
+### 📱 Step 1: Cek OS Lo
 
-### 🛡️ Root & Security
-- **Multiple KernelSU Variants:** Choose your preferred root method
-- **SUSFS Integration (Optional):** Advanced root hiding
-  - Path/mount hiding
-  - kstat spoofing
-  - uname spoofing
-  - Symbol hiding from kallsyms
-- **Module Compatibility:** MODVERSIONS enabled on GKI (vendor modules safe)
+Buka **Settings → About Phone**, liat versi Android/HyperOS lo:
 
-### 🧠 Memory & Performance
-- **LRU-Gen:** Multi-Gen LRU for better memory management (GKI)
-- **LZ4/ZSTD ZRAM:** Fast compression with writeback support
-- **KSM:** Kernel Samepage Merging for memory deduplication
-- **Transparent Hugepages:** Better memory performance
+| Kalo Lo Pake | Kernel yang Harus Lo Flash |
+|:-------------|:---------------------------|
+| **HyperOS 2.x** (Android 15) | 🟢 **GKI 6.6** |
+| **HyperOS 1.x** (Android 14) | 🟠 **Legacy 4.19** |
+| **MIUI 14** (Android 13) | 🟠 **Legacy 4.19** |
 
-### 🌐 I/O & Networking
-- **TCP BBR:** Google's BBR congestion control for faster networking
-- **BFQ + Kyber I/O Schedulers:** Optimized disk I/O
-- **IPSet Support:** Advanced firewall capabilities
-- **FQ Qdisc:** Fair Queue packet scheduling
+> ⚠️ **PENTING:** Salah pilih = bootloop! Jangan asal flash!
 
-### 📱 Device-Specific Fixes
-- **LCM 0c/0d Panel Fix:** Fixed touchscreen issues on both panel variants
-- **Primary Display Fix:** Smoother 90Hz rendering
-- **Focaltech Touchscreen Patch:** Better touch responsiveness
+### 🛡️ Step 2: Butuh SUSFS Ga?
 
----
+**SUSFS** itu buat nge-hide root dari app yang detect root (banking apps, game anti-cheat, dll).
 
-## 📥 Installation Guide
+- ✅ **Pake SUSFS** kalo lo main game competitive atau pake banking apps
+- ❌ **Skip SUSFS** kalo cuma buat daily driver biasa
 
-### ⚠️ Important: Choose the Correct Variant!
+### 🔑 Step 3: Pilih Root Method
 
-| Your OS | Kernel to Flash |
-|:--------|:----------------|
-| **HyperOS 2.x (Android 15)** | GKI 6.6 |
-| **HyperOS 1.x (Android 14)** | Legacy 4.19 |
-| **MIUI 14 (Android 13)** | Legacy 4.19 |
+Gw support 4 root method, pilih sesuai kebutuhan:
 
-> [!WARNING]
-> Flashing the wrong kernel version will cause a **bootloop**!
+| Root Method | Cocok Buat | Status |
+|:------------|:-----------|:-------|
+| **KernelSU-Next** | Pengguna umum (paling stabil) | ⭐ Recommended |
+| **WildKSU** | Advanced user (extra features) | 🔥 Popular |
+| **SukiSU** | Testing/Development | 🧪 Experimental |
+| **ReSukiSU** | Alternative variant | 🔬 Beta |
 
-### 📲 Installation Steps
+### ⚙️ Step 4: Pilih CPU Governor
 
-1. **Download** the latest `Castorice-XXX-AnyKernel3.zip` from [Releases](../../releases)
-2. **Flash** using one of these methods:
-   - **Kernel Flasher App** (recommended for Redmi 12 fire due to LCM issue)
-   - Custom Recovery (TWRP/OrangeFox) if available
-3. **Reboot** to system
-4. **Install** [KernelSU Manager](https://github.com/KernelSU-Next/KernelSU-Next/releases) (for KSU-Next) or respective manager for your chosen root method
-5. **Verify** installation: Check kernel version in Settings → About Phone
+Governor itu ngatur gimana CPU lo kerja:
 
-### 🔧 Post-Installation (Optional)
+| Governor | Kapan Pake | Battery | Performance |
+|:---------|:-----------|:--------|:------------|
+| **schedutil** | Daily driver | ⚡⚡⚡ | 🎮🎮🎮 |
+| **performance** | Gaming hardcore | ⚡ | 🎮🎮🎮🎮🎮 |
+| **ondemand** | Balanced | ⚡⚡⚡⚡ | 🎮🎮 |
+| **conservative** | Battery saver | ⚡⚡⚡⚡⚡ | 🎮 |
 
-- Use kernel tuner apps (e.g., Franco Kernel Manager, EX Kernel Manager) to:
-  - Switch CPU governors
-  - Adjust I/O schedulers
-  - Fine-tune performance profiles
+> 💡 **Pro Tip:** Lo bisa ganti governor kapan aja pake kernel tuner app!
 
 ---
 
-## 🛠️ Build Your Own Kernel
+## 📥 Cara Install (Gampang Kok!)
 
-This repository uses **GitHub Actions** for automated builds. You can build custom kernels yourself!
+### 🔽 Download Dulu
 
-### 🚀 Quick Build
+1. Ke [**Releases Page**](../../releases/latest)
+2. Download file yang sesuai, contoh nama file:
+   ```
+   Castorice-Gaming-v45-GKI66-KSUNext-SUSFS-Performance-ZyC19-Redmi12.zip
+   ```
+   
+   **Penjelasan nama file:**
+   - `Gaming` = Custom name lo
+   - `v45` = Build number
+   - `GKI66` = GKI 6.6 (atau `Leg419` = Legacy 4.19)
+   - `KSUNext` = Root method (KSUNext/WildKSU/SukiSU/ReSukiSU)
+   - `SUSFS` = Ada SUSFS (atau `NoSUSFS`)
+   - `Performance` = CPU Governor default
+   - `ZyC19` = Toolchain (ZyClang 19)
+   - `Redmi12` = Device codename
 
-1. **Fork** this repository
-2. Go to **Actions** tab
-3. Select a workflow:
-   - `🔥 GKI 6.6 — KernelSU (No SUSFS)`
-   - `🔥 GKI 6.6 — KernelSU + SUSFS`
-   - `🔥 Legacy 4.19 — KernelSU (No SUSFS)`
-   - `🔥 Legacy 4.19 — KernelSU + SUSFS`
-4. Click **Run workflow**
-5. Configure build options:
-   - **Custom Name:** Your kernel name (e.g., "Gaming")
-   - **Author Name:** Your name
-   - **Root Method:** kernelsu-next / wildksu / sukisu / rsukisu
-   - **CPU Governor:** schedutil / performance / ondemand / conservative
-6. Wait for build to complete (~20-30 minutes)
-7. Download the flashable zip from **Artifacts**
+### 📲 Flash Kernel
 
-### 📋 Build Output Naming
+**Cara 1: Pake Kernel Flasher App** (Recommended!)
+1. Install [Kernel Flasher](https://github.com/capntrips/KernelFlasher/releases) dari GitHub
+2. Buka app, pilih file zip yang udah lo download
+3. Flash → Reboot
+4. Done! ✅
 
-```
-Castorice-<Name>-v<BuildNumber>-<GKI/Legacy>-<RootMethod>-<SUSFS?>-<Governor>-Redmi12-AnyKernel3.zip
-```
+**Cara 2: Pake Custom Recovery** (Kalo punya TWRP/OrangeFox)
+1. Reboot ke recovery
+2. Install → Pilih zip file
+3. Swipe to flash
+4. Reboot system
+5. Done! ✅
 
-Example: `Castorice-Gaming-v45-GKI-6.6-kernelsu-next-SUSFS-performance-Redmi12-AnyKernel3.zip`
+> ⚠️ **Note:** Redmi 12 fire belum ada custom recovery buat HyperOS 2 karena masalah LCM 0c/0d panel. Pake Kernel Flasher aja!
 
----
+### 📱 Install Manager App
 
-## 🔍 Compatibility Matrix
+Setelah flash kernel, install manager app sesuai root method lo:
 
-| Feature | GKI 6.6 | Legacy 4.19 |
-|:--------|:-------:|:-----------:|
-| HyperOS 2 (Android 15) | ✅ | ❌ |
-| HyperOS 1 (Android 14) | ❌ | ✅ |
-| MIUI 14 (Android 13) | ❌ | ✅ |
-| KernelSU-Next | ✅ | ✅ |
-| WildKSU | ✅ | ✅ |
-| SukiSU | ✅ | ✅ |
-| ReSukiSU | ✅ | ✅ |
-| SUSFS | ✅ | ✅ |
-| LRU-Gen | ✅ | ❌ |
-| MODVERSIONS | ✅ | ❌ |
-| All CPU Governors | ✅ | ✅ |
+- **KernelSU-Next:** [Download Manager](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+- **WildKSU:** [Download Manager](https://github.com/WildKernels/Wild_KSU/releases)
+- **SukiSU:** [Download Manager](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
+- **ReSukiSU:** [Download Manager](https://github.com/ReSukiSU/ReSukiSU/releases)
 
----
+### ✅ Verifikasi
 
-## 🐛 Known Issues
-
-- **Custom Recovery:** Not available for HyperOS 2 due to LCM 0c/0d panel issue → Use Kernel Flasher app
-- **SUSFS on GKI:** May fail to integrate on some builds → Falls back to non-SUSFS build automatically
+Cek kalo kernel udah ke-install:
+1. Buka **Settings → About Phone**
+2. Tap **Kernel Version** beberapa kali
+3. Harusnya muncul `Castorice-XXX-vXX`
 
 ---
 
-## 📊 Benchmark Results
+## 🎮 Fitur Gaming
 
-> Coming soon! Will include AnTuTu, Geekbench, and gaming FPS comparisons.
+### ⚡ Low Latency
+- **HZ_1000:** Timer 1000Hz buat input lag minimal
+- **Full PREEMPT:** Kernel bisa di-interrupt kapan aja = smoother
+- **HRTIMER:** High-resolution timer buat frame timing presisi
+
+### 🧠 Memory Management
+- **LRU-Gen:** Multi-generational LRU (GKI only)
+- **LZ4/ZSTD ZRAM:** Kompresi RAM cepet
+- **KSM:** Merge memory yang sama buat hemat RAM
+- **Transparent Hugepages:** Akses memory lebih cepet
+
+### 🌐 Network & I/O
+- **TCP BBR:** Congestion control dari Google (internet lebih cepet)
+- **BFQ + Kyber:** I/O scheduler optimized
+- **IPSet:** Advanced firewall support
+
+### 🔧 Customization
+- **All Governors Built-in:** Ganti governor kapan aja
+- **Multiple Root Options:** Pilih root method favorit lo
+- **SUSFS Optional:** Hide root kalo perlu
 
 ---
 
-## 💖 Credits & Acknowledgements
+## 🛠️ Build Sendiri (Advanced)
 
-### 🙏 Special Thanks
+Lo bisa build kernel sendiri dengan custom config!
 
-- **[KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next)** - Next-gen kernel-level root
+### 🚀 Quick Start
+
+1. **Fork** repo ini
+2. Ke tab **Actions**
+3. Pilih workflow yang lo mau:
+   - 🟢 `GKI 6.6 — KernelSU (No SUSFS)`
+   - 🟣 `GKI 6.6 — KernelSU + SUSFS`
+   - 🟠 `Legacy 4.19 — KernelSU (No SUSFS)`
+   - 🔴 `Legacy 4.19 — KernelSU + SUSFS`
+4. Klik **Run workflow**
+5. Isi form:
+   ```
+   Custom Name: Gaming        # Nama kernel lo
+   Author Name: YourName      # Nama lo
+   Root Method: kernelsu-next # Pilih root method
+   CPU Governor: performance  # Pilih governor
+   ```
+6. Tunggu ~20-30 menit
+7. Download dari **Artifacts**
+
+### 📊 Build Status
+
+| Workflow | Status | Last Build |
+|:---------|:-------|:-----------|
+| GKI 6.6 (No SUSFS) | [![Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki.yml) | ![Last Build](https://img.shields.io/github/last-commit/naidrahiqa/CastoriceKernelSUN?style=flat-square) |
+| GKI 6.6 + SUSFS | [![Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki_susfs.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki_susfs.yml) | ![Last Build](https://img.shields.io/github/last-commit/naidrahiqa/CastoriceKernelSUN?style=flat-square) |
+| Legacy 4.19 (No SUSFS) | [![Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_legacy.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_legacy.yml) | ![Last Build](https://img.shields.io/github/last-commit/naidrahiqa/CastoriceKernelSUN?style=flat-square) |
+| Legacy 4.19 + SUSFS | [![Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_legacy_susfs.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_legacy_susfs.yml) | ![Last Build](https://img.shields.io/github/last-commit/naidrahiqa/CastoriceKernelSUN?style=flat-square) |
+
+---
+
+## 📋 Compatibility Table
+
+| Feature | GKI 6.6 | Legacy 4.19 | Notes |
+|:--------|:-------:|:-----------:|:------|
+| **OS Support** |
+| HyperOS 2 (A15) | ✅ | ❌ | GKI only |
+| HyperOS 1 (A14) | ❌ | ✅ | Legacy only |
+| MIUI 14 (A13) | ❌ | ✅ | Legacy only |
+| **Root Methods** |
+| KernelSU-Next | ✅ | ✅ | Recommended |
+| WildKSU | ✅ | ✅ | Popular |
+| SukiSU | ✅ | ✅ | Experimental |
+| ReSukiSU | ✅ | ✅ | Beta |
+| **Features** |
+| SUSFS | ✅ | ✅ | Optional |
+| LRU-Gen | ✅ | ❌ | GKI only |
+| MODVERSIONS | ✅ | ❌ | Vendor modules safe |
+| All CPU Governors | ✅ | ✅ | Switchable |
+| HZ_1000 | ✅ | ✅ | Low latency |
+| Full PREEMPT | ✅ | ✅ | Smooth gaming |
+| TCP BBR | ✅ | ✅ | Fast network |
+| BFQ/Kyber I/O | ✅ | ✅ | Optimized I/O |
+
+---
+
+## 🐛 Known Issues & Solutions
+
+### ❌ Bootloop setelah flash
+**Penyebab:** Salah pilih kernel (GKI di Legacy OS atau sebaliknya)  
+**Solusi:** Flash kernel yang sesuai OS lo, atau restore backup
+
+### ❌ Touchscreen ga respon
+**Penyebab:** Panel LCM 0c/0d belum ke-patch  
+**Solusi:** Kernel ini udah include patch, tapi kalo masih bermasalah coba wipe cache
+
+### ❌ Banking app detect root
+**Penyebab:** SUSFS belum dikonfigurasi atau ga pake SUSFS  
+**Solusi:** 
+1. Flash kernel yang ada SUSFS-nya
+2. Configure SUSFS via manager app
+3. Atau pake Shamiko/Zygisk Hide
+
+### ❌ Custom recovery ga bisa install
+**Penyebab:** HyperOS 2 belum support custom recovery karena LCM issue  
+**Solusi:** Pake Kernel Flasher app aja
+
+---
+
+## 🎯 Roadmap
+
+- [x] Multi-root method support
+- [x] SUSFS integration
+- [x] Gaming optimizations
+- [x] Automated CI/CD builds
+- [ ] Benchmark results & comparisons
+- [ ] OC/UV profiles
+- [ ] Custom scheduler tweaks
+- [ ] Telegram channel/group
+- [ ] Video installation guide
+
+---
+
+## 💬 Community & Support
+
+### 🆘 Butuh Bantuan?
+
+1. **Cek dulu** [Known Issues](#-known-issues--solutions)
+2. **Search** di [Issues](../../issues) - mungkin udah ada yang nanya
+3. **Buat issue baru** kalo belum ada solusinya
+4. **Join discussion** di [Discussions](../../discussions)
+
+### 📢 Stay Updated
+
+- ⭐ **Star** repo ini buat dapet notif update
+- 👀 **Watch** repo buat tau ada release baru
+- 🔔 **Enable notifications** di GitHub
+
+---
+
+## 💖 Credits
+
+Kernel ini ga mungkin ada tanpa bantuan dari:
+
+### 🏆 Main Contributors
+- **[KernelSU-Next Team](https://github.com/KernelSU-Next/KernelSU-Next)** - Next-gen kernel root
 - **[WildKernels](https://github.com/WildKernels/Wild_KSU)** - WildKSU variant
 - **[SukiSU-Ultra](https://github.com/SukiSU-Ultra/SukiSU-Ultra)** - SukiSU implementation
 - **[ReSukiSU](https://github.com/ReSukiSU/ReSukiSU)** - ReSukiSU variant
-- **[simonpunk](https://gitlab.com/simonpunk/susfs4ksu)** - SUSFS for advanced root hiding
+- **[simonpunk](https://gitlab.com/simonpunk/susfs4ksu)** - SUSFS magic
 - **[osm0sis](https://github.com/osm0sis/AnyKernel3)** - AnyKernel3 flasher
 - **[ZyCromerZ](https://github.com/ZyCromerZ/Clang)** - ZyClang toolchain
+
+### 🌟 Special Thanks
 - **[MiCode](https://github.com/MiCode/Xiaomi_Kernel_OpenSource)** - Xiaomi kernel sources
-- **[Google](https://android.googlesource.com/kernel/manifest)** - Android Common Kernel (GKI)
+- **[Google](https://android.googlesource.com/kernel/manifest)** - Android Common Kernel
+- **[Alexjr2](https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire)** - Reference patches
 
-### 🌟 Community
-
-- **[Alexjr2](https://github.com/Alexjr2/KernelSU_Next_SUSFS_fire)** - Reference patches and inspiration
+### 🙏 Community
+- Semua yang udah testing & kasih feedback
+- Contributors yang udah submit PR
+- Lo yang udah star repo ini! ⭐
 
 ---
 
 ## 📜 License
 
-This project is licensed under **GPL-2.0** - see the kernel source repositories for details.
+GPL-2.0 - Kernel Linux license yang sama
 
 ---
 
-## 🔗 Links
+## 🔗 Quick Links
 
-- **Releases:** [GitHub Releases](../../releases)
-- **Issues:** [Report Bugs](../../issues)
-- **Discussions:** [GitHub Discussions](../../discussions)
-- **Telegram:** Coming soon!
+- 📦 [**Download Latest Release**](../../releases/latest)
+- 🐛 [**Report Bug**](../../issues/new)
+- 💡 [**Request Feature**](../../issues/new)
+- 💬 [**Discussions**](../../discussions)
+- 📊 [**Build Status**](../../actions)
 
 ---
 
 <div align="center">
 
-**Made with ❤️ for Redmi 12 (fire) Community**
+### 🎮 Built for Gamers, by Gamers
 
-⭐ Star this repo if you find it useful!
+**Kalo lo suka kernel ini, kasih ⭐ dong!**
+
+Made with ❤️ and ☕ for Redmi 12 (fire) Community
+
+---
+
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=naidrahiqa.CastoriceKernelSUN)
+![GitHub repo size](https://img.shields.io/github/repo-size/naidrahiqa/CastoriceKernelSUN?style=flat-square)
+![Lines of code](https://img.shields.io/tokei/lines/github/naidrahiqa/CastoriceKernelSUN?style=flat-square)
 
 </div>

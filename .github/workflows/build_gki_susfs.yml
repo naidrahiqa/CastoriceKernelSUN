@@ -320,7 +320,23 @@ jobs:
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI-6.6-${KSU_METHOD}-SUSFS-${GOVERNOR}-Redmi12"
+          
+          # Convert to short names
+          case "$KSU_METHOD" in
+            kernelsu-next) ROOT_SHORT="KSUNext" ;;
+            wildksu) ROOT_SHORT="WildKSU" ;;
+            sukisu) ROOT_SHORT="SukiSU" ;;
+            rsukisu) ROOT_SHORT="ReSukiSU" ;;
+          esac
+          case "$GOVERNOR" in
+            schedutil) GOV_SHORT="Schedutil" ;;
+            performance) GOV_SHORT="Performance" ;;
+            ondemand) GOV_SHORT="Ondemand" ;;
+            conservative) GOV_SHORT="Conservative" ;;
+          esac
+          
+          # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-SUSFS-<Gov>-Bazel-Redmi12
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-Bazel-Redmi12"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
           cd ak3
           KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 SUSFS | ${KSU_METHOD} | ${GOVERNOR}] by ${AUTHOR}"
