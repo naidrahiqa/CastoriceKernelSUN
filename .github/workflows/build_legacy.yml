@@ -31,6 +31,19 @@ on:
           - performance
           - ondemand
           - conservative
+      clang_toolchain:
+        description: "Clang Toolchain"
+        required: true
+        type: choice
+        default: "zyc-latest"
+        options:
+          - zyc-latest
+          - proton-latest
+          - neutron-latest
+      release_tag:
+        description: "Release Tag (same tag = same release)"
+        required: true
+        default: "v1.0"
 
 permissions:
   contents: write
@@ -63,13 +76,35 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y aria2 git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libxml-sax-base-perl libxml-simple-perl libc6-dev-i386 lib32ncurses-dev libncurses-dev libx11-dev lib32z-dev libstdc++6 lib32stdc++6 libgl1-mesa-dev xsltproc unzip gzip device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev jq libyaml-dev -y
 
-      - name: Download ZyClang
+      - name: 📥 Download Clang Toolchain
         run: |
           mkdir -p clang
-          ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
-          ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
-          aria2c -x16 -s16 -k1M -o zyclang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
-          tar -xf zyclang.tar.gz -C clang/ && rm -f zyclang.tar.gz
+          TOOLCHAIN="${{ inputs.clang_toolchain }}"
+          
+          case "$TOOLCHAIN" in
+            zyc-latest)
+              echo "🔨 Downloading ZyClang (latest)..."
+              ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
+              ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
+              echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
+              ;;
+            proton-latest)
+              echo "🔨 Downloading Proton Clang (latest)..."
+              PROTON_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.assets[0].browser_download_url')
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "$PROTON_URL"
+              echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
+              ;;
+            neutron-latest)
+              echo "🔨 Downloading Neutron Clang (latest)..."
+              NEUTRON_URL=$(curl -s https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "$NEUTRON_URL"
+              echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
+              ;;
+          esac
+          
+          tar -xf clang.tar.gz -C clang/ && rm -f clang.tar.gz
+          echo "✅ Toolchain downloaded and extracted"
 
       - name: Sync Kernel Source
         run: |
@@ -215,37 +250,43 @@ jobs:
             conservative) GOV_SHORT="Conservative" ;;
           esac
           
-          # Get ZyClang version
+          # Get Clang version
           CLANG_VER=$(../clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+          TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}"
           
-          # New naming: Castorice-<Name>-v<N>-Leg419-<Root>-NoSUSFS-<Gov>-ZyC<Ver>-Redmi12
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-ZyC${CLANG_VER}-Redmi12"
+          # New naming: Castorice-<Name>-v<N>-Leg419-<Root>-NoSUSFS-<Gov>-<Toolchain><Ver>-Redmi12
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${TOOLCHAIN_SHORT}${CLANG_VER}-Redmi12"
           zip -r9 "../${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-      - name: Upload Release
+      - name: 🚀 Create/Update Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-Legacy-${{ inputs.ksu_method }}"
-          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • Legacy 4.19 • ${{ inputs.ksu_method }}"
+          tag_name: "${{ inputs.release_tag }}"
+          name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
-            | Info | Value |
-            |------|-------|
-            | **Type** | Legacy 4.19 (No SUSFS) |
-            | **Root** | ${{ inputs.ksu_method }} |
-            | **Governor** | ${{ inputs.cpu_governor }} |
-            | **SUSFS** | ❌ |
-
-            ### Gaming Profile
-            - HZ_1000, Full PREEMPT
-            - CPU Governor: **${{ inputs.cpu_governor }}**
-            - TCP BBR, LZ4 ZRAM
-
-            ### Compatibility
+            ## 🔥 Build: Legacy 4.19 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
+            
+            **Build Info:**
+            - 🏷️ Variant: Legacy 4.19 (No SUSFS)
+            - 🔑 Root: ${{ inputs.ksu_method }}
+            - ⚙️ Governor: ${{ inputs.cpu_governor }}
+            - 🔨 Toolchain: ${{ env.TOOLCHAIN_NAME }}
+            - 📅 Built: ${{ github.event.repository.updated_at }}
+            
+            **Features:**
+            - ✅ HZ_1000, Full PREEMPT
+            - ✅ All CPU Governors built-in
+            - ✅ TCP BBR, LZ4 ZRAM
+            - ✅ Device-specific patches (LCM 0c/0d fix)
+            
+            **Compatibility:**
             - ✅ MIUI 14 (Android 13)
             - ✅ HyperOS 1.x (Android 14)
             - ❌ HyperOS 2.x → use GKI 6.6
+            
+            ---
           files: "*.zip"
           draft: false
           prerelease: false
+          append_body: true

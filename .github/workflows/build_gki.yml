@@ -31,6 +31,10 @@ on:
           - performance
           - ondemand
           - conservative
+      release_tag:
+        description: "Release Tag (same tag = same release)"
+        required: true
+        default: "v1.0"
 
 permissions:
   contents: write
@@ -326,29 +330,38 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: 🚀 Create Release
+      - name: 🚀 Create/Update Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-GKI-${{ inputs.ksu_method }}"
-          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • GKI 6.6 • ${{ inputs.ksu_method }}"
+          tag_name: "${{ inputs.release_tag }}"
+          name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
-            | Info | Value |
-            |------|-------|
-            | **Type** | GKI 6.6 (No SUSFS) |
-            | **Root** | ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }} |
-            | **KMI** | 6.6-android15-${{ env.KMI_GENERATION }} |
-            | **Governor** | ${{ inputs.cpu_governor }} |
-            | **SUSFS** | ❌ |
-
-            ### Gaming Profile
-            - HZ_1000, Full PREEMPT, HRTIMER
-            - CPU Governor: **${{ inputs.cpu_governor }}** (all governors compiled in)
-            - TCP BBR, BFQ + Kyber I/O, LRU-Gen, LZ4/ZSTD ZRAM
-
-            ### Compatibility
+            ## 🔥 Castorice Kernel ${{ inputs.release_tag }}
+            
+            ### 📦 Build: GKI 6.6 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
+            
+            **Build Info:**
+            - 🏷️ Variant: GKI 6.6 (No SUSFS)
+            - 🔑 Root: ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
+            - ⚙️ Governor: ${{ inputs.cpu_governor }}
+            - 🔨 Toolchain: Bazel
+            - 📅 Built: ${{ github.event.repository.updated_at }}
+            
+            **Features:**
+            - ✅ HZ_1000, Full PREEMPT, HRTIMER
+            - ✅ All CPU Governors built-in (switchable)
+            - ✅ TCP BBR, BFQ + Kyber I/O
+            - ✅ LRU-Gen, LZ4/ZSTD ZRAM
+            - ✅ MODVERSIONS enabled (vendor modules safe)
+            
+            **Compatibility:**
             - ✅ HyperOS 2.x (Android 15)
             - ❌ HyperOS 1.x / MIUI 14 → use Legacy 4.19
+            
+            ---
+            
+            📖 [Installation Guide](https://github.com/${{ github.repository }}#-cara-install-gampang-kok)
           files: dist/*.zip
           draft: false
           prerelease: false
+          append_body: true

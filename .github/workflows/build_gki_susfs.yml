@@ -50,42 +50,44 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: Checkout
+      # ───── Environment Setup ─────
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: Maximize Disk Space
+      - name: 🧹 Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
           sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel || true
           sudo apt-get autoremove -y && sudo apt-get clean
 
-      - name: Setup Swap
+      - name: 💾 Setup Swap (16GB)
         run: |
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
 
-      - name: Install Dependencies
+      - name: 📦 Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev \
             python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch \
             binutils libncurses-dev pkg-config ninja-build zstd aria2 p7zip-full
 
-      - name: Install repo tool
+      - name: 🔧 Install repo Tool
         run: |
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Sync Android Common Kernel
+      # ───── Kernel Source ─────
+      - name: 🌐 Sync Android Common Kernel
         run: |
           mkdir -p kernel && cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
           cd common && make kernelversion
 
-      - name: Set KMI Generation
+      - name: 🔢 Set KMI Generation
         run: |
           cd kernel/common
           if [ -f "build.config.common" ]; then
@@ -97,7 +99,8 @@ jobs:
           STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
           [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE" && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
 
-      - name: Setup KernelSU
+      # ───── KernelSU & SUSFS Integration ─────
+      - name: 🛡️ Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel/common
           KSU_METHOD="${{ inputs.ksu_method }}"
@@ -122,7 +125,7 @@ jobs:
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           [ -f "drivers/kernelsu/Kbuild" ] && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild || true
 
-      - name: Setup SUSFS
+      - name: 🥷 Setup SUSFS
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -202,7 +205,8 @@ jobs:
             grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null && echo "SUSFS_OK=true" >> $GITHUB_ENV || echo "SUSFS_OK=false" >> $GITHUB_ENV
           fi
 
-      - name: Configure Kernel
+      # ───── Kernel Configuration ─────
+      - name: ⚙️ Configure Kernel
         run: |
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
@@ -283,7 +287,8 @@ jobs:
           echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
-      - name: Patch Build System
+      # ───── Build System Patches ─────
+      - name: 🔨 Patch Build System
         run: |
           cd kernel/common
           rm -rf android/abi_gki_protected_exports_* || true
@@ -295,7 +300,8 @@ jobs:
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
 
-      - name: Build Kernel
+      # ───── Build & Package ─────
+      - name: 🔨 Build Kernel
         run: |
           cd kernel/common
           git config --global user.name "github-actions[bot]"
@@ -306,7 +312,7 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: Extract & Package
+      - name: 📤 Extract & Package
         run: |
           mkdir -p dist
           cd kernel
@@ -347,7 +353,8 @@ jobs:
           zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-      - name: Upload Release
+      # ───── Release ─────
+      - name: 🚀 Upload Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-GKI-SUSFS-${{ inputs.ksu_method }}"
