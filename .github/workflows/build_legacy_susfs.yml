@@ -1,4 +1,4 @@
-name: "🔥 Legacy 4.19 — KernelSU + SUSFS"
+name: "ðŸ”¥ Legacy 4.19 â€” KernelSU + SUSFS"
 
 on:
   workflow_dispatch:
@@ -31,6 +31,23 @@ on:
           - performance
           - ondemand
           - conservative
+      tuning_profile:
+        description: "Tuning profile"
+        required: true
+        type: choice
+        default: "balanced"
+        options:
+          - balanced
+          - gaming
+          - social_media
+      safety_profile:
+        description: "Boot safety profile (reserved)"
+        required: true
+        type: choice
+        default: "stable"
+        options:
+          - stable
+          - performance
       clang_toolchain:
         description: "Clang Toolchain"
         required: true
@@ -40,13 +57,20 @@ on:
           - zyc-latest
           - proton-latest
           - neutron-latest
+      release_tag:
+        description: "Release Tag (same tag = same release)"
+        required: true
+        default: "v1.0"
 
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build:
-    name: "Legacy 4.19 SUSFS — ${{ inputs.ksu_method }} — ${{ inputs.cpu_governor }}"
+    name: "Legacy 4.19 SUSFS â€” ${{ inputs.ksu_method }} â€” ${{ inputs.cpu_governor }}"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -103,6 +127,8 @@ jobs:
 
       - name: Sync Kernel Source
         run: |
+          mkdir -p kernel
+          touch kernel/build.log
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b fire-t-oss kernel
           cd kernel
           echo "KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)" >> $GITHUB_ENV
@@ -114,9 +140,10 @@ jobs:
 
       - name: Apply Device Patches
         run: |
+          set -euo pipefail
           cd kernel
-          patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch || echo "WARN: fix_lcm failed"
-          patch -p1 --forward < ../ref_patches/primary_display_fix.patch || echo "WARN: primary_display_fix failed"
+          patch -p1 --forward < ../ref_patches/patchs/fix_lcm.patch || echo "WARN: optional patch fix_lcm failed"
+          patch -p1 --forward < ../ref_patches/primary_display_fix.patch || echo "WARN: optional patch primary_display_fix failed"
           sed -i 's/static struct zram_pages_life \*init_pages_life()/static struct zram_pages_life \*init_pages_life(void)/g' drivers/block/zram/zram_drv.c 2>/dev/null || true
           sed -i 's/EXPORT_SYMBOL(accdet_read_audio_res);/\/\/EXPORT_SYMBOL(accdet_read_audio_res);/g' sound/soc/codecs/mt6357-accdet.c 2>/dev/null || true
           sed -i 's/EXPORT_SYMBOL(accdet_late_init);/\/\/EXPORT_SYMBOL(accdet_late_init);/g' sound/soc/codecs/mt6357-accdet.c 2>/dev/null || true
@@ -125,6 +152,7 @@ jobs:
           patch -p1 --forward < ../ref_patches/patchs/ksu_hooks_4.19.patch || { echo "ERROR: ksu_hooks_4.19.patch FAILED"; exit 1; }
           patch -p1 --forward < ../ref_patches/patchs/69_hide_ksu.patch || echo "WARN: 69_hide_ksu failed"
           patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || echo "WARN: fix_kernel_genheaders failed"
+          test -f drivers/kernelsu/Kconfig || { echo "ERROR: required drivers/kernelsu/Kconfig missing after patch stage"; exit 1; }
 
       - name: Setup KernelSU
         run: |
@@ -153,12 +181,13 @@ jobs:
 
       - name: Setup SUSFS
         run: |
+          set -euo pipefail
           cd kernel
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git
           rm -rf susfs4ksu/.git
           cp -rv susfs4ksu/kernel_patches/fs/* fs/
           cp -rv susfs4ksu/kernel_patches/include/linux/* include/linux/
-          patch -p1 --forward < susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch || true
+          patch -p1 --forward < susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch || { echo "ERROR: required SUSFS patch failed"; exit 1; }
           sed -i "s/poofed_size: '%u'/poofed_size: '%llu'/g" ./fs/susfs.c 2>/dev/null || true
           sed -i "s/length of string: %u/length of string: %lu/g" ./fs/susfs.c 2>/dev/null || true
           grep -q "susfs.o" fs/Makefile || echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> fs/Makefile
@@ -209,41 +238,47 @@ jobs:
                 >> drivers/kernelsu/Kconfig
             fi
           fi
+          grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig || { echo "ERROR: SUSFS config not found in Kconfig"; exit 1; }
 
       - name: Configure Defconfig
         run: |
+          set -euo pipefail
           cd kernel
           DEFCONFIG="arch/arm64/configs/fire_defconfig"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
-          echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
-          echo "CONFIG_HZ=1000" >> $DEFCONFIG
-          echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
-          echo "CONFIG_ZSMALLOC=y" >> $DEFCONFIG
-          echo "CONFIG_ZRAM=y" >> $DEFCONFIG
-          echo "CONFIG_ZRAM_LZ4_COMPRESS=y" >> $DEFCONFIG
-          echo "CONFIG_ZRAM_WRITEBACK=y" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
-          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $DEFCONFIG
-          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
-          echo 'CONFIG_DEFAULT_NET_SCH="fq"' >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_ONDEMAND=y" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y" >> $DEFCONFIG
+          TUNING_PROFILE="${{ inputs.tuning_profile }}"
+          add_cfg() { sed -i "/^${1%%=*}=.*/d" "$DEFCONFIG"; echo "$1" >> "$DEFCONFIG"; }
+          add_cfg "CONFIG_KSU=y"
+          add_cfg "CONFIG_KSU_SUSFS=y"
+          add_cfg "CONFIG_KSU_SUSFS_SUS_PATH=y"
+          add_cfg "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+          add_cfg "CONFIG_KSU_SUSFS_SUS_MAP=y"
+          add_cfg "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+          add_cfg "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+          add_cfg "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+          add_cfg "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+          if [ "$TUNING_PROFILE" != "social_media" ]; then
+            add_cfg "CONFIG_HZ_1000=y"
+            add_cfg "CONFIG_HZ=1000"
+            add_cfg "CONFIG_PREEMPT=y"
+          fi
+          add_cfg "CONFIG_ZSMALLOC=y"
+          add_cfg "CONFIG_ZRAM=y"
+          add_cfg "CONFIG_ZRAM_LZ4_COMPRESS=y"
+          add_cfg "CONFIG_ZRAM_WRITEBACK=y"
+          add_cfg "CONFIG_TCP_CONG_BBR=y"
+          add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
+          add_cfg "CONFIG_NET_SCH_FQ=y"
+          add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
+          add_cfg "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y"
+          add_cfg "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y"
+          add_cfg "CONFIG_CPU_FREQ_GOV_ONDEMAND=y"
+          add_cfg "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y"
           case "$GOVERNOR" in
-            performance) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" >> $DEFCONFIG ;;
-            ondemand) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" >> $DEFCONFIG ;;
-            conservative) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" >> $DEFCONFIG ;;
-            *) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" >> $DEFCONFIG ;;
+            performance) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
+            ondemand) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;
+            conservative) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" ;;
+            *) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ;;
           esac
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-SUSFS"
@@ -281,7 +316,7 @@ jobs:
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          
+
           # Convert to short names
           case "$KSU_METHOD" in
             kernelsu-next) ROOT_SHORT="KSUNext" ;;
@@ -295,18 +330,18 @@ jobs:
             ondemand) GOV_SHORT="Ondemand" ;;
             conservative) GOV_SHORT="Conservative" ;;
           esac
-          
+
           # Build toolchain suffix
           if [ -n "$TOOLCHAIN_VER" ]; then
             TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}${TOOLCHAIN_VER}"
           else
             TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}"
           fi
-          
+
           KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [Legacy 4.19 SUSFS | ${KSU_METHOD} | ${GOVERNOR} | ${TOOLCHAIN_SUFFIX}] by ${AUTHOR}"
           printf '%s\n' '# AnyKernel3' 'properties() {' "kernel.string=${KERNEL_STRING}" 'do.devicecheck=1' 'do.modules=0' 'do.systemless=1' 'do.cleanup=1' 'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=13,14' '}' 'block=boot;' 'is_slot_device=auto;' 'ramdisk_compression=auto;' 'patch_vbmeta_flag=auto;' '. tools/ak3-core.sh;' 'dump_boot;' 'write_boot;' > anykernel.sh
           cp ../kernel/out/arch/arm64/boot/Image.gz-dtb .
-          
+
           # New naming: Castorice-<Name>-v<N>-Leg419-<Root>-SUSFS-<Gov>-<Toolchain>-Redmi12
           BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-${TOOLCHAIN_SUFFIX}-Redmi12"
           zip -r9 "../${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
@@ -314,16 +349,16 @@ jobs:
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-Legacy-SUSFS-${{ inputs.ksu_method }}"
-          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • Legacy 4.19 SUSFS • ${{ inputs.ksu_method }}"
+          tag_name: "${{ inputs.release_tag }}"
+          name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
+            ## âš¡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} â€” Redmi 12 (fire)
             | Info | Value |
             |------|-------|
             | **Type** | Legacy 4.19 + SUSFS |
             | **Root** | ${{ inputs.ksu_method }} |
             | **Governor** | ${{ inputs.cpu_governor }} |
-            | **SUSFS** | ✅ |
+            | **SUSFS** | âœ… |
 
             ### Gaming Profile + SUSFS
             - HZ_1000, Full PREEMPT
@@ -332,9 +367,10 @@ jobs:
             - TCP BBR, LZ4 ZRAM
 
             ### Compatibility
-            - ✅ MIUI 14 (Android 13)
-            - ✅ HyperOS 1.x (Android 14)
-            - ❌ HyperOS 2.x → use GKI 6.6
+            - âœ… MIUI 14 (Android 13)
+            - âœ… HyperOS 1.x (Android 14)
+            - âŒ HyperOS 2.x â†’ use GKI 6.6
           files: "*.zip"
           draft: false
           prerelease: false
+          append_body: true

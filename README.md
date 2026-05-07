@@ -157,49 +157,35 @@ Cek kalo kernel udah ke-install:
 
 ## 🛠️ Build Sendiri (Advanced)
 
-Lo bisa build kernel sendiri dengan custom config! Sekarang ada **2 cara**:
+Lo bisa build kernel sendiri dengan custom config lewat **individual workflows** berikut:
 
-### 🎯 Cara 1: Unified Builder (Recommended!)
+### Control Center (Auto Trigger Many Builds)
 
-Paling gampang - 1 workflow buat semua variant!
+Kalau mau build banyak kombinasi sekaligus, pakai workflow:
 
-1. **Fork** repo ini
-2. Ke tab **Actions**
-3. Pilih **"🎯 Unified Kernel Builder"**
-4. Klik **Run workflow**
-5. Isi form:
-   ```
-   Release Tag: v1.0              # Semua build masuk ke release ini
-   Kernel Name: Gaming            # Nama custom lo
-   Author Name: YourName          # Nama lo
-   
-   Kernel Type: both              # Pilih: gki-6.6, legacy-4.19, atau both
-   Root Method: kernelsu-next     # KSU variant
-   Enable SUSFS: ✅               # Centang kalo mau SUSFS
-   CPU Governor: performance      # Governor default
-   
-   # Toolchain Selection (Separate untuk GKI & Legacy!)
-   Clang Toolchain (GKI): bazel           # Bazel/ZyClang/Proton/Neutron
-   Clang Toolchain (Legacy): zyc-latest   # ZyClang/Proton/Neutron
-   ```
-6. Tunggu ~20-30 menit
-7. Semua build masuk ke **1 release** dengan tag yang sama!
+- `Control Center Build`
 
-**Keuntungan:**
-- ✅ Semua variant dalam 1 release
-- ✅ Pilih toolchain **berbeda** untuk GKI & Legacy
-- ✅ Toggle SUSFS on/off
-- ✅ Build GKI + Legacy sekaligus
-- ✅ Nama file otomatis include toolchain info
+Contoh input cepat:
 
-**Contoh hasil di 1 release:**
 ```
-v1.0/
-├── Castorice-Gaming-v45-GKI66-KSUNext-SUSFS-Performance-Bazel-Redmi12.zip
-└── Castorice-Gaming-v45-Leg419-KSUNext-SUSFS-Performance-ZyClang19-Redmi12.zip
+Release Tag: v1.0
+Kernel Target: both
+SUSFS Variant: both
+Root Methods: kernelsu-next,wildksu
+Governors: schedutil,performance
+Safety Profile: stable
+Tuning Profile: balanced
 ```
 
-### 🔧 Cara 2: Individual Workflows
+Workflow ini bakal auto trigger kombinasi build ke workflow inti (`build_gki`, `build_gki_susfs`, `build_legacy`, `build_legacy_susfs`) sesuai input lo.
+
+Rekomendasi awal biar aman dari bootloop:
+
+- Mulai dari `Safety Profile: stable`
+- Pakai `Tuning Profile: balanced`
+- Test flash dulu sebelum naik ke `performance`/`gaming`
+
+### 🔧 Cara Build (Recommended)
 
 Buat yang mau kontrol lebih detail per workflow:
 
@@ -229,26 +215,15 @@ Buat yang mau kontrol lebih detail per workflow:
 - ✅ Bisa build cuma 1 variant aja (hemat waktu)
 - ✅ Cocok buat testing toolchain comparison
 
-### 🚀 Cara 3: Multi-Variant Matrix (Power User!)
+> Tips: kalau mau gabung beberapa hasil build ke 1 release, pakai `Release Tag` yang sama saat run workflow berbeda.
 
-Build banyak kombinasi sekaligus:
+### Flashing Safety Checklist
 
-1. Pilih **"🚀 Multi-Variant Build"**
-2. Configure:
-   ```
-   Release Tag: v1.0
-   Build GKI: ✅
-   Build Legacy: ✅
-   Build SUSFS: ✅
-   Root Methods: kernelsu-next,wildksu
-   Governors: schedutil,performance
-   ```
-3. Ini bakal build **semua kombinasi**:
-   - GKI + KSU-Next + Schedutil
-   - GKI + KSU-Next + Performance
-   - GKI + WildKSU + Schedutil
-   - GKI + WildKSU + Performance
-   - ... dan seterusnya (termasuk SUSFS variants!)
+1. Flash dulu varian `GKI + No SUSFS + stable + balanced`.
+2. Kalau boot normal, lanjut test varian `SUSFS`.
+3. Kalau masih aman, baru test `Safety Profile: performance`.
+4. Simpan 1 zip "known-good" untuk rollback.
+5. Jangan langsung flash build dengan profil baru ke daily device tanpa backup boot image.
 
 ### 🔨 Toolchain Options
 

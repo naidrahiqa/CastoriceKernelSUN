@@ -1,4 +1,4 @@
-name: "🔥 GKI 6.6 — KernelSU + SUSFS"
+name: "ðŸ”¥ GKI 6.6 â€” KernelSU + SUSFS"
 
 on:
   workflow_dispatch:
@@ -31,16 +31,37 @@ on:
           - performance
           - ondemand
           - conservative
+      safety_profile:
+        description: "Boot safety profile"
+        required: true
+        type: choice
+        default: "stable"
+        options:
+          - stable
+          - performance
+      tuning_profile:
+        description: "Tuning profile"
+        required: true
+        type: choice
+        default: "balanced"
+        options:
+          - balanced
+          - gaming
+          - social_media
       clang_toolchain:
         description: "Clang Toolchain"
         required: true
         type: choice
-        default: "bazel"
+        default: "bazel-default"
         options:
-          - bazel
+          - bazel-default
           - zyc-latest
           - proton-latest
           - neutron-latest
+      release_tag:
+        description: "Release Tag (same tag = same release)"
+        required: true
+        default: "v1.0"
 
 permissions:
   contents: write
@@ -58,41 +79,41 @@ env:
 
 jobs:
   build:
-    name: "GKI 6.6 SUSFS — ${{ inputs.ksu_method }} — ${{ inputs.cpu_governor }}"
+    name: "GKI 6.6 SUSFS â€” ${{ inputs.ksu_method }} â€” ${{ inputs.cpu_governor }}"
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      # ───── Environment Setup ─────
-      - name: 📥 Checkout
+      # â”€â”€â”€â”€â”€ Environment Setup â”€â”€â”€â”€â”€
+      - name: ðŸ“¥ Checkout
         uses: actions/checkout@v4
 
-      - name: 🧹 Maximize Disk Space
+      - name: ðŸ§¹ Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache
           sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel || true
           sudo apt-get autoremove -y && sudo apt-get clean
 
-      - name: 💾 Setup Swap (16GB)
+      - name: ðŸ’¾ Setup Swap (16GB)
         run: |
           sudo fallocate -l 16G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=16384
           sudo chmod 600 /mnt/swapfile && sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
 
-      - name: 📦 Install Dependencies
+      - name: ðŸ“¦ Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y git curl wget bc bison flex libssl-dev make libelf-dev \
             python3 python3-pip python-is-python3 zip unzip cpio kmod rsync lz4 jq patch \
             binutils libncurses-dev pkg-config ninja-build zstd aria2 p7zip-full
 
-      - name: 🔧 Install repo Tool
+      - name: ðŸ”§ Install repo Tool
         run: |
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: 🔨 Setup Custom Toolchain
-        if: inputs.clang_toolchain != 'bazel'
+      - name: ðŸ”¨ Setup Custom Toolchain
+        if: inputs.clang_toolchain != 'bazel-default'
         run: |
           mkdir -p clang
           TOOLCHAIN="${{ inputs.clang_toolchain }}"
@@ -125,15 +146,15 @@ jobs:
               ;;
           esac
 
-      # ───── Kernel Source ─────
-      - name: 🌐 Sync Android Common Kernel
+      # â”€â”€â”€â”€â”€ Kernel Source â”€â”€â”€â”€â”€
+      - name: ðŸŒ Sync Android Common Kernel
         run: |
           mkdir -p kernel && cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
           cd common && make kernelversion
 
-      - name: 🔢 Set KMI Generation
+      - name: ðŸ”¢ Set KMI Generation
         run: |
           cd kernel/common
           if [ -f "build.config.common" ]; then
@@ -145,8 +166,8 @@ jobs:
           STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
           [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE" && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
 
-      # ───── KernelSU & SUSFS Integration ─────
-      - name: 🛡️ Setup KernelSU (${{ inputs.ksu_method }})
+      # â”€â”€â”€â”€â”€ KernelSU & SUSFS Integration â”€â”€â”€â”€â”€
+      - name: ðŸ›¡ï¸ Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel/common
           KSU_METHOD="${{ inputs.ksu_method }}"
@@ -171,10 +192,9 @@ jobs:
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           [ -f "drivers/kernelsu/Kbuild" ] && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild || true
 
-      - name: 🥷 Setup SUSFS
+      - name: ðŸ¥· Setup SUSFS
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
           cd kernel
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-6.6
           cd common
@@ -182,7 +202,9 @@ jobs:
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
           for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
-            [ -f "$patch" ] && git add -A && git commit -m "pre-susfs" --allow-empty -q && (git apply --3way "$patch" || patch -p1 --forward --fuzz=3 < "$patch" || true)
+            if [ -f "$patch" ]; then
+              git apply --3way "$patch" || patch -p1 --forward --fuzz=3 < "$patch" || true
+            fi
           done
           KSU_KERNEL="drivers/kernelsu"
           if [ -d "$KSU_KERNEL" ]; then
@@ -251,80 +273,82 @@ jobs:
             grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null && echo "SUSFS_OK=true" >> $GITHUB_ENV || echo "SUSFS_OK=false" >> $GITHUB_ENV
           fi
 
-      # ───── Kernel Configuration ─────
-      - name: ⚙️ Configure Kernel
+      # â”€â”€â”€â”€â”€ Kernel Configuration â”€â”€â”€â”€â”€
+      - name: âš™ï¸ Configure Kernel
         run: |
+          set -euo pipefail
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           GOVERNOR="${{ inputs.cpu_governor }}"
+          SAFETY_PROFILE="${{ inputs.safety_profile }}"
+          TUNING_PROFILE="${{ inputs.tuning_profile }}"
+
+          add_cfg() {
+            local cfg="$1"
+            sed -i "/^${cfg%%=*}=.*/d" "$DEFCONFIG"
+            echo "$cfg" >> "$DEFCONFIG"
+          }
           echo "" >> $DEFCONFIG
           echo "# KernelSU" >> $DEFCONFIG
-          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          add_cfg "CONFIG_KSU=y"
           if [ "$SUSFS_OK" = "true" ]; then
             echo "" >> $DEFCONFIG
             echo "# SUSFS" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
+            add_cfg "CONFIG_KSU_SUSFS=y"
+            add_cfg "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
+            add_cfg "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            add_cfg "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            add_cfg "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            add_cfg "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+            add_cfg "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+            add_cfg "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            add_cfg "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            add_cfg "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+            add_cfg "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            add_cfg "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            add_cfg "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            add_cfg "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            add_cfg "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            add_cfg "CONFIG_KSU_SUSFS_SUS_SU=n"
             echo "SUSFS enabled in defconfig"
           else
             echo "SUSFS setup failed, building without SUSFS"
+            exit 1
           fi
           echo "" >> $DEFCONFIG
           echo "# Module Compatibility" >> $DEFCONFIG
-          echo "CONFIG_MODULE_SIG_FORCE=n" >> $DEFCONFIG
-          echo "CONFIG_MODULE_SIG_ALL=n" >> $DEFCONFIG
-          echo "" >> $DEFCONFIG
-          echo "# Gaming & Latency" >> $DEFCONFIG
-          echo "CONFIG_HZ_1000=y" >> $DEFCONFIG
-          echo "CONFIG_HZ=1000" >> $DEFCONFIG
-          echo "CONFIG_PREEMPT=y" >> $DEFCONFIG
-          echo "CONFIG_HIGH_RES_TIMERS=y" >> $DEFCONFIG
-          echo "CONFIG_SND_HRTIMER=y" >> $DEFCONFIG
-          echo "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n" >> $DEFCONFIG
+          add_cfg "CONFIG_MODULE_SIG_FORCE=n"
+          add_cfg "CONFIG_MODULE_SIG_ALL=n"
           echo "" >> $DEFCONFIG
           echo "# CPU Governor" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_ONDEMAND=y" >> $DEFCONFIG
-          echo "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y" >> $DEFCONFIG
+          add_cfg "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y"
+          add_cfg "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y"
+          add_cfg "CONFIG_CPU_FREQ_GOV_ONDEMAND=y"
+          add_cfg "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y"
           case "$GOVERNOR" in
-            performance) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" >> $DEFCONFIG ;;
-            ondemand) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" >> $DEFCONFIG ;;
-            conservative) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" >> $DEFCONFIG ;;
-            *) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" >> $DEFCONFIG ;;
+            performance) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
+            ondemand) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;
+            conservative) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" ;;
+            *) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ;;
           esac
-          echo "" >> $DEFCONFIG
-          echo "# Memory" >> $DEFCONFIG
-          echo "CONFIG_ZRAM_WRITEBACK=y" >> $DEFCONFIG
-          echo "CONFIG_CRYPTO_LZ4=y" >> $DEFCONFIG
-          echo "CONFIG_CRYPTO_ZSTD=y" >> $DEFCONFIG
-          echo "CONFIG_KSM=y" >> $DEFCONFIG
-          echo "CONFIG_LRU_GEN=y" >> $DEFCONFIG
-          echo "CONFIG_LRU_GEN_ENABLED=y" >> $DEFCONFIG
-          echo "" >> $DEFCONFIG
-          echo "# I/O" >> $DEFCONFIG
-          echo "CONFIG_IOSCHED_BFQ=y" >> $DEFCONFIG
-          echo "CONFIG_MQ_IOSCHED_KYBER=y" >> $DEFCONFIG
-          echo "" >> $DEFCONFIG
-          echo "# Networking" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
-          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> $DEFCONFIG
-          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
-          echo "CONFIG_IP_SET=y" >> $DEFCONFIG
+          echo -e "\n# Stability Baseline" >> "$DEFCONFIG"
+          add_cfg "CONFIG_HIGH_RES_TIMERS=y"
+          add_cfg "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n"
+          if [ "$SAFETY_PROFILE" = "performance" ]; then
+            for cfg in CONFIG_HZ_1000=y CONFIG_HZ=1000 CONFIG_PREEMPT=y \
+              CONFIG_ZRAM_WRITEBACK=y CONFIG_CRYPTO_LZ4=y CONFIG_CRYPTO_ZSTD=y \
+              CONFIG_KSM=y CONFIG_LRU_GEN=y CONFIG_LRU_GEN_ENABLED=y \
+              CONFIG_TCP_CONG_BBR=y 'CONFIG_DEFAULT_TCP_CONG="bbr"' CONFIG_NET_SCH_FQ=y; do
+              add_cfg "$cfg"
+            done
+            if [ "$TUNING_PROFILE" = "gaming" ]; then
+              add_cfg "CONFIG_IOSCHED_BFQ=y"
+              add_cfg "CONFIG_MQ_IOSCHED_KYBER=y"
+            elif [ "$TUNING_PROFILE" = "social_media" ]; then
+              add_cfg "CONFIG_COMPACTION=y"
+              add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=y"
+            fi
+          fi
           CUSTOM_NAME="${{ inputs.custom_name }}"
           BUILD_VER="${{ github.run_number }}"
           LOCALVER="-Castorice-${CUSTOM_NAME}-v${BUILD_VER}-SUSFS"
@@ -333,8 +357,8 @@ jobs:
           echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
-      # ───── Build System Patches ─────
-      - name: 🔨 Patch Build System
+      # â”€â”€â”€â”€â”€ Build System Patches â”€â”€â”€â”€â”€
+      - name: ðŸ”¨ Patch Build System
         run: |
           cd kernel/common
           rm -rf android/abi_gki_protected_exports_* || true
@@ -346,35 +370,55 @@ jobs:
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
 
-      # ───── Build & Package ─────
-      - name: 🔨 Build Kernel (Bazel)
-        if: inputs.clang_toolchain == 'bazel'
+      # â”€â”€â”€â”€â”€ Build & Package â”€â”€â”€â”€â”€
+      - name: ðŸ”¨ Build Kernel (Bazel)
+        if: inputs.clang_toolchain == 'bazel-default'
         run: |
+          set -euo pipefail
           cd kernel/common
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A && git commit -m "Castorice GKI SUSFS" || true
           cd ..
-          tools/bazel build --config=fast //common:kernel_aarch64_dist 2>&1
+          tools/bazel build --config=fast //common:kernel_aarch64_dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
           echo "TOOLCHAIN_VER=" >> $GITHUB_ENV
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: 🔨 Build Kernel (Custom Toolchain)
-        if: inputs.clang_toolchain != 'bazel'
+      - name: ðŸ”¨ Build Kernel (Custom Toolchain)
+        if: inputs.clang_toolchain != 'bazel-default'
         run: |
+          set -euo pipefail
           cd kernel/common
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A && git commit -m "Castorice GKI SUSFS" || true
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- gki_defconfig
-          make -j$(nproc) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip 2>&1
+          make -j$(nproc) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip 2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: 📤 Extract & Package
+      - name: Verify Build Output
+        run: |
+          IMAGE_COUNT=0
+          for f in dist/Image dist/Image.gz dist/Image.lz4 \
+            kernel/common/out/arch/arm64/boot/Image \
+            kernel/common/out/arch/arm64/boot/Image.gz \
+            kernel/common/out/arch/arm64/boot/Image.lz4; do
+            [ -f "$f" ] && IMAGE_COUNT=$((IMAGE_COUNT+1))
+          done
+          [ "$IMAGE_COUNT" -eq 0 ] && echo "No kernel image found" && exit 1
+
+      - name: Upload Debug Artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gki-susfs-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.safety_profile }}-${{ inputs.tuning_profile }}
+          path: |
+            kernel/build.log
+            kernel/common/build.log
+            kernel/common/arch/arm64/configs/gki_defconfig
+            dist/Image*
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: ðŸ“¤ Extract & Package
         run: |
           mkdir -p dist
           CUSTOM_NAME="${{ inputs.custom_name }}"
@@ -382,7 +426,7 @@ jobs:
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          
+
           # Convert to short names
           case "$KSU_METHOD" in
             kernelsu-next) ROOT_SHORT="KSUNext" ;;
@@ -396,9 +440,9 @@ jobs:
             ondemand) GOV_SHORT="Ondemand" ;;
             conservative) GOV_SHORT="Conservative" ;;
           esac
-          
+
           # Extract kernel image based on build method
-          if [ "${{ inputs.clang_toolchain }}" = "bazel" ]; then
+          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
             cd kernel
             tools/bazel run --config=fast //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
             for artifact in Image Image.gz Image.lz4; do
@@ -411,14 +455,14 @@ jobs:
               [ -f "$img" ] && cp "$img" dist/ && break
             done
           fi
-          
+
           # Build toolchain suffix
           if [ -n "$TOOLCHAIN_VER" ]; then
             TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}${TOOLCHAIN_VER}"
           else
             TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}"
           fi
-          
+
           # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-SUSFS-<Gov>-<Toolchain>-Redmi12
           BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-${TOOLCHAIN_SUFFIX}-Redmi12"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3
@@ -431,20 +475,20 @@ jobs:
           zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
-      # ───── Release ─────
-      - name: 🚀 Upload Release
+      # â”€â”€â”€â”€â”€ Release â”€â”€â”€â”€â”€
+      - name: ðŸš€ Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-GKI-SUSFS-${{ inputs.ksu_method }}"
-          name: "Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} • GKI 6.6 SUSFS • ${{ inputs.ksu_method }}"
+          tag_name: "${{ inputs.release_tag }}"
+          name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## ⚡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} — Redmi 12 (fire)
+            ## âš¡ Castorice-${{ inputs.custom_name }}-v${{ github.run_number }} â€” Redmi 12 (fire)
             | Info | Value |
             |------|-------|
             | **Type** | GKI 6.6 + SUSFS |
             | **Root** | ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }} |
             | **Governor** | ${{ inputs.cpu_governor }} |
-            | **SUSFS** | ✅ |
+            | **SUSFS** | âœ… |
 
             ### Gaming Profile + SUSFS
             - HZ_1000, Full PREEMPT, HRTIMER
@@ -453,7 +497,8 @@ jobs:
             - TCP BBR, BFQ + Kyber I/O, LRU-Gen
 
             ### Compatibility
-            - ✅ HyperOS 2.x (Android 15)
+            - âœ… HyperOS 2.x (Android 15)
           files: dist/*.zip
           draft: false
           prerelease: false
+          append_body: true

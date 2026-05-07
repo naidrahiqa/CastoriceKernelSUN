@@ -1,0 +1,201 @@
+name: "Control Center Build"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release Tag (same tag = same release)"
+        required: true
+        default: "v1.0"
+      custom_name:
+        description: "Kernel Custom Name"
+        required: true
+        default: "Starter"
+      author_name:
+        description: "Author Name"
+        required: true
+        default: "Castorice"
+      kernel_target:
+        description: "Kernel target"
+        required: true
+        type: choice
+        default: "both"
+        options:
+          - gki
+          - legacy
+          - both
+      susfs_variant:
+        description: "SUSFS variant"
+        required: true
+        type: choice
+        default: "both"
+        options:
+          - no-susfs
+          - susfs
+          - both
+      root_methods:
+        description: "Root methods (comma-separated)"
+        required: true
+        default: "kernelsu-next,wildksu"
+      governors:
+        description: "CPU governors (comma-separated)"
+        required: true
+        default: "schedutil,performance"
+      tuning_profile:
+        description: "Tuning profile"
+        required: true
+        type: choice
+        default: "balanced"
+        options:
+          - balanced
+          - gaming
+          - social_media
+      safety_profile:
+        description: "Boot safety profile (GKI)"
+        required: true
+        type: choice
+        default: "stable"
+        options:
+          - stable
+          - performance
+      clang_toolchain_gki:
+        description: "Toolchain for GKI"
+        required: true
+        type: choice
+        default: "bazel-default"
+        options:
+          - bazel-default
+          - zyc-latest
+          - proton-latest
+          - neutron-latest
+      clang_toolchain_legacy:
+        description: "Toolchain for Legacy"
+        required: true
+        type: choice
+        default: "zyc-latest"
+        options:
+          - zyc-latest
+          - proton-latest
+          - neutron-latest
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      total: ${{ steps.matrix.outputs.total }}
+    steps:
+      - name: Build Matrix Payload
+        id: matrix
+        shell: bash
+        run: |
+          MATRIX_JSON="$(python3 - <<'PY'
+          import json
+
+          valid_roots = {"kernelsu-next", "wildksu", "sukisu", "rsukisu"}
+          valid_governors = {"schedutil", "performance", "ondemand", "conservative"}
+
+          def parse_csv(raw):
+              return [item.strip() for item in raw.split(",") if item.strip()]
+
+          root_methods = parse_csv("""${{ inputs.root_methods }}""")
+          governors = parse_csv("""${{ inputs.governors }}""")
+          kernel_target = """${{ inputs.kernel_target }}"""
+          susfs_variant = """${{ inputs.susfs_variant }}"""
+
+          if not root_methods:
+              raise SystemExit("root_methods is empty")
+          if not governors:
+              raise SystemExit("governors is empty")
+
+          invalid_roots = [r for r in root_methods if r not in valid_roots]
+          invalid_governors = [g for g in governors if g not in valid_governors]
+          if invalid_roots:
+              raise SystemExit(f"invalid root methods: {', '.join(invalid_roots)}")
+          if invalid_governors:
+              raise SystemExit(f"invalid governors: {', '.join(invalid_governors)}")
+
+          kernels = ["gki", "legacy"] if kernel_target == "both" else [kernel_target]
+          susfs_values = [False, True] if susfs_variant == "both" else [susfs_variant == "susfs"]
+
+          include = []
+          for kernel in kernels:
+              for susfs in susfs_values:
+                  for root in root_methods:
+                      for governor in governors:
+                          workflow = f"build_{kernel}{'_susfs' if susfs else ''}.yml"
+                          toolchain = """${{ inputs.clang_toolchain_gki }}""" if kernel == "gki" else """${{ inputs.clang_toolchain_legacy }}"""
+                          include.append({
+                              "kernel": kernel,
+                              "susfs": susfs,
+                              "ksu_method": root,
+                              "cpu_governor": governor,
+                              "tuning_profile": """${{ inputs.tuning_profile }}""",
+                              "safety_profile": """${{ inputs.safety_profile }}""",
+                              "workflow": workflow,
+                              "clang_toolchain": toolchain,
+                          })
+
+          print(json.dumps({"include": include}))
+          PY
+          )"
+
+          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
+          echo "total=$(echo "$MATRIX_JSON" | jq '.include | length')" >> "$GITHUB_OUTPUT"
+
+      - name: Show Plan
+        run: |
+          echo "Total builds: ${{ steps.matrix.outputs.total }}"
+          echo '${{ steps.matrix.outputs.matrix }}' | jq '.'
+
+  trigger:
+    name: "${{ matrix.kernel }}-${{ matrix.susfs && 'susfs' || 'nosusfs' }}-${{ matrix.ksu_method }}-${{ matrix.cpu_governor }}"
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 3
+    steps:
+      - name: Trigger Workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "Triggering: ${{ matrix.workflow }}"
+          gh workflow run "${{ matrix.workflow }}" \
+            --ref "${{ github.ref_name }}" \
+            -f custom_name="${{ inputs.custom_name }}" \
+            -f author_name="${{ inputs.author_name }}" \
+            -f ksu_method="${{ matrix.ksu_method }}" \
+            -f cpu_governor="${{ matrix.cpu_governor }}" \
+            -f tuning_profile="${{ matrix.tuning_profile }}" \
+            -f safety_profile="${{ matrix.safety_profile }}" \
+            -f clang_toolchain="${{ matrix.clang_toolchain }}" \
+            -f release_tag="${{ inputs.release_tag }}"
+
+  summary:
+    name: Summary
+    needs: [prepare, trigger]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Write Summary
+        run: |
+          echo "## Control Center Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Release Tag: \`${{ inputs.release_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Custom Name: \`${{ inputs.custom_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Author: \`${{ inputs.author_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Kernel Target: \`${{ inputs.kernel_target }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- SUSFS Variant: \`${{ inputs.susfs_variant }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Root Methods: \`${{ inputs.root_methods }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Governors: \`${{ inputs.governors }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Tuning Profile: \`${{ inputs.tuning_profile }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Safety Profile (GKI): \`${{ inputs.safety_profile }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Total Triggered Builds: \`${{ needs.prepare.outputs.total }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Builds are triggered. Check each workflow run in Actions tab." >> "$GITHUB_STEP_SUMMARY"

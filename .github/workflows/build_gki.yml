@@ -1,4 +1,4 @@
-name: "🔥 GKI 6.6 — KernelSU (No SUSFS)"
+name: "ðŸ”¥ GKI 6.6 â€” KernelSU (No SUSFS)"
 
 on:
   workflow_dispatch:
@@ -31,6 +31,23 @@ on:
           - performance
           - ondemand
           - conservative
+      safety_profile:
+        description: "Boot safety profile"
+        required: true
+        type: choice
+        default: "stable"
+        options:
+          - stable
+          - performance
+      tuning_profile:
+        description: "Tuning profile"
+        required: true
+        type: choice
+        default: "balanced"
+        options:
+          - balanced
+          - gaming
+          - social_media
       clang_toolchain:
         description: "Clang Toolchain (optional, default: Bazel's built-in)"
         required: true
@@ -59,16 +76,16 @@ env:
 
 jobs:
   build:
-    name: "GKI 6.6 — ${{ inputs.ksu_method }} — ${{ inputs.cpu_governor }}"
+    name: "GKI 6.6 â€” ${{ inputs.ksu_method }} â€” ${{ inputs.cpu_governor }}"
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
-      # ───── Environment Setup ─────
-      - name: 📥 Checkout
+      # â”€â”€â”€â”€â”€ Environment Setup â”€â”€â”€â”€â”€
+      - name: ðŸ“¥ Checkout
         uses: actions/checkout@v4
 
-      - name: 🧹 Maximize Disk Space
+      - name: ðŸ§¹ Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache \
@@ -79,7 +96,7 @@ jobs:
           sudo apt-get autoremove -y && sudo apt-get clean
           df -h /
 
-      - name: 💾 Setup Swap (16GB)
+      - name: ðŸ’¾ Setup Swap (16GB)
         run: |
           sudo swapoff /mnt/swapfile 2>/dev/null || true
           sudo rm -f /mnt/swapfile
@@ -89,7 +106,7 @@ jobs:
           sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
           free -h
 
-      - name: 📦 Install Dependencies
+      - name: ðŸ“¦ Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -98,23 +115,23 @@ jobs:
             kmod rsync lz4 jq patch binutils libncurses-dev \
             pkg-config ninja-build zstd aria2 p7zip-full
 
-      - name: 🔧 Install repo Tool
+      - name: ðŸ”§ Install repo Tool
         run: |
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: 🔨 Download Custom Toolchain (if selected)
+      - name: ðŸ”¨ Download Custom Toolchain (if selected)
         if: inputs.clang_toolchain != 'bazel-default'
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
           cd prebuilts/clang/host/linux-x86
-          
+
           TOOLCHAIN="${{ inputs.clang_toolchain }}"
           case "$TOOLCHAIN" in
             zyc-latest)
-              echo "🔨 Downloading ZyClang..."
+              echo "ðŸ”¨ Downloading ZyClang..."
               ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
               ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
               aria2c -x16 -s16 -k1M -o clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
@@ -123,7 +140,7 @@ jobs:
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
               ;;
             proton-latest)
-              echo "🔨 Downloading Proton Clang..."
+              echo "ðŸ”¨ Downloading Proton Clang..."
               PROTON_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.assets[0].browser_download_url')
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$PROTON_URL"
               mkdir -p clang-proton && tar -xf clang.tar.gz -C clang-proton && rm clang.tar.gz
@@ -131,7 +148,7 @@ jobs:
               echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
               ;;
             neutron-latest)
-              echo "🔨 Downloading Neutron Clang..."
+              echo "ðŸ”¨ Downloading Neutron Clang..."
               NEUTRON_URL=$(curl -s https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$NEUTRON_URL"
               mkdir -p clang-neutron && tar -xf clang.tar.gz -C clang-neutron && rm clang.tar.gz
@@ -139,25 +156,25 @@ jobs:
               echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
               ;;
           esac
-          
-          cd $GITHUB_WORKSPACE
-          echo "✅ Custom toolchain downloaded"
 
-      - name: 🔧 Configure Custom Toolchain for Bazel
+          cd $GITHUB_WORKSPACE
+          echo "âœ… Custom toolchain downloaded"
+
+      - name: ðŸ”§ Configure Custom Toolchain for Bazel
         if: inputs.clang_toolchain != 'bazel-default'
         run: |
           cd kernel
           # Create custom toolchain config
           cat > build.config.custom_clang << EOF
-CLANG_PREBUILT_BIN=$CUSTOM_CLANG_PATH/bin
-CLANG_VERSION=\$(cd \$CLANG_PREBUILT_BIN && ./clang --version | head -n1 | cut -d' ' -f4)
-PATH=\$CLANG_PREBUILT_BIN:\$PATH
-EOF
-          echo "✅ Custom toolchain configured"
+          CLANG_PREBUILT_BIN=$CUSTOM_CLANG_PATH/bin
+          CLANG_VERSION=\$(cd \$CLANG_PREBUILT_BIN && ./clang --version | head -n1 | cut -d' ' -f4)
+          PATH=\$CLANG_PREBUILT_BIN:\$PATH
+          EOF
+          echo "âœ… Custom toolchain configured"
           echo "TOOLCHAIN_NAME=${{ env.TOOLCHAIN_NAME }}" >> $GITHUB_ENV
 
-      # ───── Kernel Source ─────
-      - name: 🌐 Sync Android Common Kernel
+      # â”€â”€â”€â”€â”€ Kernel Source â”€â”€â”€â”€â”€
+      - name: ðŸŒ Sync Android Common Kernel
         run: |
           mkdir -p kernel && cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest \
@@ -165,7 +182,7 @@ EOF
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
           cd common && make kernelversion
 
-      - name: 🔢 Set KMI Generation
+      - name: ðŸ”¢ Set KMI Generation
         run: |
           cd kernel/common
           if [ -f "build.config.common" ]; then
@@ -183,8 +200,8 @@ EOF
           [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE" \
             && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
 
-      # ───── KernelSU Integration ─────
-      - name: 🛡️ Setup KernelSU (${{ inputs.ksu_method }})
+      # â”€â”€â”€â”€â”€ KernelSU Integration â”€â”€â”€â”€â”€
+      - name: ðŸ›¡ï¸ Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel/common
           KSU_METHOD="${{ inputs.ksu_method }}"
@@ -221,69 +238,76 @@ EOF
           [ -f "drivers/kernelsu/Kbuild" ] \
             && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild || true
 
-      # ───── Kernel Configuration ─────
-      - name: ⚙️ Configure Kernel
+      # â”€â”€â”€â”€â”€ Kernel Configuration â”€â”€â”€â”€â”€
+      - name: âš™ï¸ Configure Kernel
         run: |
+          set -euo pipefail
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           GOVERNOR="${{ inputs.cpu_governor }}"
+          SAFETY_PROFILE="${{ inputs.safety_profile }}"
+          TUNING_PROFILE="${{ inputs.tuning_profile }}"
+
+          add_cfg() {
+            local cfg="$1"
+            sed -i "/^${cfg%%=*}=.*/d" "$DEFCONFIG"
+            echo "$cfg" >> "$DEFCONFIG"
+          }
 
           # KernelSU
-          echo -e "\n# KernelSU\nCONFIG_KSU=y" >> $DEFCONFIG
+          echo -e "\n# KernelSU" >> "$DEFCONFIG"
+          add_cfg "CONFIG_KSU=y"
 
           # Module Compatibility
-          echo -e "\n# Module Compatibility\nCONFIG_MODULE_SIG_FORCE=n\nCONFIG_MODULE_SIG_ALL=n" >> $DEFCONFIG
-
-          # Gaming & Latency
-          echo -e "\n# Gaming & Latency" >> $DEFCONFIG
-          for cfg in CONFIG_HZ_1000=y CONFIG_HZ=1000 CONFIG_HZ_250=n CONFIG_HZ_300=n \
-            CONFIG_PREEMPT=y CONFIG_PREEMPT_VOLUNTARY=n CONFIG_PREEMPT_NONE=n \
-            CONFIG_HIGH_RES_TIMERS=y CONFIG_SND_HRTIMER=y CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n; do
-            echo "$cfg" >> $DEFCONFIG
-          done
+          echo -e "\n# Module Compatibility" >> "$DEFCONFIG"
+          add_cfg "CONFIG_MODULE_SIG_FORCE=n"
+          add_cfg "CONFIG_MODULE_SIG_ALL=n"
 
           # CPU Governors (all compiled in)
-          echo -e "\n# CPU Governor" >> $DEFCONFIG
+          echo -e "\n# CPU Governor" >> "$DEFCONFIG"
           for gov in SCHEDUTIL PERFORMANCE ONDEMAND CONSERVATIVE USERSPACE POWERSAVE; do
-            echo "CONFIG_CPU_FREQ_GOV_${gov}=y" >> $DEFCONFIG
+            add_cfg "CONFIG_CPU_FREQ_GOV_${gov}=y"
           done
           case "$GOVERNOR" in
-            performance)  echo "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" >> $DEFCONFIG ;;
-            ondemand)     echo "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" >> $DEFCONFIG ;;
-            conservative) echo "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" >> $DEFCONFIG ;;
-            *)            echo "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" >> $DEFCONFIG ;;
+            performance)  add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
+            ondemand)     add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;
+            conservative) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" ;;
+            *)            add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ;;
           esac
 
-          # Memory Optimization
-          echo -e "\n# Memory Optimization" >> $DEFCONFIG
-          for cfg in CONFIG_ZRAM_WRITEBACK=y CONFIG_CRYPTO_LZ4=y CONFIG_CRYPTO_LZ4HC=y \
-            CONFIG_CRYPTO_ZSTD=y CONFIG_COMPACTION=y CONFIG_KSM=y CONFIG_TRANSPARENT_HUGEPAGE=y \
-            CONFIG_SLAB_FREELIST_RANDOM=y CONFIG_SLAB_FREELIST_HARDENED=y \
-            CONFIG_LRU_GEN=y CONFIG_LRU_GEN_ENABLED=y; do
-            echo "$cfg" >> $DEFCONFIG
-          done
+          # Stable baseline to avoid bootloop regressions.
+          echo -e "\n# Stability Baseline" >> "$DEFCONFIG"
+          add_cfg "CONFIG_HIGH_RES_TIMERS=y"
+          add_cfg "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n"
 
-          # I/O Scheduler
-          echo -e "\n# I/O Scheduler\nCONFIG_IOSCHED_BFQ=y\nCONFIG_BFQ_GROUP_IOSCHED=y\nCONFIG_MQ_IOSCHED_KYBER=y" >> $DEFCONFIG
+          if [ "$SAFETY_PROFILE" = "performance" ]; then
+            echo -e "\n# Performance Profile" >> "$DEFCONFIG"
+            for cfg in CONFIG_HZ_1000=y CONFIG_HZ=1000 CONFIG_HZ_250=n CONFIG_HZ_300=n \
+              CONFIG_PREEMPT=y CONFIG_PREEMPT_VOLUNTARY=n CONFIG_PREEMPT_NONE=n \
+              CONFIG_ZRAM_WRITEBACK=y CONFIG_CRYPTO_LZ4=y CONFIG_CRYPTO_ZSTD=y \
+              CONFIG_KSM=y CONFIG_LRU_GEN=y CONFIG_LRU_GEN_ENABLED=y \
+              CONFIG_TCP_CONG_ADVANCED=y CONFIG_TCP_CONG_BBR=y 'CONFIG_DEFAULT_TCP_CONG="bbr"' \
+              CONFIG_NET_SCH_FQ=y 'CONFIG_DEFAULT_NET_SCH="fq"'; do
+              add_cfg "$cfg"
+            done
 
-          # Networking
-          echo -e "\n# Networking" >> $DEFCONFIG
-          for cfg in CONFIG_TCP_CONG_ADVANCED=y CONFIG_TCP_CONG_BBR=y 'CONFIG_DEFAULT_TCP_CONG="bbr"' \
-            CONFIG_NET_SCH_FQ=y 'CONFIG_DEFAULT_NET_SCH="fq"' CONFIG_IP_NF_TARGET_TTL=y \
-            CONFIG_IP6_NF_TARGET_HL=y CONFIG_IP_SET=y CONFIG_IP_SET_MAX=65534 \
-            CONFIG_IP_SET_BITMAP_IP=y CONFIG_IP_SET_BITMAP_IPMAC=y CONFIG_IP_SET_BITMAP_PORT=y \
-            CONFIG_IP_SET_HASH_IP=y CONFIG_IP_SET_HASH_IPPORT=y CONFIG_IP_SET_HASH_IPPORTIP=y \
-            CONFIG_IP_SET_HASH_NET=y CONFIG_IP_SET_LIST_SET=y; do
-            echo "$cfg" >> $DEFCONFIG
-          done
+            if [ "$TUNING_PROFILE" = "gaming" ]; then
+              add_cfg "CONFIG_IOSCHED_BFQ=y"
+              add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
+              add_cfg "CONFIG_MQ_IOSCHED_KYBER=y"
+            elif [ "$TUNING_PROFILE" = "social_media" ]; then
+              add_cfg "CONFIG_COMPACTION=y"
+              add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=y"
+            fi
+          fi
 
           # Branding
           LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}"
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo -e "\n# Branding\nCONFIG_LOCALVERSION=\"${LOCALVER}\"\nCONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
-      # ───── Build System Patches ─────
-      - name: 🔨 Patch Build System
+      # â”€â”€â”€â”€â”€ Build System Patches â”€â”€â”€â”€â”€
+      - name: ðŸ”¨ Patch Build System
         run: |
           cd kernel/common
           rm -rf android/abi_gki_protected_exports_* || true
@@ -305,23 +329,16 @@ EOF
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
 
-      - name: 📝 Commit Changes
+      # â”€â”€â”€â”€â”€ Build & Package â”€â”€â”€â”€â”€
+      - name: ðŸ”¨ Build Kernel
         run: |
-          cd kernel/common
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Castorice GKI: ${{ inputs.ksu_method }} + gaming tweaks" || true
-
-      # ───── Build & Package ─────
-      - name: 🔨 Build Kernel
-        run: |
+          set -euo pipefail
           cd kernel
-          tools/bazel build --config=fast //common:kernel_aarch64_dist 2>&1
+          tools/bazel build --config=fast //common:kernel_aarch64_dist 2>&1 | tee build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: 📤 Extract Build Output
+      - name: ðŸ“¤ Extract Build Output
         run: |
           mkdir -p $GITHUB_WORKSPACE/dist
           cd kernel
@@ -334,22 +351,40 @@ EOF
             fi
           done
 
-      - name: ✅ Verify Build
+      - name: âœ… Verify Build
         run: |
           HAS_IMAGE=false
+          IMAGE_COUNT=0
           for f in dist/Image dist/Image.gz dist/Image.lz4; do
-            [ -f "$f" ] && echo "Found: $f ($(du -h $f | cut -f1))" && HAS_IMAGE=true
+            if [ -f "$f" ]; then
+              echo "Found: $f ($(du -h $f | cut -f1))"
+              HAS_IMAGE=true
+              IMAGE_COUNT=$((IMAGE_COUNT+1))
+            fi
           done
-          [ "$HAS_IMAGE" = "false" ] && echo "❌ No kernel image found!" && exit 1
+          [ "$HAS_IMAGE" = "false" ] && echo "âŒ No kernel image found!" && exit 1
+          [ "$IMAGE_COUNT" -gt 1 ] && echo "âŒ More than one kernel image found, aborting for safety." && exit 1
 
-      - name: 📦 Package AnyKernel3
+      - name: ðŸ“¤ Upload Debug Artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gki-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.safety_profile }}-${{ inputs.tuning_profile }}
+          path: |
+            kernel/build.log
+            kernel/common/arch/arm64/configs/gki_defconfig
+            dist/Image*
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: ðŸ“¦ Package AnyKernel3
         run: |
           CUSTOM_NAME="${{ inputs.custom_name }}"
           BUILD_VER="${{ github.run_number }}"
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          
+
           # Convert to short names for filename
           case "$KSU_METHOD" in
             kernelsu-next) ROOT_SHORT="KSUNext" ;;
@@ -363,7 +398,7 @@ EOF
             ondemand) GOV_SHORT="Ondemand" ;;
             conservative) GOV_SHORT="Conservative" ;;
           esac
-          
+
           # Determine toolchain name
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
             TOOLCHAIN_SHORT="Bazel"
@@ -372,7 +407,7 @@ EOF
             CLANG_VER=$($CUSTOM_CLANG_PATH/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
             TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}${CLANG_VER}"
           fi
-          
+
           # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-NoSUSFS-<Gov>-<Toolchain>-Redmi12
           BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${TOOLCHAIN_SHORT}-Redmi12"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
@@ -391,8 +426,8 @@ EOF
           done
           zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
-      # ───── Release ─────
-      - name: 📤 Upload Artifacts
+      # â”€â”€â”€â”€â”€ Release â”€â”€â”€â”€â”€
+      - name: ðŸ“¤ Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: "Castorice-GKI-6.6-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}"
@@ -400,37 +435,37 @@ EOF
           if-no-files-found: warn
           retention-days: 30
 
-      - name: 🚀 Create/Update Release
+      - name: ðŸš€ Create/Update Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "${{ inputs.release_tag }}"
           name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## 🔥 Castorice Kernel ${{ inputs.release_tag }}
-            
-            ### 📦 Build: GKI 6.6 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
-            
+            ## ðŸ”¥ Castorice Kernel ${{ inputs.release_tag }}
+
+            ### ðŸ“¦ Build: GKI 6.6 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
+
             **Build Info:**
-            - 🏷️ Variant: GKI 6.6 (No SUSFS)
-            - 🔑 Root: ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
-            - ⚙️ Governor: ${{ inputs.cpu_governor }}
-            - 🔨 Toolchain: ${{ inputs.clang_toolchain == 'bazel-default' && 'Bazel (default)' || env.TOOLCHAIN_NAME }}
-            - 📅 Built: ${{ github.event.repository.updated_at }}
-            
+            - ðŸ·ï¸ Variant: GKI 6.6 (No SUSFS)
+            - ðŸ”‘ Root: ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
+            - âš™ï¸ Governor: ${{ inputs.cpu_governor }}
+            - ðŸ”¨ Toolchain: ${{ inputs.clang_toolchain == 'bazel-default' && 'Bazel (default)' || env.TOOLCHAIN_NAME }}
+            - ðŸ“… Built: ${{ github.event.repository.updated_at }}
+
             **Features:**
-            - ✅ HZ_1000, Full PREEMPT, HRTIMER
-            - ✅ All CPU Governors built-in (switchable)
-            - ✅ TCP BBR, BFQ + Kyber I/O
-            - ✅ LRU-Gen, LZ4/ZSTD ZRAM
-            - ✅ MODVERSIONS enabled (vendor modules safe)
-            
+            - âœ… HZ_1000, Full PREEMPT, HRTIMER
+            - âœ… All CPU Governors built-in (switchable)
+            - âœ… TCP BBR, BFQ + Kyber I/O
+            - âœ… LRU-Gen, LZ4/ZSTD ZRAM
+            - âœ… MODVERSIONS enabled (vendor modules safe)
+
             **Compatibility:**
-            - ✅ HyperOS 2.x (Android 15)
-            - ❌ HyperOS 1.x / MIUI 14 → use Legacy 4.19
-            
+            - âœ… HyperOS 2.x (Android 15)
+            - âŒ HyperOS 1.x / MIUI 14 â†’ use Legacy 4.19
+
             ---
-            
-            📖 [Installation Guide](https://github.com/${{ github.repository }}#-cara-install-gampang-kok)
+
+            ðŸ“– [Installation Guide](https://github.com/${{ github.repository }}#-cara-install-gampang-kok)
           files: dist/*.zip
           draft: false
           prerelease: false
