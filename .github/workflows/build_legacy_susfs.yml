@@ -31,6 +31,15 @@ on:
           - performance
           - ondemand
           - conservative
+      clang_toolchain:
+        description: "Clang Toolchain"
+        required: true
+        type: choice
+        default: "zyc-latest"
+        options:
+          - zyc-latest
+          - proton-latest
+          - neutron-latest
 
 permissions:
   contents: write
@@ -59,13 +68,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y aria2 git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libxml-sax-base-perl libxml-simple-perl libc6-dev-i386 lib32ncurses-dev libncurses-dev libx11-dev lib32z-dev libstdc++6 lib32stdc++6 libgl1-mesa-dev xsltproc unzip gzip device-tree-compiler cpio findutils python3 bc p7zip-full libelf-dev jq libyaml-dev -y
 
-      - name: Download ZyClang
+      - name: Download Toolchain
         run: |
           mkdir -p clang
-          ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
-          ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
-          aria2c -x16 -s16 -k1M -o zyclang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
-          tar -xf zyclang.tar.gz -C clang/ && rm -f zyclang.tar.gz
+          TOOLCHAIN="${{ inputs.clang_toolchain }}"
+          case "$TOOLCHAIN" in
+            zyc-latest)
+              ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
+              ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
+              aria2c -x16 -s16 -k1M -o zyclang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
+              tar -xf zyclang.tar.gz -C clang/ && rm -f zyclang.tar.gz
+              CLANG_VER=$(clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+              echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
+              echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
+              ;;
+            proton-latest)
+              PROTON_TAG=$(curl -sL https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.tag_name')
+              aria2c -x16 -s16 -k1M -o proton.tar.gz "https://github.com/kdrag0n/proton-clang/releases/download/${PROTON_TAG}/proton-clang-${PROTON_TAG}.tar.gz"
+              tar -xf proton.tar.gz -C clang/ --strip-components=1 && rm -f proton.tar.gz
+              CLANG_VER=$(clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+              echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
+              echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
+              ;;
+            neutron-latest)
+              NEUTRON_TAG=$(curl -sL https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.tag_name')
+              NEUTRON_ASSET=$(curl -sL https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
+              aria2c -x16 -s16 -k1M -o neutron.tar.gz "$NEUTRON_ASSET"
+              tar -xf neutron.tar.gz -C clang/ --strip-components=1 && rm -f neutron.tar.gz
+              CLANG_VER=$(clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+              echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
+              echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
+              ;;
+          esac
 
       - name: Sync Kernel Source
         run: |
@@ -247,9 +281,6 @@ jobs:
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [Legacy 4.19 SUSFS | ${KSU_METHOD} | ${GOVERNOR}] by ${AUTHOR}"
-          printf '%s\n' '# AnyKernel3' 'properties() {' "kernel.string=${KERNEL_STRING}" 'do.devicecheck=1' 'do.modules=0' 'do.systemless=1' 'do.cleanup=1' 'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=13,14' '}' 'block=boot;' 'is_slot_device=auto;' 'ramdisk_compression=auto;' 'patch_vbmeta_flag=auto;' '. tools/ak3-core.sh;' 'dump_boot;' 'write_boot;' > anykernel.sh
-          cp ../kernel/out/arch/arm64/boot/Image.gz-dtb .
           
           # Convert to short names
           case "$KSU_METHOD" in
@@ -265,11 +296,19 @@ jobs:
             conservative) GOV_SHORT="Conservative" ;;
           esac
           
-          # Get ZyClang version
-          CLANG_VER=$(../clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+          # Build toolchain suffix
+          if [ -n "$TOOLCHAIN_VER" ]; then
+            TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}${TOOLCHAIN_VER}"
+          else
+            TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}"
+          fi
           
-          # New naming: Castorice-<Name>-v<N>-Leg419-<Root>-SUSFS-<Gov>-ZyC<Ver>-Redmi12
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-ZyC${CLANG_VER}-Redmi12"
+          KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [Legacy 4.19 SUSFS | ${KSU_METHOD} | ${GOVERNOR} | ${TOOLCHAIN_SUFFIX}] by ${AUTHOR}"
+          printf '%s\n' '# AnyKernel3' 'properties() {' "kernel.string=${KERNEL_STRING}" 'do.devicecheck=1' 'do.modules=0' 'do.systemless=1' 'do.cleanup=1' 'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=13,14' '}' 'block=boot;' 'is_slot_device=auto;' 'ramdisk_compression=auto;' 'patch_vbmeta_flag=auto;' '. tools/ak3-core.sh;' 'dump_boot;' 'write_boot;' > anykernel.sh
+          cp ../kernel/out/arch/arm64/boot/Image.gz-dtb .
+          
+          # New naming: Castorice-<Name>-v<N>-Leg419-<Root>-SUSFS-<Gov>-<Toolchain>-Redmi12
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-${TOOLCHAIN_SUFFIX}-Redmi12"
           zip -r9 "../${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
       - name: Upload Release

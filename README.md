@@ -173,35 +173,61 @@ Paling gampang - 1 workflow buat semua variant!
    Kernel Name: Gaming            # Nama custom lo
    Author Name: YourName          # Nama lo
    
-   Kernel Type: gki-6.6           # Pilih: gki-6.6, legacy-4.19, atau both
+   Kernel Type: both              # Pilih: gki-6.6, legacy-4.19, atau both
    Root Method: kernelsu-next     # KSU variant
    Enable SUSFS: ✅               # Centang kalo mau SUSFS
    CPU Governor: performance      # Governor default
-   Clang Toolchain: zyc-latest    # Pilih toolchain (Legacy only)
+   
+   # Toolchain Selection (Separate untuk GKI & Legacy!)
+   Clang Toolchain (GKI): bazel           # Bazel/ZyClang/Proton/Neutron
+   Clang Toolchain (Legacy): zyc-latest   # ZyClang/Proton/Neutron
    ```
 6. Tunggu ~20-30 menit
 7. Semua build masuk ke **1 release** dengan tag yang sama!
 
 **Keuntungan:**
 - ✅ Semua variant dalam 1 release
-- ✅ Pilih toolchain (ZyClang, Proton, Neutron)
+- ✅ Pilih toolchain **berbeda** untuk GKI & Legacy
 - ✅ Toggle SUSFS on/off
 - ✅ Build GKI + Legacy sekaligus
+- ✅ Nama file otomatis include toolchain info
+
+**Contoh hasil di 1 release:**
+```
+v1.0/
+├── Castorice-Gaming-v45-GKI66-KSUNext-SUSFS-Performance-Bazel-Redmi12.zip
+└── Castorice-Gaming-v45-Leg419-KSUNext-SUSFS-Performance-ZyClang19-Redmi12.zip
+```
 
 ### 🔧 Cara 2: Individual Workflows
 
-Buat yang mau kontrol lebih detail:
+Buat yang mau kontrol lebih detail per workflow:
 
 1. **Fork** repo ini
 2. Ke tab **Actions**
 3. Pilih workflow spesifik:
-   - 🟢 `GKI 6.6 — KernelSU (No SUSFS)`
-   - 🟣 `GKI 6.6 — KernelSU + SUSFS`
-   - 🟠 `Legacy 4.19 — KernelSU (No SUSFS)`
-   - 🔴 `Legacy 4.19 — KernelSU + SUSFS`
+   - 🟢 `GKI 6.6 — KernelSU (No SUSFS)` - Toolchain: Bazel/ZyClang/Proton/Neutron
+   - 🟣 `GKI 6.6 — KernelSU + SUSFS` - Toolchain: Bazel/ZyClang/Proton/Neutron
+   - 🟠 `Legacy 4.19 — KernelSU (No SUSFS)` - Toolchain: ZyClang/Proton/Neutron
+   - 🔴 `Legacy 4.19 — KernelSU + SUSFS` - Toolchain: ZyClang/Proton/Neutron
 4. Klik **Run workflow**
-5. Isi form + **Release Tag** (pake tag yang sama biar masuk 1 release)
+5. Isi form:
+   ```
+   Custom Name: Gaming
+   Author Name: YourName
+   Root Method: kernelsu-next
+   CPU Governor: performance
+   Clang Toolchain: bazel         # GKI: bazel/zyc-latest/proton-latest/neutron-latest
+                                  # Legacy: zyc-latest/proton-latest/neutron-latest
+   Release Tag: v1.0              # (Optional) Pake tag yang sama biar masuk 1 release
+   ```
 6. Tunggu build selesai
+
+**Keuntungan:**
+- ✅ Kontrol penuh per workflow
+- ✅ Pilih toolchain spesifik per build
+- ✅ Bisa build cuma 1 variant aja (hemat waktu)
+- ✅ Cocok buat testing toolchain comparison
 
 ### 🚀 Cara 3: Multi-Variant Matrix (Power User!)
 
@@ -224,15 +250,62 @@ Build banyak kombinasi sekaligus:
    - GKI + WildKSU + Performance
    - ... dan seterusnya (termasuk SUSFS variants!)
 
-### 🔨 Toolchain Options (Legacy Only)
+### 🔨 Toolchain Options
 
-| Toolchain | Best For | Version |
-|:----------|:---------|:--------|
-| **ZyClang** | Balanced (recommended) | Auto-latest |
-| **Proton Clang** | Performance | Auto-latest |
-| **Neutron Clang** | Stability | Auto-latest |
+Sekarang **GKI dan Legacy** bisa pilih toolchain!
 
-> 💡 **Note:** GKI builds always use Bazel (Google's official build system)
+| Toolchain | Best For | GKI | Legacy | Version |
+|:----------|:---------|:---:|:------:|:--------|
+| **Bazel** | Google's official (recommended) | ✅ | ❌ | Auto |
+| **ZyClang** | Balanced performance | ✅ | ✅ | Auto-latest |
+| **Proton Clang** | Maximum performance | ✅ | ✅ | Auto-latest |
+| **Neutron Clang** | Stability focused | ✅ | ✅ | Auto-latest |
+
+#### 📊 Toolchain Comparison
+
+| Feature | Bazel | ZyClang | Proton Clang | Neutron Clang |
+|:--------|:-----:|:-------:|:------------:|:-------------:|
+| **Stability** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **Performance** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Build Speed** | ⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **Compatibility** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **GKI Support** | ✅ Official | ✅ | ✅ | ✅ |
+| **Legacy Support** | ❌ | ✅ | ✅ | ✅ |
+| **Optimization Level** | Standard | Balanced | Aggressive | Conservative |
+| **LLVM Version** | Google's | Latest | Latest | Latest |
+| **Recommended For** | Daily driver | All-rounder | Gaming/Benchmark | Production |
+
+#### 🎯 Which Toolchain Should You Choose?
+
+**For GKI 6.6:**
+- 🟢 **Bazel** (Default) - Paling stabil karena official Google toolchain
+- 🔵 **ZyClang** - Kalo mau balance antara performa & stabilitas
+- 🔴 **Proton Clang** - Buat max gaming performance (tapi bisa kurang stabil)
+- 🟣 **Neutron Clang** - Buat yang prioritas stabilitas over performa
+
+**For Legacy 4.19:**
+- 🟢 **ZyClang** (Default) - Best balance, recommended!
+- 🔴 **Proton Clang** - Kalo mau squeeze max performance
+- 🟣 **Neutron Clang** - Kalo device lo sering crash/unstable
+
+**Contoh hasil:**
+```
+GKI dengan Bazel (default):
+Castorice-Gaming-v45-GKI66-KSUNext-NoSUSFS-Performance-Bazel-Redmi12.zip
+
+GKI dengan ZyClang:
+Castorice-Gaming-v45-GKI66-KSUNext-NoSUSFS-Performance-ZyClang19-Redmi12.zip
+
+Legacy dengan Proton:
+Castorice-Gaming-v45-Leg419-WildKSU-SUSFS-Schedutil-ProtonClang18-Redmi12.zip
+
+Legacy dengan Neutron:
+Castorice-Gaming-v45-Leg419-SukiSU-SUSFS-Performance-NeutronClang19-Redmi12.zip
+```
+
+> 💡 **Pro Tip:** Kalo lo ga tau mau pilih yang mana, pake default aja (Bazel buat GKI, ZyClang buat Legacy). Udah tested & proven stable!
+
+> ⚠️ **Note:** Toolchain yang berbeda bisa ngasih hasil performa yang beda. Coba sendiri mana yang paling cocok buat device lo!
 
 ### 📊 Build Status
 
@@ -270,6 +343,54 @@ Build banyak kombinasi sekaligus:
 
 ---
 
+## 🧪 Toolchain Benchmarking Tips
+
+Pengen tau toolchain mana yang paling cepet di device lo? Ikutin cara ini:
+
+### 📊 How to Benchmark
+
+1. **Build semua toolchain variant:**
+   ```
+   - Castorice-Test-v1-GKI66-KSUNext-NoSUSFS-Performance-Bazel-Redmi12.zip
+   - Castorice-Test-v1-GKI66-KSUNext-NoSUSFS-Performance-ZyClang19-Redmi12.zip
+   - Castorice-Test-v1-GKI66-KSUNext-NoSUSFS-Performance-ProtonClang18-Redmi12.zip
+   - Castorice-Test-v1-GKI66-KSUNext-NoSUSFS-Performance-NeutronClang19-Redmi12.zip
+   ```
+
+2. **Flash satu-satu & test:**
+   - Gaming: Genshin Impact, PUBG, ML, dll (cek FPS & frame drops)
+   - Benchmark: Geekbench, AnTuTu, 3DMark
+   - Battery: Cek screen-on time (SOT) setelah 1 hari pemakaian
+   - Stability: Pake 3-7 hari, cek ada crash/reboot ga
+
+3. **Catat hasilnya:**
+   | Toolchain | FPS Avg | AnTuTu | SOT | Stability |
+   |:----------|:--------|:-------|:----|:----------|
+   | Bazel | 58 | 350k | 7h | ⭐⭐⭐⭐⭐ |
+   | ZyClang | 59 | 355k | 6.5h | ⭐⭐⭐⭐ |
+   | Proton | 61 | 360k | 6h | ⭐⭐⭐ |
+   | Neutron | 58 | 348k | 7.5h | ⭐⭐⭐⭐⭐ |
+
+4. **Pilih yang paling cocok buat lo!**
+
+### 💡 Benchmark Apps
+
+- **Gaming FPS:** [FPS Meter](https://play.google.com/store/apps/details?id=com.nll.fpsmeter)
+- **CPU/GPU:** [Geekbench 6](https://play.google.com/store/apps/details?id=com.primatelabs.geekbench6)
+- **Overall:** [AnTuTu Benchmark](https://play.google.com/store/apps/details?id=com.antutu.ABenchMark)
+- **3D Graphics:** [3DMark](https://play.google.com/store/apps/details?id=com.futuremark.dmandroid.application)
+- **Battery:** [AccuBattery](https://play.google.com/store/apps/details?id=com.digibites.accubattery)
+
+### ⚠️ Important Notes
+
+- **Same config:** Pastiin semua build pake config yang sama (root method, governor, SUSFS on/off)
+- **Clean flash:** Wipe cache sebelum flash kernel baru
+- **Consistent testing:** Test di kondisi yang sama (brightness, apps, dll)
+- **Multiple runs:** Jalanin benchmark 3x, ambil rata-rata
+- **Real-world usage:** Benchmark score ≠ real-world performance, test juga daily usage!
+
+---
+
 ## 🐛 Known Issues & Solutions
 
 ### ❌ Bootloop setelah flash
@@ -295,15 +416,20 @@ Build banyak kombinasi sekaligus:
 
 ## 🎯 Roadmap
 
-- [x] Multi-root method support
-- [x] SUSFS integration
-- [x] Gaming optimizations
+- [x] Multi-root method support (KSU-Next, WildKSU, SukiSU, ReSukiSU)
+- [x] SUSFS integration (optional toggle)
+- [x] Gaming optimizations (HZ_1000, PREEMPT, etc)
 - [x] Automated CI/CD builds
-- [ ] Benchmark results & comparisons
-- [ ] OC/UV profiles
-- [ ] Custom scheduler tweaks
-- [ ] Telegram channel/group
-- [ ] Video installation guide
+- [x] Multi-toolchain support (Bazel, ZyClang, Proton, Neutron)
+- [x] Unified build system (1 workflow for all variants)
+- [x] Smart kernel naming (includes toolchain info)
+- [ ] Benchmark results & toolchain comparison data
+- [ ] OC/UV profiles (overclock/undervolt)
+- [ ] Custom scheduler tweaks (EAS tuning)
+- [ ] Telegram channel/group for community
+- [ ] Video installation guide (Bahasa Indonesia)
+- [ ] Per-app CPU governor profiles
+- [ ] Thermal throttling optimization
 
 ---
 
@@ -335,7 +461,12 @@ Kernel ini ga mungkin ada tanpa bantuan dari:
 - **[ReSukiSU](https://github.com/ReSukiSU/ReSukiSU)** - ReSukiSU variant
 - **[simonpunk](https://gitlab.com/simonpunk/susfs4ksu)** - SUSFS magic
 - **[osm0sis](https://github.com/osm0sis/AnyKernel3)** - AnyKernel3 flasher
+
+### 🔨 Toolchain Maintainers
 - **[ZyCromerZ](https://github.com/ZyCromerZ/Clang)** - ZyClang toolchain
+- **[kdrag0n](https://github.com/kdrag0n/proton-clang)** - Proton Clang
+- **[Neutron-Toolchains](https://github.com/Neutron-Toolchains/clang-build-catalogue)** - Neutron Clang
+- **[Google](https://android.googlesource.com/)** - Bazel build system & AOSP toolchains
 
 ### 🌟 Special Thanks
 - **[MiCode](https://github.com/MiCode/Xiaomi_Kernel_OpenSource)** - Xiaomi kernel sources

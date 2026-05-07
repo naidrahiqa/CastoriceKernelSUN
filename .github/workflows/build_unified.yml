@@ -58,16 +58,26 @@ on:
         default: "schedutil"
       
       # Toolchain
-      clang_toolchain:
-        description: "🔨 Clang Toolchain"
+      clang_toolchain_gki:
+        description: "🔨 Clang Toolchain (GKI)"
         required: true
         type: choice
         options:
-          - bazel-default
+          - bazel
           - zyc-latest
           - proton-latest
           - neutron-latest
-        default: "bazel-default"
+        default: "bazel"
+      
+      clang_toolchain_legacy:
+        description: "🔨 Clang Toolchain (Legacy)"
+        required: true
+        type: choice
+        options:
+          - zyc-latest
+          - proton-latest
+          - neutron-latest
+        default: "zyc-latest"
 
 permissions:
   contents: write
@@ -99,10 +109,10 @@ jobs:
             -f author_name="${{ inputs.author_name }}" \
             -f ksu_method="${{ inputs.root_method }}" \
             -f cpu_governor="${{ inputs.cpu_governor }}" \
-            -f clang_toolchain="${{ inputs.clang_toolchain }}" \
+            -f clang_toolchain="${{ inputs.clang_toolchain_gki }}" \
             -f release_tag="${{ inputs.release_tag }}"
           
-          echo "✅ Triggered $WORKFLOW"
+          echo "✅ Triggered $WORKFLOW with toolchain: ${{ inputs.clang_toolchain_gki }}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -130,9 +140,9 @@ jobs:
             -f ksu_method="${{ inputs.root_method }}" \
             -f cpu_governor="${{ inputs.cpu_governor }}" \
             -f release_tag="${{ inputs.release_tag }}" \
-            -f clang_toolchain="${{ inputs.clang_toolchain }}"
+            -f clang_toolchain="${{ inputs.clang_toolchain_legacy }}"
           
-          echo "✅ Triggered $WORKFLOW"
+          echo "✅ Triggered $WORKFLOW with toolchain: ${{ inputs.clang_toolchain_legacy }}"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -156,7 +166,8 @@ jobs:
           echo "- **Root:** ${{ inputs.root_method }}" >> $GITHUB_STEP_SUMMARY
           echo "- **SUSFS:** ${{ inputs.enable_susfs && '✅ Enabled' || '❌ Disabled' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Governor:** ${{ inputs.cpu_governor }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Toolchain:** ${{ inputs.clang_toolchain }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Toolchain (GKI):** ${{ inputs.clang_toolchain_gki }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Toolchain (Legacy):** ${{ inputs.clang_toolchain_legacy }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "⏳ **Builds are running in the background...**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
