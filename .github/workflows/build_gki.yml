@@ -1,10 +1,10 @@
-name: "ðŸ”¥ GKI 6.6 â€” KernelSU (No SUSFS)"
+name: "GKI 6.6 - KernelSU (No SUSFS)"
 
 on:
   workflow_dispatch:
     inputs:
       custom_name:
-        description: "Kernel Custom Name (Castorice-<THIS>-vN)"
+        description: "Kernel Custom Name"
         required: true
         default: "Starter"
       author_name:
@@ -49,7 +49,7 @@ on:
           - gaming
           - social_media
       clang_toolchain:
-        description: "Clang Toolchain (optional, default: Bazel's built-in)"
+        description: "Clang Toolchain"
         required: true
         type: choice
         default: "bazel-default"
@@ -76,16 +76,16 @@ env:
 
 jobs:
   build:
-    name: "GKI 6.6 â€” ${{ inputs.ksu_method }} â€” ${{ inputs.cpu_governor }}"
+    name: "GKI 6.6 - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}"
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
-      # â”€â”€â”€â”€â”€ Environment Setup â”€â”€â”€â”€â”€
-      - name: ðŸ“¥ Checkout
+      # ===== Environment Setup =====
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: ðŸ§¹ Maximize Disk Space
+      - name: Maximize Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache \
@@ -96,7 +96,7 @@ jobs:
           sudo apt-get autoremove -y && sudo apt-get clean
           df -h /
 
-      - name: ðŸ’¾ Setup Swap (16GB)
+      - name: Setup Swap (16GB)
         run: |
           sudo swapoff /mnt/swapfile 2>/dev/null || true
           sudo rm -f /mnt/swapfile
@@ -106,7 +106,7 @@ jobs:
           sudo mkswap /mnt/swapfile && sudo swapon /mnt/swapfile
           free -h
 
-      - name: ðŸ“¦ Install Dependencies
+      - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -115,23 +115,22 @@ jobs:
             kmod rsync lz4 jq patch binutils libncurses-dev \
             pkg-config ninja-build zstd aria2 p7zip-full
 
-      - name: ðŸ”§ Install repo Tool
+      - name: Install repo Tool
         run: |
           mkdir -p ~/bin
           curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: ðŸ”¨ Download Custom Toolchain (if selected)
+      - name: Download Custom Toolchain
         if: inputs.clang_toolchain != 'bazel-default'
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
           cd prebuilts/clang/host/linux-x86
-
           TOOLCHAIN="${{ inputs.clang_toolchain }}"
           case "$TOOLCHAIN" in
             zyc-latest)
-              echo "ðŸ”¨ Downloading ZyClang..."
+              echo "Downloading ZyClang..."
               ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
               ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
               aria2c -x16 -s16 -k1M -o clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
@@ -140,7 +139,7 @@ jobs:
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
               ;;
             proton-latest)
-              echo "ðŸ”¨ Downloading Proton Clang..."
+              echo "Downloading Proton Clang..."
               PROTON_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.assets[0].browser_download_url')
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$PROTON_URL"
               mkdir -p clang-proton && tar -xf clang.tar.gz -C clang-proton && rm clang.tar.gz
@@ -148,7 +147,7 @@ jobs:
               echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
               ;;
             neutron-latest)
-              echo "ðŸ”¨ Downloading Neutron Clang..."
+              echo "Downloading Neutron Clang..."
               NEUTRON_URL=$(curl -s https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$NEUTRON_URL"
               mkdir -p clang-neutron && tar -xf clang.tar.gz -C clang-neutron && rm clang.tar.gz
@@ -156,12 +155,10 @@ jobs:
               echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
               ;;
           esac
-
           cd $GITHUB_WORKSPACE
-          echo "âœ… Custom toolchain downloaded"
 
-      # â”€â”€â”€â”€â”€ Kernel Source â”€â”€â”€â”€â”€
-      - name: ðŸŒ  Sync Android Common Kernel
+      # ===== Kernel Source =====
+      - name: Sync Android Common Kernel
         run: |
           mkdir -p kernel && cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest \
@@ -169,7 +166,7 @@ jobs:
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
           cd common && make kernelversion
 
-      - name: ðŸ”¢ Set KMI Generation
+      - name: Set KMI Generation
         run: |
           cd kernel/common
           if [ -f "build.config.common" ]; then
@@ -187,12 +184,11 @@ jobs:
           [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE" \
             && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
 
-      # â”€â”€â”€â”€â”€ KernelSU Integration â”€â”€â”€â”€â”€
-      - name: ðŸ›¡ï¸  Setup KernelSU (${{ inputs.ksu_method }})
+      # ===== KernelSU Integration =====
+      - name: Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel/common
           KSU_METHOD="${{ inputs.ksu_method }}"
-
           case "$KSU_METHOD" in
             kernelsu-next)
               KSU_TAG=$(curl -sL https://api.github.com/repos/KernelSU-Next/KernelSU-Next/releases/latest | jq -r '.tag_name')
@@ -205,7 +201,6 @@ jobs:
             sukisu)   git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git -b main KernelSU ;;
             rsukisu)  git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git -b builtin KernelSU ;;
           esac
-
           cp -r "$(pwd)/KernelSU/kernel" "drivers/kernelsu"
           rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
           mkdir -p "drivers/kernelsu/uapi" "drivers/kernelsu/include/uapi"
@@ -216,17 +211,15 @@ jobs:
               break
             fi
           done
-
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           grep -q "kernelsu/Kconfig" drivers/Kconfig || echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
-
           KSU_VERSION=$(cd KernelSU && git rev-list --count HEAD)
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           [ -f "drivers/kernelsu/Kbuild" ] \
             && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild || true
 
-      # â”€â”€â”€â”€â”€ Kernel Configuration â”€â”€â”€â”€â”€
-      - name: âš™ï¸  Configure Kernel
+      # ===== Kernel Configuration =====
+      - name: Configure Kernel
         run: |
           set -euo pipefail
           cd kernel/common
@@ -242,16 +235,19 @@ jobs:
           }
 
           # KernelSU
-          echo -e "\n# KernelSU" >> "$DEFCONFIG"
+          echo "" >> "$DEFCONFIG"
+          echo "# KernelSU" >> "$DEFCONFIG"
           add_cfg "CONFIG_KSU=y"
 
           # Module Compatibility
-          echo -e "\n# Module Compatibility" >> "$DEFCONFIG"
+          echo "" >> "$DEFCONFIG"
+          echo "# Module Compatibility" >> "$DEFCONFIG"
           add_cfg "CONFIG_MODULE_SIG_FORCE=n"
           add_cfg "CONFIG_MODULE_SIG_ALL=n"
 
           # CPU Governors (all compiled in)
-          echo -e "\n# CPU Governor" >> "$DEFCONFIG"
+          echo "" >> "$DEFCONFIG"
+          echo "# CPU Governor" >> "$DEFCONFIG"
           for gov in SCHEDUTIL PERFORMANCE ONDEMAND CONSERVATIVE USERSPACE POWERSAVE; do
             add_cfg "CONFIG_CPU_FREQ_GOV_${gov}=y"
           done
@@ -263,13 +259,15 @@ jobs:
             *)            add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ;;
           esac
 
-          # Stable baseline to avoid bootloop regressions.
-          echo -e "\n# Stability Baseline" >> "$DEFCONFIG"
+          # Stability Baseline
+          echo "" >> "$DEFCONFIG"
+          echo "# Stability Baseline" >> "$DEFCONFIG"
           add_cfg "CONFIG_HIGH_RES_TIMERS=y"
           add_cfg "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n"
 
           if [ "$SAFETY_PROFILE" = "performance" ]; then
-            echo -e "\n# Performance Profile" >> "$DEFCONFIG"
+            echo "" >> "$DEFCONFIG"
+            echo "# Performance Profile" >> "$DEFCONFIG"
             for cfg in CONFIG_HZ_1000=y CONFIG_HZ=1000 CONFIG_HZ_250=n CONFIG_HZ_300=n \
               CONFIG_PREEMPT=y CONFIG_PREEMPT_VOLUNTARY=n CONFIG_PREEMPT_NONE=n \
               CONFIG_ZRAM_WRITEBACK=y CONFIG_CRYPTO_LZ4=y CONFIG_CRYPTO_ZSTD=y \
@@ -278,7 +276,6 @@ jobs:
               CONFIG_NET_SCH_FQ=y 'CONFIG_DEFAULT_NET_SCH="fq"'; do
               add_cfg "$cfg"
             done
-
             if [ "$TUNING_PROFILE" = "gaming" ]; then
               add_cfg "CONFIG_IOSCHED_BFQ=y"
               add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
@@ -292,10 +289,13 @@ jobs:
           # Branding
           LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}"
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
-          echo -e "\n# Branding\nCONFIG_LOCALVERSION=\"${LOCALVER}\"\nCONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          echo "" >> $DEFCONFIG
+          echo "# Branding" >> $DEFCONFIG
+          echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
-      # â”€â”€â”€â”€â”€ Build System Patches â”€â”€â”€â”€â”€
-      - name: ðŸ”¨ Patch Build System
+      # ===== Build System Patches =====
+      - name: Patch Build System
         run: |
           cd kernel/common
           rm -rf android/abi_gki_protected_exports_* || true
@@ -317,8 +317,8 @@ jobs:
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
 
-      # â”€â”€â”€â”€â”€ Build & Package â”€â”€â”€â”€â”€
-      - name: ðŸ”¨ Build Kernel (Bazel)
+      # ===== Build & Package =====
+      - name: Build Kernel (Bazel)
         if: inputs.clang_toolchain == 'bazel-default'
         run: |
           set -euo pipefail
@@ -328,7 +328,7 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: ðŸ”¨ Build Kernel (Custom Toolchain)
+      - name: Build Kernel (Custom Toolchain)
         if: inputs.clang_toolchain != 'bazel-default'
         run: |
           set -euo pipefail
@@ -344,7 +344,7 @@ jobs:
         env:
           SOURCE_DATE_EPOCH: "0"
 
-      - name: ðŸ“¤ Extract Build Output
+      - name: Extract Build Output
         run: |
           mkdir -p $GITHUB_WORKSPACE/dist
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
@@ -365,7 +365,7 @@ jobs:
             done
           fi
 
-      - name: âœ… Verify Build
+      - name: Verify Build
         run: |
           HAS_IMAGE=false
           for f in dist/Image dist/Image.gz dist/Image.lz4; do
@@ -374,13 +374,13 @@ jobs:
               HAS_IMAGE=true
             fi
           done
-          [ "$HAS_IMAGE" = "false" ] && echo "â Œ No kernel image found!" && exit 1
+          [ "$HAS_IMAGE" = "false" ] && echo "No kernel image found!" && exit 1
 
-      - name: ðŸ“¤ Upload Debug Artifacts (on failure)
+      - name: Upload Debug Artifacts (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gki-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.safety_profile }}-${{ inputs.tuning_profile }}
+          name: gki-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}
           path: |
             kernel/build.log
             kernel/common/arch/arm64/configs/gki_defconfig
@@ -388,7 +388,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: ðŸ“¦ Package AnyKernel3
+      - name: Package AnyKernel3
         run: |
           CUSTOM_NAME="${{ inputs.custom_name }}"
           BUILD_VER="${{ github.run_number }}"
@@ -396,7 +396,6 @@ jobs:
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
 
-          # Convert to short names for filename
           case "$KSU_METHOD" in
             kernelsu-next) ROOT_SHORT="KSUNext" ;;
             wildksu) ROOT_SHORT="WildKSU" ;;
@@ -410,7 +409,6 @@ jobs:
             conservative) GOV_SHORT="Conservative" ;;
           esac
 
-          # Determine toolchain name
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
             TOOLCHAIN_SHORT="Bazel"
           else
@@ -418,7 +416,6 @@ jobs:
             TOOLCHAIN_SHORT="${TOOLCHAIN_NAME}${CLANG_VER}"
           fi
 
-          # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-NoSUSFS-<Gov>-<Toolchain>-Redmi12
           BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${TOOLCHAIN_SHORT}-Redmi12"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
@@ -436,8 +433,8 @@ jobs:
           done
           zip -r9 "$GITHUB_WORKSPACE/dist/${BASE_NAME}-AnyKernel3.zip" . -x ".git*" "*.md" "LICENSE"
 
-      # â”€â”€â”€â”€â”€ Release â”€â”€â”€â”€â”€
-      - name: ðŸ“¤ Upload Artifacts
+      # ===== Release =====
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: "Castorice-GKI-6.6-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}"
@@ -445,37 +442,32 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: ðŸš€ Create/Update Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "${{ inputs.release_tag }}"
           name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## ðŸ”¥ Castorice Kernel ${{ inputs.release_tag }}
+            ## Castorice Kernel ${{ inputs.release_tag }}
 
-            ### ðŸ“¦ Build: GKI 6.6 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
+            ### Build: GKI 6.6 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
 
             **Build Info:**
-            - ðŸ·ï¸ Variant: GKI 6.6 (No SUSFS)
-            - ðŸ”‘ Root: ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
-            - âš™ï¸ Governor: ${{ inputs.cpu_governor }}
-            - ðŸ”¨ Toolchain: ${{ inputs.clang_toolchain == 'bazel-default' && 'Bazel (default)' || env.TOOLCHAIN_NAME }}
-            - ðŸ“… Built: ${{ github.event.repository.updated_at }}
+            - Variant: GKI 6.6 (No SUSFS)
+            - Root: ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
+            - Governor: ${{ inputs.cpu_governor }}
+            - Toolchain: ${{ inputs.clang_toolchain }}
+            - Built: ${{ github.event.repository.updated_at }}
 
             **Features:**
-            - âœ… HZ_1000, Full PREEMPT, HRTIMER
-            - âœ… All CPU Governors built-in (switchable)
-            - âœ… TCP BBR, BFQ + Kyber I/O
-            - âœ… LRU-Gen, LZ4/ZSTD ZRAM
-            - âœ… MODVERSIONS enabled (vendor modules safe)
+            - HZ_1000, Full PREEMPT, HRTIMER
+            - All CPU Governors built-in (switchable)
+            - TCP BBR, BFQ + Kyber I/O
+            - LRU-Gen, LZ4/ZSTD ZRAM
 
             **Compatibility:**
-            - âœ… HyperOS 2.x (Android 15)
-            - âŒ HyperOS 1.x / MIUI 14 â†’ use Legacy 4.19
-
-            ---
-
-            ðŸ“– [Installation Guide](https://github.com/${{ github.repository }}#-cara-install-gampang-kok)
+            - HyperOS 2.x (Android 15)
+            - HyperOS 1.x / MIUI 14 -> use Legacy 4.19
           files: dist/*.zip
           draft: false
           prerelease: false
