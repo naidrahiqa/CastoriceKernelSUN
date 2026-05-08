@@ -332,13 +332,14 @@ jobs:
           set -euo pipefail
           cd kernel/common
           export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+          MAKE_ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            gki_defconfig
-          make -j$(nproc) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip 2>&1 | tee ../build.log
+            HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld"
+          make $MAKE_ARGS gki_defconfig
+          make -j$(nproc) $MAKE_ARGS \
+            LD=ld.lld AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
@@ -352,16 +353,18 @@ jobs:
             for artifact in Image Image.gz Image.lz4; do
               if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
                 FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
-                [ -n "$FOUND" ] && cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/"
+                [ -n "$FOUND" ] && cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/" || true
               fi
             done
           else
             for img in kernel/common/out/arch/arm64/boot/Image \
               kernel/common/out/arch/arm64/boot/Image.gz \
               kernel/common/out/arch/arm64/boot/Image.lz4; do
-              [ -f "$img" ] && cp -v "$img" "$GITHUB_WORKSPACE/dist/"
+              [ -f "$img" ] && cp -v "$img" "$GITHUB_WORKSPACE/dist/" || true
             done
           fi
+          echo "📦 dist/ contents:"
+          ls -lah $GITHUB_WORKSPACE/dist/ || true
 
       - name: Verify Build
         run: |

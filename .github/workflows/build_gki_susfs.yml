@@ -207,20 +207,28 @@ jobs:
             fi
           done
           KSU_KERNEL="drivers/kernelsu"
+          SUSFS_INTEGRATED=false
           if [ -d "$KSU_KERNEL" ]; then
             if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
               printf '%s\n' 'menu "KernelSU - SUSFS"' 'config KSU_SUSFS' '  bool "KernelSU addon - SUSFS"' '  depends on KSU' '  default y' 'config KSU_SUSFS_SUS_PATH' '  bool "Hide suspicious paths"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SUS_MOUNT' '  bool "Hide suspicious mounts"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SUS_KSTAT' '  bool "Spoof kstat"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SPOOF_UNAME' '  bool "Spoof uname"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_ENABLE_LOG' '  bool "Enable logging"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' '  bool "Hide symbols from kallsyms"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' '  bool "Spoof cmdline/bootconfig"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_OPEN_REDIRECT' '  bool "Open redirect"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SUS_MAP' '  bool "Hide mmapped files from proc maps"' '  depends on KSU_SUSFS' '  default y' 'endmenu' >> "$KSU_KERNEL/Kconfig"
             fi
             if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
-              printf '%s\n' '## SUSFS ##' 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $?),0)' '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E "^#define SUSFS_VERSION" | cut -d" " -f3 | sed "s/\"//g"))' '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))' 'else' '$(info -- SUSFS not integrated)' 'endif' >> "$KSU_KERNEL/Makefile"
+              printf '%s\n' '## SUSFS ##' 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)' '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E "^#define SUSFS_VERSION" | cut -d" " -f3 | sed "s/\"//g"))' '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))' 'else' '$(info -- SUSFS not integrated)' 'endif' >> "$KSU_KERNEL/Makefile"
             fi
             [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c" && sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/core/init.c"
             if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-              python3 -c "import sys; path='drivers/kernelsu/core/init.c'; content=open(path).read(); content=content.replace('ksu_feature_init', '#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n\tksu_feature_init', 1) if 'susfs_init' not in content and 'ksu_feature_init' in content else content; open(path, 'w').write(content)"
+              python3 -c "path='drivers/kernelsu/core/init.c'; c=open(path).read(); c=c.replace('ksu_feature_init','#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n\tksu_feature_init',1) if 'susfs_init' not in c and 'ksu_feature_init' in c else c; open(path,'w').write(c)"
             fi
             [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c" && sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
-            grep -q "CONFIG_KSU_SUSFS" drivers/kernelsu/Kconfig 2>/dev/null && echo "SUSFS_OK=true" >> $GITHUB_ENV || echo "SUSFS_OK=false" >> $GITHUB_ENV
+            if grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
+              SUSFS_INTEGRATED=true
+              echo "SUSFS Kconfig entries verified in $KSU_KERNEL/Kconfig"
+            else
+              echo "SUSFS Kconfig entries NOT found in $KSU_KERNEL/Kconfig"
+            fi
           fi
+          echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
+          echo "SUSFS_OK status: $SUSFS_INTEGRATED"
 
       - name: Configure Kernel
         run: |
@@ -247,8 +255,11 @@ jobs:
               add_cfg "${cfg}=y"
             done
             add_cfg "CONFIG_KSU_SUSFS_SUS_SU=n"
+            echo "✅ SUSFS configs written to defconfig"
           else
-            echo "SUSFS setup failed"
+            echo "❌ SUSFS integration failed - SUSFS_OK=$SUSFS_OK"
+            echo "Checking Kconfig contents:"
+            cat drivers/kernelsu/Kconfig 2>/dev/null | head -50 || echo "Kconfig not found"
             exit 1
           fi
 
@@ -316,8 +327,14 @@ jobs:
           set -euo pipefail
           cd kernel/common
           export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- gki_defconfig
-          make -j$(nproc) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip 2>&1 | tee ../build.log
+          MAKE_ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld"
+          make $MAKE_ARGS gki_defconfig
+          make -j$(nproc) $MAKE_ARGS \
+            LD=ld.lld AR=llvm-ar NM=llvm-nm \
+            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+            2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
@@ -376,7 +393,7 @@ jobs:
             cd $GITHUB_WORKSPACE
           else
             for img in kernel/common/out/arch/arm64/boot/Image kernel/common/out/arch/arm64/boot/Image.gz kernel/common/out/arch/arm64/boot/Image.lz4; do
-              [ -f "$img" ] && cp "$img" dist/ && break
+              [ -f "$img" ] && cp "$img" dist/ || true
             done
           fi
 
