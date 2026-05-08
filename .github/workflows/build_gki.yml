@@ -160,21 +160,8 @@ jobs:
           cd $GITHUB_WORKSPACE
           echo "âœ… Custom toolchain downloaded"
 
-      - name: ðŸ”§ Configure Custom Toolchain for Bazel
-        if: inputs.clang_toolchain != 'bazel-default'
-        run: |
-          cd kernel
-          # Create custom toolchain config
-          cat > build.config.custom_clang << EOF
-          CLANG_PREBUILT_BIN=$CUSTOM_CLANG_PATH/bin
-          CLANG_VERSION=\$(cd \$CLANG_PREBUILT_BIN && ./clang --version | head -n1 | cut -d' ' -f4)
-          PATH=\$CLANG_PREBUILT_BIN:\$PATH
-          EOF
-          echo "âœ… Custom toolchain configured"
-          echo "TOOLCHAIN_NAME=${{ env.TOOLCHAIN_NAME }}" >> $GITHUB_ENV
-
       # â”€â”€â”€â”€â”€ Kernel Source â”€â”€â”€â”€â”€
-      - name: ðŸŒ Sync Android Common Kernel
+      - name: ðŸŒ  Sync Android Common Kernel
         run: |
           mkdir -p kernel && cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest \
@@ -201,7 +188,7 @@ jobs:
             && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
 
       # â”€â”€â”€â”€â”€ KernelSU Integration â”€â”€â”€â”€â”€
-      - name: ðŸ›¡ï¸ Setup KernelSU (${{ inputs.ksu_method }})
+      - name: ðŸ›¡ï¸  Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel/common
           KSU_METHOD="${{ inputs.ksu_method }}"
@@ -239,7 +226,7 @@ jobs:
             && sed -i "s/KSU_GIT_VERSION := .*/KSU_GIT_VERSION := $KSU_VERSION/" drivers/kernelsu/Kbuild || true
 
       # â”€â”€â”€â”€â”€ Kernel Configuration â”€â”€â”€â”€â”€
-      - name: âš™ï¸ Configure Kernel
+      - name: âš™ï¸  Configure Kernel
         run: |
           set -euo pipefail
           cd kernel/common
@@ -268,6 +255,7 @@ jobs:
           for gov in SCHEDUTIL PERFORMANCE ONDEMAND CONSERVATIVE USERSPACE POWERSAVE; do
             add_cfg "CONFIG_CPU_FREQ_GOV_${gov}=y"
           done
+          sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           case "$GOVERNOR" in
             performance)  add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
             ondemand)     add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;
@@ -330,40 +318,63 @@ jobs:
           : > .scmversion
 
       # â”€â”€â”€â”€â”€ Build & Package â”€â”€â”€â”€â”€
-      - name: ðŸ”¨ Build Kernel
+      - name: ðŸ”¨ Build Kernel (Bazel)
+        if: inputs.clang_toolchain == 'bazel-default'
         run: |
           set -euo pipefail
           cd kernel
           tools/bazel build --config=fast //common:kernel_aarch64_dist 2>&1 | tee build.log
+          echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
+        env:
+          SOURCE_DATE_EPOCH: "0"
+
+      - name: ðŸ”¨ Build Kernel (Custom Toolchain)
+        if: inputs.clang_toolchain != 'bazel-default'
+        run: |
+          set -euo pipefail
+          cd kernel/common
+          export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            gki_defconfig
+          make -j$(nproc) O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip 2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
       - name: ðŸ“¤ Extract Build Output
         run: |
           mkdir -p $GITHUB_WORKSPACE/dist
-          cd kernel
-          tools/bazel run --config=fast //common:kernel_aarch64_dist \
-            -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
-          for artifact in Image Image.gz Image.lz4; do
-            if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
-              FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
-              [ -n "$FOUND" ] && cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/"
-            fi
-          done
+          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
+            cd kernel
+            tools/bazel run --config=fast //common:kernel_aarch64_dist \
+              -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
+            for artifact in Image Image.gz Image.lz4; do
+              if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
+                FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
+                [ -n "$FOUND" ] && cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/"
+              fi
+            done
+          else
+            for img in kernel/common/out/arch/arm64/boot/Image \
+              kernel/common/out/arch/arm64/boot/Image.gz \
+              kernel/common/out/arch/arm64/boot/Image.lz4; do
+              [ -f "$img" ] && cp -v "$img" "$GITHUB_WORKSPACE/dist/"
+            done
+          fi
 
       - name: âœ… Verify Build
         run: |
           HAS_IMAGE=false
-          IMAGE_COUNT=0
           for f in dist/Image dist/Image.gz dist/Image.lz4; do
             if [ -f "$f" ]; then
               echo "Found: $f ($(du -h $f | cut -f1))"
               HAS_IMAGE=true
-              IMAGE_COUNT=$((IMAGE_COUNT+1))
             fi
           done
-          [ "$HAS_IMAGE" = "false" ] && echo "âŒ No kernel image found!" && exit 1
-          [ "$IMAGE_COUNT" -gt 1 ] && echo "âŒ More than one kernel image found, aborting for safety." && exit 1
+          [ "$HAS_IMAGE" = "false" ] && echo "â Œ No kernel image found!" && exit 1
 
       - name: ðŸ“¤ Upload Debug Artifacts (on failure)
         if: failure()
@@ -403,9 +414,8 @@ jobs:
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
             TOOLCHAIN_SHORT="Bazel"
           else
-            # Get custom clang version
             CLANG_VER=$($CUSTOM_CLANG_PATH/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
-            TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}${CLANG_VER}"
+            TOOLCHAIN_SHORT="${TOOLCHAIN_NAME}${CLANG_VER}"
           fi
 
           # New naming: Castorice-<Name>-v<N>-GKI66-<Root>-NoSUSFS-<Gov>-<Toolchain>-Redmi12

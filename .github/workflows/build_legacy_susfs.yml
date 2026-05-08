@@ -127,8 +127,6 @@ jobs:
 
       - name: Sync Kernel Source
         run: |
-          mkdir -p kernel
-          touch kernel/build.log
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b fire-t-oss kernel
           cd kernel
           echo "KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)" >> $GITHUB_ENV
@@ -274,6 +272,7 @@ jobs:
           add_cfg "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y"
           add_cfg "CONFIG_CPU_FREQ_GOV_ONDEMAND=y"
           add_cfg "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y"
+          sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           case "$GOVERNOR" in
             performance) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
             ondemand) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;

@@ -123,10 +123,8 @@ jobs:
           esac
           tar -xf clang.tar.gz -C clang/ && rm -f clang.tar.gz
 
-      - name: ðŸŒ Sync Kernel Source
+      - name: ðŸŒ  Sync Kernel Source
         run: |
-          mkdir -p kernel
-          touch kernel/build.log
           git clone --depth=1 https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git -b fire-t-oss kernel
           cd kernel
           echo "KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)" >> $GITHUB_ENV
@@ -153,7 +151,7 @@ jobs:
           patch -p1 --forward < ../ref_patches/patchs/fix_kernel_genheaders.patch || echo "WARN: fix_kernel_genheaders failed"
           test -f drivers/kernelsu/Kconfig || { echo "ERROR: required drivers/kernelsu/Kconfig missing after patch stage"; exit 1; }
 
-      - name: ðŸ›¡ï¸ Setup KernelSU (${{ inputs.ksu_method }})
+      - name: ðŸ›¡ï¸  Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           cd kernel
           KSU_METHOD="${{ inputs.ksu_method }}"
@@ -190,7 +188,7 @@ jobs:
           find . -type f -name "*.c" -path "*/KernelSU*/kernel/*" -exec sed -i 's/TWA_RESUME/true/g' {} +
 
       # â”€â”€â”€â”€â”€ Kernel Configuration â”€â”€â”€â”€â”€
-      - name: âš™ï¸ Configure Defconfig
+      - name: âš™ï¸  Configure Defconfig
         run: |
           set -euo pipefail
           cd kernel
@@ -216,6 +214,7 @@ jobs:
           add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
+          sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           case "$GOVERNOR" in
             performance) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
             ondemand) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;
@@ -280,7 +279,7 @@ jobs:
 
           # Get Clang version
           CLANG_VER=$(../clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
-          TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}"
+          TOOLCHAIN_SHORT="${TOOLCHAIN_NAME}"
 
           # New naming: Castorice-<Name>-v<N>-Leg419-<Root>-NoSUSFS-<Gov>-<Toolchain><Ver>-Redmi12
           BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${TOOLCHAIN_SHORT}${CLANG_VER}-Redmi12"
@@ -296,10 +295,10 @@ jobs:
             ## ðŸ”¥ Build: Legacy 4.19 (No SUSFS) - ${{ inputs.ksu_method }} - ${{ inputs.cpu_governor }}
 
             **Build Info:**
-            - ðŸ·ï¸ Variant: Legacy 4.19 (No SUSFS)
+            - ðŸ ·ï¸  Variant: Legacy 4.19 (No SUSFS)
             - ðŸ”‘ Root: ${{ inputs.ksu_method }}
-            - âš™ï¸ Governor: ${{ inputs.cpu_governor }}
-            - ðŸ”¨ Toolchain: ${{ env.TOOLCHAIN_NAME }}
+            - âš™ï¸  Governor: ${{ inputs.cpu_governor }}
+            - 🔨 Toolchain: ${{ inputs.clang_toolchain }}
             - ðŸ“… Built: ${{ github.event.repository.updated_at }}
 
             **Features:**

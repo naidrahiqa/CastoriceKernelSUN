@@ -196,7 +196,7 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-6.6
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} || { echo "❌ SUSFS branch gki-${ANDROID_VERSION}-${KERNEL_VERSION} not found"; exit 1; }
           cd common
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
@@ -325,6 +325,7 @@ jobs:
           add_cfg "CONFIG_CPU_FREQ_GOV_PERFORMANCE=y"
           add_cfg "CONFIG_CPU_FREQ_GOV_ONDEMAND=y"
           add_cfg "CONFIG_CPU_FREQ_GOV_CONSERVATIVE=y"
+          sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           case "$GOVERNOR" in
             performance) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y" ;;
             ondemand) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND=y" ;;
@@ -375,8 +376,7 @@ jobs:
         if: inputs.clang_toolchain == 'bazel-default'
         run: |
           set -euo pipefail
-          cd kernel/common
-          cd ..
+          cd kernel
           tools/bazel build --config=fast //common:kernel_aarch64_dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
           echo "TOOLCHAIN_VER=" >> $GITHUB_ENV
