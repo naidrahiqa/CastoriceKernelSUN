@@ -139,10 +139,8 @@ jobs:
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
               ;;
             proton-latest)
-              echo "Downloading Proton Clang..."
-              PROTON_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.assets[0].browser_download_url')
-              aria2c -x16 -s16 -k1M -o clang.tar.gz "$PROTON_URL"
-              mkdir -p clang-proton && tar -xf clang.tar.gz -C clang-proton && rm clang.tar.gz
+              echo "Cloning Proton Clang..."
+              git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang-proton
               echo "CUSTOM_CLANG_PATH=$(pwd)/clang-proton" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
               ;;

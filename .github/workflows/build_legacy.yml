@@ -111,8 +111,7 @@ jobs:
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
               ;;
             proton-latest)
-              PROTON_URL=$(curl -s https://api.github.com/repos/kdrag0n/proton-clang/releases/latest | jq -r '.assets[0].browser_download_url')
-              aria2c -x16 -s16 -k1M -o clang.tar.gz "$PROTON_URL"
+              git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
               echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
               ;;
             neutron-latest)
@@ -125,7 +124,7 @@ jobs:
               exit 1
               ;;
           esac
-          tar -xf clang.tar.gz -C clang/ && rm -f clang.tar.gz
+          [ -f clang.tar.gz ] && tar -xf clang.tar.gz -C clang/ && rm -f clang.tar.gz || true
 
       - name: Sync Kernel Source
         run: |
