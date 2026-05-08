@@ -155,7 +155,7 @@ jobs:
               ;;
             wildksu) git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git -b canary KernelSU ;;
             sukisu) git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git -b main KernelSU ;;
-            rsukisu) git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git -b builtin KernelSU ;;
+            rsukisu) git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git -b main KernelSU ;;
           esac
           cp -r "$(pwd)/KernelSU/kernel" "drivers/kernelsu"
           rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
