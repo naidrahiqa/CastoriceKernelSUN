@@ -138,12 +138,6 @@ jobs:
           patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-4.19.patch || true
           patch -p1 < ../susfs4ksu/kernel_patches/fs/open.c_patch || true
 
-      - name: Apply Base Patches
-        run: |
-          cd kernel
-          wget https://raw.githubusercontent.com/xiaoleGun/KernelSU_Action/main/patches/fix_kernel_genheaders.patch -O ../fix_kernel_genheaders.patch
-          patch -p1 --forward < ../fix_kernel_genheaders.patch || true
-
       - name: Setup KernelSU
         run: |
           cd kernel

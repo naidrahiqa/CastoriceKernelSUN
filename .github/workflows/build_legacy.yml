@@ -133,12 +133,6 @@ jobs:
           cd kernel
           echo "KERNEL_HEAD_HASH=$(git log --pretty=format:'%H' -1)" >> $GITHUB_ENV
 
-      - name: Apply Base Patches
-        run: |
-          cd kernel
-          wget https://raw.githubusercontent.com/xiaoleGun/KernelSU_Action/main/patches/fix_kernel_genheaders.patch -O ../fix_kernel_genheaders.patch
-          patch -p1 --forward < ../fix_kernel_genheaders.patch || true
-
       - name: Setup KernelSU
         run: |
           cd kernel
