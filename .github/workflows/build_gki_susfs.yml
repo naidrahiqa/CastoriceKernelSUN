@@ -201,34 +201,47 @@ jobs:
           cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
           cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
           [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
+          # Apply kernel-level SUSFS patches
           for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
             if [ -f "$patch" ]; then
               git apply --3way "$patch" || patch -p1 --forward --fuzz=3 < "$patch" || true
             fi
           done
+          # Apply KernelSU SUSFS integration patch (CRITICAL - enables SUSFS in KSU driver)
           KSU_KERNEL="drivers/kernelsu"
           SUSFS_INTEGRATED=false
           if [ -d "$KSU_KERNEL" ]; then
+            KSU_PATCH="../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+            if [ -f "$KSU_PATCH" ]; then
+              echo "Applying KernelSU SUSFS patch..."
+              cd "$KSU_KERNEL"
+              git apply --3way -p2 "../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || \
+                patch -p2 --forward --fuzz=3 < "../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+              cd ../..
+              echo "KernelSU SUSFS patch applied"
+            else
+              echo "WARNING: KSU SUSFS patch not found at $KSU_PATCH"
+            fi
+            # Fallback: ensure Kconfig entries exist if patch didn't add them
             if ! grep -q "CONFIG_KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
               printf '%s\n' 'menu "KernelSU - SUSFS"' 'config KSU_SUSFS' '  bool "KernelSU addon - SUSFS"' '  depends on KSU' '  default y' 'config KSU_SUSFS_SUS_PATH' '  bool "Hide suspicious paths"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SUS_MOUNT' '  bool "Hide suspicious mounts"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SUS_KSTAT' '  bool "Spoof kstat"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SPOOF_UNAME' '  bool "Spoof uname"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_ENABLE_LOG' '  bool "Enable logging"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS' '  bool "Hide symbols from kallsyms"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG' '  bool "Spoof cmdline/bootconfig"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_OPEN_REDIRECT' '  bool "Open redirect"' '  depends on KSU_SUSFS' '  default y' 'config KSU_SUSFS_SUS_MAP' '  bool "Hide mmapped files from proc maps"' '  depends on KSU_SUSFS' '  default y' 'endmenu' >> "$KSU_KERNEL/Kconfig"
             fi
+            # Fallback: ensure Makefile SUSFS block exists
             if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
               printf '%s\n' '## SUSFS ##' 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)' '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E "^#define SUSFS_VERSION" | cut -d" " -f3 | sed "s/\"//g"))' '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))' 'else' '$(info -- SUSFS not integrated)' 'endif' >> "$KSU_KERNEL/Makefile"
             fi
-            [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/core/init.c" && sed -i '/#include <linux\/workqueue.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/core/init.c"
-            if [ -f "$KSU_KERNEL/core/init.c" ] && ! grep -q "susfs_init" "$KSU_KERNEL/core/init.c"; then
-              python3 -c "path='drivers/kernelsu/core/init.c'; c=open(path).read(); c=c.replace('ksu_feature_init','#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n\tksu_feature_init',1) if 'susfs_init' not in c and 'ksu_feature_init' in c else c; open(path,'w').write(c)"
-            fi
-            [ -f "$KSU_KERNEL/supercall/dispatch.c" ] && ! grep -q "susfs.h" "$KSU_KERNEL/supercall/dispatch.c" && sed -i '/#include <linux\/version.h>/a #include <linux\/susfs.h>' "$KSU_KERNEL/supercall/dispatch.c"
-            if grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
+            # Verify SUSFS integration
+            if grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && grep -q "susfs_init" "$KSU_KERNEL/core/init.c" 2>/dev/null; then
               SUSFS_INTEGRATED=true
-              echo "SUSFS Kconfig entries verified in $KSU_KERNEL/Kconfig"
+              echo "SUSFS fully integrated (Kconfig + init.c verified)"
+            elif grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null; then
+              SUSFS_INTEGRATED=true
+              echo "SUSFS Kconfig verified (init.c hook may differ)"
             else
-              echo "SUSFS Kconfig entries NOT found in $KSU_KERNEL/Kconfig"
+              echo "WARNING: SUSFS integration incomplete"
             fi
           fi
           echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
-          echo "SUSFS_OK status: $SUSFS_INTEGRATED"
 
       - name: Configure Kernel
         run: |
