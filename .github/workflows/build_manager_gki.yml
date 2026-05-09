@@ -34,26 +34,6 @@ on:
         required: true
         type: boolean
         default: true
-      root_wildksu:
-        description: "🔒 WildKSU"
-        required: true
-        type: boolean
-        default: false
-      root_sukisu:
-        description: "🔒 SukiSU"
-        required: true
-        type: boolean
-        default: false
-      root_rsukisu:
-        description: "🔒 ReSukiSU"
-        required: true
-        type: boolean
-        default: false
-      root_kowsu:
-        description: "🔒 KoWSU"
-        required: true
-        type: boolean
-        default: false
 
       cpu_governors:
         description: "⚙️ CPU Governors (comma-separated, e.g. schedutil,walt)"
@@ -133,10 +113,6 @@ jobs:
           # Collect selected root methods
           roots = []
           if "${{ inputs.root_kernelsu_next }}" == "true": roots.append("kernelsu-next")
-          if "${{ inputs.root_wildksu }}" == "true": roots.append("wildksu")
-          if "${{ inputs.root_sukisu }}" == "true": roots.append("sukisu")
-          if "${{ inputs.root_rsukisu }}" == "true": roots.append("rsukisu")
-          if "${{ inputs.root_kowsu }}" == "true": roots.append("kowsu")
 
           # Collect selected governors
           govs = [g.strip() for g in "${{ inputs.cpu_governors }}".split(",") if g.strip()]

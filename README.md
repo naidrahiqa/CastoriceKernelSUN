@@ -46,9 +46,6 @@ Gw support 4 root method, pilih sesuai kebutuhan:
 | Root Method | Cocok Buat | Status |
 |:------------|:-----------|:-------|
 | **KernelSU-Next** | Pengguna umum (paling stabil) | ⭐ Recommended |
-| **WildKSU** | Advanced user (extra features) | 🔥 Popular |
-| **SukiSU** | Testing/Development | 🧪 Experimental |
-| **ReSukiSU** | Alternative variant | 🔬 Beta |
 
 ### ⚙️ Step 3: Pilih CPU Governor
 
@@ -99,9 +96,6 @@ fastboot --disable-verity --disable-verification flash vbmeta_vendor vbmeta_vend
 Setelah flash kernel, install manager app sesuai root method lo:
 
 - **KernelSU-Next:** [Download Manager](https://github.com/KernelSU-Next/KernelSU-Next/releases)
-- **WildKSU:** [Download Manager](https://github.com/WildKernels/Wild_KSU/releases)
-- **SukiSU:** [Download Manager](https://github.com/SukiSU-Ultra/SukiSU-Ultra/releases)
-- **ReSukiSU:** [Download Manager](https://github.com/ReSukiSU/ReSukiSU/releases)
 
 ---
 
@@ -176,9 +170,6 @@ Kalo mau kontrol lebih detail per build:
 | MIUI 14 (A13) | ❌ | Tidak Didukung |
 | **Root Methods** |
 | KernelSU-Next | ✅ | Recommended |
-| WildKSU | ✅ | Popular |
-| SukiSU | ✅ | Experimental |
-| ReSukiSU | ✅ | Beta |
 | **Tech Specs** |
 | Bypass KMI Strict | ✅ | Kompatibel dengan modul vendor bawaan |
 | OEM Hash Locked | ✅ | Anti bootloop karena mismatch base version |

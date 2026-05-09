@@ -226,23 +226,12 @@ jobs:
           cd kernel
           KSU_METHOD="${{ inputs.ksu_method }}"
           echo "Installing KSU variant: $KSU_METHOD"
-          case "$KSU_METHOD" in
-            kernelsu-next)
-              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s builtin
-              ;;
-            wildksu)
-              curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/canary/kernel/setup.sh" | bash -s builtin
-              ;;
-            sukisu)
-              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-              ;;
-            rsukisu)
-              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s builtin
-              ;;
-            kowsu)
-              curl -LSs "https://raw.githubusercontent.com/deepongi-labs/KernelSU-KoWSU/master/kernel/setup.sh" | bash -s builtin
-              ;;
-          esac
+          if [ "$KSU_METHOD" = "kernelsu-next" ]; then
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s builtin
+          else
+            echo "Unsupported KSU method: $KSU_METHOD. Only kernelsu-next is supported."
+            exit 1
+          fi
           # Get KSU version for naming
           if [ -d "KernelSU" ]; then
             KSU_VERSION=$(cd KernelSU && git rev-list --count HEAD)
@@ -535,13 +524,7 @@ jobs:
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
 
-          case "$KSU_METHOD" in
-            kernelsu-next) ROOT_SHORT="KSUNext" ;;
-            wildksu) ROOT_SHORT="WildKSU" ;;
-            sukisu) ROOT_SHORT="SukiSU" ;;
-            rsukisu) ROOT_SHORT="ReSukiSU" ;;
-            kowsu) ROOT_SHORT="KoWSU" ;;
-          esac
+          ROOT_SHORT="KSUNext"
           # Capitalize first letter of governor for artifact name
           GOV_SHORT="$(tr '[:lower:]' '[:upper:]' <<< ${GOVERNOR:0:1})${GOVERNOR:1}"
 
