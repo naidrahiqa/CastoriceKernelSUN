@@ -148,14 +148,14 @@ jobs:
           smart_extract() {
             local archive="$1" dest="$2"
             mkdir -p "$dest"
-            # Check if archive has a top-level directory
-            local top_dirs=$(tar -tf "$archive" | head -50 | grep -oP '^[^/]+/' | sort -u | wc -l)
-            if [ "$top_dirs" -eq 1 ]; then
+            # Check if archive has a top-level bin/clang or ./bin/clang
+            # Suppress stderr to avoid "tar: stdout: write error" when grep exits early
+            if tar -tf "$archive" 2>/dev/null | grep -qE '^\.?/?bin/clang$'; then
+              echo "  → Archive is flat (bin/clang at root), extracting directly"
+              tar -xf "$archive" -C "$dest"
+            else
               echo "  → Archive is nested, using --strip-components=1"
               tar -xf "$archive" -C "$dest" --strip-components=1
-            else
-              echo "  → Archive is flat, extracting directly"
-              tar -xf "$archive" -C "$dest"
             fi
             rm -f "$archive"
           }
@@ -317,7 +317,8 @@ jobs:
           fi
           
           # Verify critical KSU source files exist
-          for f in ksu.c allowlist.c sucompat.c Kconfig Makefile; do
+          # KSU-Next restructured their source, so ksu.c is not at root anymore.
+          for f in Kconfig Makefile; do
             if [ ! -f "$KSU_DIR/$f" ]; then
               echo "❌ ERROR: $KSU_DIR/$f not found!"
               echo "Contents of $KSU_DIR:"
@@ -326,6 +327,12 @@ jobs:
             fi
           done
           
+          # Verify we have actual source files
+          if ! ls $KSU_DIR/*.c 1> /dev/null 2>&1 && [ ! -d "$KSU_DIR/core" ]; then
+            echo "❌ ERROR: No .c files or core/ directory found in $KSU_DIR!"
+            exit 1
+          fi
+
           # Ensure drivers/Makefile has KSU entry
           if ! grep -q 'CONFIG_KSU' drivers/Makefile; then
             echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
