@@ -144,8 +144,8 @@ jobs:
 
           # Collect selected SUSFS variants
           variants = []
-          if "${{ inputs.build_no_susfs }}" == "true": variants.append(False)
-          if "${{ inputs.build_susfs }}" == "true": variants.append(True)
+          if "${{ inputs.build_no_susfs }}" == "true": variants.append("false")
+          if "${{ inputs.build_susfs }}" == "true": variants.append("true")
 
           if not roots:
               raise SystemExit("❌ No root method selected!")
@@ -156,7 +156,7 @@ jobs:
 
           include = []
           for susfs in variants:
-              workflow = "build_gki_susfs.yml" if susfs else "build_gki.yml"
+              workflow = "build_gki_susfs.yml" if susfs == "true" else "build_gki.yml"
               for root in roots:
                   for gov in govs:
                       include.append({
@@ -182,7 +182,7 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   trigger:
-    name: "🚀 ${{ matrix.susfs && 'GKI+SUSFS' || 'GKI' }}-${{ matrix.ksu_method }}-${{ matrix.cpu_governor }}"
+    name: "🚀 ${{ matrix.susfs == 'true' && 'GKI+SUSFS' || 'GKI' }}-${{ matrix.ksu_method }}-${{ matrix.cpu_governor }}"
     needs: prepare
     strategy:
       fail-fast: false

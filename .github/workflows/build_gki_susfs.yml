@@ -73,7 +73,7 @@ jobs:
   call-core:
     uses: ./.github/workflows/_build_kernel_core.yml
     with:
-      with_susfs: true
+      with_susfs: 'true'
       custom_name: ${{ inputs.custom_name }}
       author_name: ${{ inputs.author_name }}
       ksu_method: ${{ inputs.ksu_method }}

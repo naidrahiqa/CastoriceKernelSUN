@@ -5,7 +5,7 @@ on:
     inputs:
       with_susfs:
         required: true
-        type: boolean
+        type: string
       custom_name:
         required: true
         type: string
@@ -48,7 +48,7 @@ env:
 
 jobs:
   build:
-    name: "Build GKI ${{ inputs.with_susfs && '+ SUSFS ' || '' }}(${{ inputs.ksu_method }})"
+    name: "Build GKI ${{ inputs.with_susfs == 'true' && '+ SUSFS ' || '' }}(${{ inputs.ksu_method }})"
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -215,7 +215,7 @@ jobs:
 
       # REFACTOR: Conditional SUSFS Setup
       - name: Setup SUSFS
-        if: inputs.with_susfs == true
+        if: inputs.with_susfs == 'true'
         run: |
           # FIX B: Tambahkan set -euo pipefail (sudah ada)
           set -euo pipefail
@@ -490,7 +490,7 @@ jobs:
             TOOLCHAIN_SHORT="${TOOLCHAIN_NAME}${CLANG_VER}"
           fi
 
-          SUSFS_STR="${{ inputs.with_susfs == true && 'SUSFS' || 'NoSUSFS' }}"
+          SUSFS_STR="${{ inputs.with_susfs == 'true' && 'SUSFS' || 'NoSUSFS' }}"
           
           BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-${SUSFS_STR}-${GOV_SHORT}-${{ inputs.tuning_profile }}-${{ inputs.safety_profile }}-${TOOLCHAIN_SHORT}-Redmi12"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
@@ -523,7 +523,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: "Castorice-GKI-6.6-${{ inputs.with_susfs == true && 'SUSFS-' || '' }}${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}"
+          name: "Castorice-GKI-6.6-${{ inputs.with_susfs == 'true' && 'SUSFS-' || '' }}${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}"
           path: dist/*.zip
           if-no-files-found: warn
           retention-days: 30
@@ -539,10 +539,10 @@ jobs:
             
             | Info | Value |
             |------|-------|
-            | **Type** | GKI 6.6 ${{ inputs.with_susfs == true && '+ SUSFS' || '(No SUSFS)' }} |
+            | **Type** | GKI 6.6 ${{ inputs.with_susfs == 'true' && '+ SUSFS' || '(No SUSFS)' }} |
             | **Root** | ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }} |
             | **Governor** | ${{ inputs.cpu_governor }} |
-            | **SUSFS** | ${{ inputs.with_susfs == true && 'Yes' || 'No' }} |
+            | **SUSFS** | ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }} |
             | **Toolchain** | ${{ inputs.clang_toolchain }} |
           files: dist/*.zip
           draft: false
