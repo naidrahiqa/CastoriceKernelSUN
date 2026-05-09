@@ -145,19 +145,58 @@ jobs:
           cd prebuilts/clang/host/linux-x86
           TOOLCHAIN="${{ inputs.clang_toolchain }}"
           # Helper: Smart tar extraction (handles both flat and nested archives)
+          # Strategy: Extract first with --strip-components=1, then verify.
+          # If clang is missing, re-extract without strip.
           smart_extract() {
             local archive="$1" dest="$2"
             mkdir -p "$dest"
-            # Check if archive has a top-level bin/clang or ./bin/clang
-            # Suppress stderr to avoid "tar: stdout: write error" when grep exits early
-            if tar -tf "$archive" 2>/dev/null | grep -qE '^\.?/?bin/clang$'; then
-              echo "  → Archive is flat (bin/clang at root), extracting directly"
-              tar -xf "$archive" -C "$dest"
-            else
-              echo "  → Archive is nested, using --strip-components=1"
-              tar -xf "$archive" -C "$dest" --strip-components=1
+            
+            # Attempt 1: Try nested (most common) - strip top-level dir
+            echo "  → Attempt 1: Extracting with --strip-components=1..."
+            tar -xf "$archive" -C "$dest" --strip-components=1 2>/dev/null
+            
+            if [ -f "$dest/bin/clang" ] || [ -L "$dest/bin/clang" ]; then
+              echo "  ✅ Found bin/clang after strip (nested archive)"
+              rm -f "$archive"
+              return 0
             fi
+            
+            # Attempt 2: Clean and try flat (no strip)
+            echo "  → Attempt 1 failed. Trying flat extraction..."
+            rm -rf "$dest"/*
+            tar -xf "$archive" -C "$dest" 2>/dev/null
+            
+            if [ -f "$dest/bin/clang" ] || [ -L "$dest/bin/clang" ]; then
+              echo "  ✅ Found bin/clang (flat archive)"
+              rm -f "$archive"
+              return 0
+            fi
+            
+            # Attempt 3: Search for clang binary anywhere in extracted tree
+            echo "  → Attempt 2 failed. Searching for clang binary..."
+            local found_clang=$(find "$dest" -name "clang" -type f -o -name "clang" -type l | head -n1)
+            if [ -n "$found_clang" ]; then
+              local found_dir=$(dirname "$(dirname "$found_clang")")
+              echo "  → Found clang at: $found_clang"
+              echo "  → Restructuring from: $found_dir"
+              if [ "$found_dir" != "$dest" ]; then
+                # Move contents from the found directory up to dest
+                local tmpdir=$(mktemp -d)
+                mv "$found_dir"/* "$tmpdir/"
+                rm -rf "$dest"/*
+                mv "$tmpdir"/* "$dest/"
+                rm -rf "$tmpdir"
+              fi
+              echo "  ✅ Restructured successfully"
+              rm -f "$archive"
+              return 0
+            fi
+            
+            echo "  ❌ ERROR: Could not find clang binary in archive!"
+            echo "  Archive contents (first 30 entries):"
+            tar -tf "$archive" 2>/dev/null | head -30 || true
             rm -f "$archive"
+            return 1
           }
 
           case "$TOOLCHAIN" in
@@ -202,10 +241,8 @@ jobs:
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$NEUTRON_ASSET"
               smart_extract clang.tar.gz clang-neutron
               CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-neutron"
-              CLANG_VER=$($CLANG_PATH/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
               echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=NeutronClang" >> $GITHUB_ENV
-              echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
               ;;
             *)
               echo "❌ ERROR: Unknown toolchain: $TOOLCHAIN"
@@ -216,8 +253,8 @@ jobs:
           # VALIDATION: Verify clang binary exists
           if [ ! -f "$CLANG_PATH/bin/clang" ]; then
             echo "❌ ERROR: clang binary not found at $CLANG_PATH/bin/clang"
-            echo "Directory contents:"
-            ls -la "$CLANG_PATH/bin/" || ls -la "$CLANG_PATH/" || true
+            echo "🔍 Searching for clang binary in $CLANG_PATH:"
+            find "$CLANG_PATH" -name "clang*" | head -n 10 || true
             exit 1
           fi
           
@@ -819,7 +856,7 @@ jobs:
           append_body: true
 
       - name: Send to Telegram
-        if: always()
+        if: success()
         env:
           TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
