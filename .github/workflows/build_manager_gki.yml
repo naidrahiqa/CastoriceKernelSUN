@@ -200,6 +200,7 @@ jobs:
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 8
     uses: ./.github/workflows/_build_kernel_core.yml
+    secrets: inherit
     with:
       with_susfs: ${{ matrix.susfs }}
       custom_name: ${{ inputs.custom_name }}
