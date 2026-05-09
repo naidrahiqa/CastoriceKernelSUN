@@ -199,6 +199,8 @@ jobs:
           echo "   Governor: ${{ matrix.cpu_governor }}"
           echo "   SUSFS: ${{ matrix.susfs }}"
 
+          # FIX: Menunggu build selesai alih-alih fire-and-forget
+          # Trigger workflow
           gh workflow run "${{ matrix.workflow }}" \
             --repo "${{ github.repository }}" \
             --ref "${{ github.ref_name }}" \
@@ -210,6 +212,25 @@ jobs:
             -f safety_profile="${{ inputs.safety_profile }}" \
             -f clang_toolchain="${{ inputs.clang_toolchain }}" \
             -f release_tag="${{ inputs.release_tag }}"
+
+          # Tunggu run terdaftar
+          sleep 10
+
+          # Ambil run ID terbaru
+          RUN_ID=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "${{ matrix.workflow }}" \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')
+
+          echo "Triggered run ID: $RUN_ID"
+
+          # Tunggu sampai selesai, exit non-zero kalau gagal
+          gh run watch "$RUN_ID" \
+            --repo "${{ github.repository }}" \
+            --exit-status \
+            --interval 60
 
   summary:
     name: "📊 Summary"
