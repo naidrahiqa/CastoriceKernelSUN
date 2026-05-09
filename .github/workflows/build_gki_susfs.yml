@@ -16,51 +16,31 @@ on:
         required: true
         type: choice
         default: "kernelsu-next"
-        options:
-          - kernelsu-next
-          - wildksu
-          - sukisu
-          - rsukisu
-          - kowsu
+        options: [kernelsu-next, wildksu, sukisu, rsukisu, kowsu]
       cpu_governor:
         description: "CPU Governor"
         required: true
         type: choice
         default: "schedutil"
-        options:
-          - schedutil
-          - performance
-          - ondemand
-          - conservative
+        options: [schedutil, performance, ondemand, conservative]
       safety_profile:
         description: "Boot safety profile"
         required: true
         type: choice
         default: "stable"
-        options:
-          - stable
-          - performance
+        options: [stable, performance]
       tuning_profile:
         description: "Tuning profile"
         required: true
         type: choice
         default: "balanced"
-        options:
-          - balanced
-          - gaming
-          - social_media
+        options: [balanced, gaming, social_media]
       clang_toolchain:
         description: "Clang Toolchain"
         required: true
         type: choice
         default: "bazel-default"
-        options:
-          - bazel-default
-          - aosp-latest
-          - zyc-latest
-          - weebx-latest
-          - neutron-latest
-          - azure-latest
+        options: [bazel-default, aosp-latest, zyc-latest, weebx-latest, neutron-latest, azure-latest]
       release_tag:
         description: "Release Tag"
         required: true
@@ -71,9 +51,12 @@ permissions:
 
 jobs:
   call-core:
+    name: "Build GKI + SUSFS (${{ inputs.ksu_method }})"
     uses: ./.github/workflows/_build_kernel_core.yml
+    permissions:
+      contents: write
     with:
-      with_susfs: 'true'
+      with_susfs: "true"
       custom_name: ${{ inputs.custom_name }}
       author_name: ${{ inputs.author_name }}
       ksu_method: ${{ inputs.ksu_method }}
@@ -82,4 +65,3 @@ jobs:
       tuning_profile: ${{ inputs.tuning_profile }}
       clang_toolchain: ${{ inputs.clang_toolchain }}
       release_tag: ${{ inputs.release_tag }}
-    secrets: inherit
