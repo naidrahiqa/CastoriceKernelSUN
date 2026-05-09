@@ -421,7 +421,7 @@ jobs:
               -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
             for artifact in Image Image.gz Image.lz4; do
               if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
-                FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1)
+                FOUND=$(find bazel-out -name "$artifact" -type f 2>/dev/null | head -n 1 || true)
                 [ -n "$FOUND" ] && cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/" || true
               fi
             done

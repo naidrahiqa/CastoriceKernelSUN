@@ -184,53 +184,22 @@ jobs:
   trigger:
     name: "🚀 ${{ matrix.susfs && 'GKI+SUSFS' || 'GKI' }}-${{ matrix.ksu_method }}-${{ matrix.cpu_governor }}"
     needs: prepare
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 8
-    steps:
-      - name: "🔄 Trigger ${{ matrix.workflow }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "🚀 Triggering: ${{ matrix.workflow }}"
-          echo "   Root: ${{ matrix.ksu_method }}"
-          echo "   Governor: ${{ matrix.cpu_governor }}"
-          echo "   SUSFS: ${{ matrix.susfs }}"
-
-          # FIX: Menunggu build selesai alih-alih fire-and-forget
-          # Trigger workflow
-          gh workflow run "${{ matrix.workflow }}" \
-            --repo "${{ github.repository }}" \
-            --ref "${{ github.ref_name }}" \
-            -f custom_name="${{ inputs.custom_name }}" \
-            -f author_name="${{ inputs.author_name }}" \
-            -f ksu_method="${{ matrix.ksu_method }}" \
-            -f cpu_governor="${{ matrix.cpu_governor }}" \
-            -f tuning_profile="${{ inputs.tuning_profile }}" \
-            -f safety_profile="${{ inputs.safety_profile }}" \
-            -f clang_toolchain="${{ inputs.clang_toolchain }}" \
-            -f release_tag="${{ inputs.release_tag }}"
-
-          # Tunggu run terdaftar
-          sleep 10
-
-          # Ambil run ID terbaru
-          RUN_ID=$(gh run list \
-            --repo "${{ github.repository }}" \
-            --workflow "${{ matrix.workflow }}" \
-            --limit 1 \
-            --json databaseId \
-            --jq '.[0].databaseId')
-
-          echo "Triggered run ID: $RUN_ID"
-
-          # Tunggu sampai selesai, exit non-zero kalau gagal
-          gh run watch "$RUN_ID" \
-            --repo "${{ github.repository }}" \
-            --exit-status \
-            --interval 60
+    uses: ./.github/workflows/_build_kernel_core.yml
+    with:
+      with_susfs: ${{ matrix.susfs }}
+      custom_name: ${{ inputs.custom_name }}
+      author_name: ${{ inputs.author_name }}
+      ksu_method: ${{ matrix.ksu_method }}
+      cpu_governor: ${{ matrix.cpu_governor }}
+      safety_profile: ${{ inputs.safety_profile }}
+      tuning_profile: ${{ inputs.tuning_profile }}
+      clang_toolchain: ${{ inputs.clang_toolchain }}
+      release_tag: ${{ inputs.release_tag }}
+    secrets: inherit
 
   summary:
     name: "📊 Summary"
