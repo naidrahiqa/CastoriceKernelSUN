@@ -432,6 +432,25 @@ jobs:
             echo "✅ SUSFS files validated successfully"
           fi
 
+      - name: Apply Custom Patches
+        run: |
+          cd kernel/common
+          if [ -d "$GITHUB_WORKSPACE/patches" ]; then
+            echo "Applying custom patches from workspace..."
+            # Check if there are any .patch files
+            if ls $GITHUB_WORKSPACE/patches/*.patch 1> /dev/null 2>&1; then
+              for patch_file in $GITHUB_WORKSPACE/patches/*.patch; do
+                echo "Applying $patch_file"
+                # Use --forward to avoid reversing already applied patches
+                patch -p1 --forward --no-backup-if-mismatch < "$patch_file" || echo "  ⚠️ Patch failed or already applied (skipping)"
+              done
+            else
+              echo "No .patch files found."
+            fi
+          else
+            echo "No patches directory found."
+          fi
+
       # REFACTOR: Shared Kernel Configuration (with SUSFS injection if enabled)
       - name: Configure Kernel
         run: |
@@ -494,39 +513,54 @@ jobs:
           sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_${GOV_UPPER}=y"
 
-          # ── Safe Baseline Optimizations ──
+          # ── Ultimate Kernel Optimizations ──
           echo "" >> "$DEFCONFIG"
-          echo "# TCP BBR Congestion Control" >> "$DEFCONFIG"
+          echo "# 1. UX & Input Latency Optimizations" >> "$DEFCONFIG"
+          # Global HZ_1000 for butter smooth UI and 1ms input latency
+          add_cfg "CONFIG_HZ_1000=y"
+          add_cfg "CONFIG_HZ=1000"
+          add_cfg "CONFIG_HZ_250=n"
+          add_cfg "CONFIG_HZ_300=n"
+          # Global Preemption for UI responsiveness
+          add_cfg "CONFIG_PREEMPT=y"
+          add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
+          add_cfg "CONFIG_PREEMPT_NONE=n"
+          add_cfg "CONFIG_RCU_BOOST=y"
+          add_cfg "CONFIG_HIGH_RES_TIMERS=y"
+
+          echo "" >> "$DEFCONFIG"
+          echo "# 2. RAM & Multitasking Optimizations (MGLRU & ZRAM)" >> "$DEFCONFIG"
+          # MGLRU is critical for Android 15 RAM management
+          add_cfg "CONFIG_LRU_GEN=y"
+          add_cfg "CONFIG_LRU_GEN_ENABLED=y"
+          # Optimize ZRAM and compression
+          add_cfg "CONFIG_ZRAM=y"
+          add_cfg "CONFIG_ZSMALLOC=y"
+          add_cfg "CONFIG_CRYPTO_LZ4=y"
+          add_cfg "CONFIG_CRYPTO_ZSTD=y"
+
+          echo "" >> "$DEFCONFIG"
+          echo "# 3. Network & Storage" >> "$DEFCONFIG"
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
           add_cfg "CONFIG_TCP_CONG_BBR=y"
           add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
-
-          echo "" >> "$DEFCONFIG"
-          echo "# I/O Scheduler - BFQ" >> "$DEFCONFIG"
           add_cfg "CONFIG_IOSCHED_BFQ=y"
           add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
 
           echo "" >> "$DEFCONFIG"
-          echo "# Timers & Preemption" >> "$DEFCONFIG"
-          add_cfg "CONFIG_HIGH_RES_TIMERS=y"
+          echo "# 4. Disable Heavy Debugging (Save RAM & CPU)" >> "$DEFCONFIG"
+          add_cfg "CONFIG_SLUB_DEBUG=n"
+          add_cfg "CONFIG_DEBUG_KMEMLEAK=n"
+          add_cfg "CONFIG_PAGE_POISONING=n"
 
           if [ "$SAFETY_PROFILE" = "performance" ]; then
             echo "" >> "$DEFCONFIG"
-            echo "# Performance Profile" >> "$DEFCONFIG"
-            add_cfg "CONFIG_HZ_1000=y"
-            add_cfg "CONFIG_HZ=1000"
-            add_cfg "CONFIG_HZ_250=n"
-            add_cfg "CONFIG_HZ_300=n"
-            add_cfg "CONFIG_PREEMPT=y"
-            add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
-            add_cfg "CONFIG_PREEMPT_NONE=n"
+            echo "# 5. Performance Tuning Profile" >> "$DEFCONFIG"
             if [ "$TUNING_PROFILE" = "gaming" ]; then
-              echo "# Gaming Tuning" >> "$DEFCONFIG"
               add_cfg "CONFIG_SCHED_AUTOGROUP=y"
             elif [ "$TUNING_PROFILE" = "social_media" ]; then
-              echo "# Social Media Tuning" >> "$DEFCONFIG"
               add_cfg "CONFIG_COMPACTION=y"
             fi
           fi
@@ -776,3 +810,26 @@ jobs:
           draft: false
           prerelease: false
           append_body: true
+
+      - name: Send to Telegram
+        if: always()
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "Telegram secrets not set. Skipping Telegram notification."
+            exit 0
+          fi
+          ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No zip file found to upload."
+            exit 0
+          fi
+          echo "Uploading $ZIP_FILE to Telegram..."
+          CAPTION="🚀 *New Castorice Kernel Build!*%0A%0A*Name:* ${{ inputs.custom_name }} v${{ github.run_number }}%0A*Root:* ${{ inputs.ksu_method }}%0A*Governor:* ${{ inputs.cpu_governor }}%0A*SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}%0A*Toolchain:* ${{ inputs.clang_toolchain }}%0A%0A[Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
+            -F chat_id="${TG_CHAT_ID}" \
+            -F document=@"${ZIP_FILE}" \
+            -F caption="${CAPTION}" \
+            -F parse_mode="Markdown"
