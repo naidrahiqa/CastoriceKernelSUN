@@ -44,6 +44,7 @@ env:
   ZIP_NAME: ""
   TOOLCHAIN_NAME: ""
   TOOLCHAIN_VER: ""
+  BUILD_TIME: ""
 
 jobs:
   build:
@@ -101,10 +102,19 @@ jobs:
           TOOLCHAIN="${{ inputs.clang_toolchain }}"
           case "$TOOLCHAIN" in
             zyc-latest)
-              # FIX: Gunakan GitHub API yang lebih stabil daripada scraping HTML
-              ZYASSET_URL=$(curl -sL "https://api.github.com/repos/ZyCromerZ/Clang/releases/latest" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url' | head -n1)
+              echo "Downloading ZyClang..."
+              ZYASSET_URL=$(curl -sL \
+                "https://api.github.com/repos/ZyCromerZ/Clang/releases/latest" \
+                | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url' \
+                | head -n1)
+              if [ -z "$ZYASSET_URL" ]; then
+                echo "ERROR: Failed to get ZyClang download URL" && exit 1
+              fi
+              echo "Downloading from: $ZYASSET_URL"
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$ZYASSET_URL"
-              mkdir -p clang-zyc && tar -xf clang.tar.gz -C clang-zyc --strip-components=1 && rm clang.tar.gz
+              mkdir -p clang-zyc
+              tar -xf clang.tar.gz -C clang-zyc --strip-components=1
+              rm clang.tar.gz
               echo "CUSTOM_CLANG_PATH=$(pwd)/clang-zyc" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
               ;;
