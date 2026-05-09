@@ -4,6 +4,8 @@
 
 Dokumen ini berisi detail semua perbaikan yang telah dilakukan pada workflow GitHub Actions untuk mencegah error saat build dan bootloop saat flash ke HP.
 
+**Total Fixes:** 7 issues (5 original + 2 new)
+
 ---
 
 ## ✅ FIXES YANG SUDAH DITERAPKAN
@@ -203,6 +205,102 @@ for susfs in variants:
 
 ---
 
+### 🔴 **FIX #6: Custom Toolchain - Absolute Path untuk CUSTOM_CLANG_PATH**
+**File:** `.github/workflows/_build_kernel_core.yml`  
+**Lokasi:** Step "Download Custom Toolchain"
+
+**Masalah:**
+- `CUSTOM_CLANG_PATH` menggunakan **relative path** `$(pwd)`
+- Ketika `cd` ke directory lain, path menjadi invalid
+- Error: **"C compiler 'clang' not found"**
+
+**Sebelum:**
+```bash
+cd prebuilts/clang/host/linux-x86
+echo "CUSTOM_CLANG_PATH=$(pwd)/clang-zyc" >> $GITHUB_ENV
+# $(pwd) = prebuilts/clang/host/linux-x86 (relative)
+```
+
+**Sesudah:**
+```bash
+cd prebuilts/clang/host/linux-x86
+CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-zyc"
+echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
+# Absolute path yang tidak berubah
+
+# VALIDATION: Verify clang binary exists
+if [ ! -f "$CLANG_PATH/bin/clang" ]; then
+  echo "❌ ERROR: clang binary not found at $CLANG_PATH/bin/clang"
+  exit 1
+fi
+```
+
+**Dampak:**
+- ✅ `CUSTOM_CLANG_PATH` selalu absolute path
+- ✅ Clang binary bisa ditemukan dari directory manapun
+- ✅ Validasi clang binary setelah download
+
+**Risiko Build Failure:** 🔴 **HIGH** → 🟢 **FIXED**
+
+---
+
+### 🔴 **FIX #7: Custom Toolchain Build - Tambah Validasi PATH**
+**File:** `.github/workflows/_build_kernel_core.yml`  
+**Lokasi:** Step "Build Kernel (Custom Toolchain)"
+
+**Masalah:**
+- Tidak ada validasi apakah `CUSTOM_CLANG_PATH` ter-set
+- Tidak ada validasi apakah clang binary exist
+- Error tidak jelas: "C compiler 'clang' not found"
+
+**Sebelum:**
+```bash
+cd kernel/common
+export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
+make $MAKE_ARGS gki_defconfig
+# Langsung make tanpa validasi
+```
+
+**Sesudah:**
+```bash
+cd kernel/common
+
+# VALIDATION: Check if CUSTOM_CLANG_PATH is set
+if [ -z "${CUSTOM_CLANG_PATH:-}" ]; then
+  echo "❌ ERROR: CUSTOM_CLANG_PATH not set!"
+  exit 1
+fi
+
+if [ ! -d "$CUSTOM_CLANG_PATH/bin" ]; then
+  echo "❌ ERROR: $CUSTOM_CLANG_PATH/bin directory not found!"
+  exit 1
+fi
+
+# Verify clang exists
+if [ ! -f "$CUSTOM_CLANG_PATH/bin/clang" ]; then
+  echo "❌ ERROR: clang binary not found in $CUSTOM_CLANG_PATH/bin/"
+  ls -la "$CUSTOM_CLANG_PATH/bin/" || true
+  exit 1
+fi
+
+export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
+
+# Verify clang is in PATH
+which clang || { echo "❌ ERROR: clang not in PATH after export!"; exit 1; }
+clang --version
+
+make $MAKE_ARGS gki_defconfig
+```
+
+**Dampak:**
+- ✅ Fail early dengan error message yang jelas
+- ✅ Validasi setiap step sebelum build
+- ✅ Debug info (clang version, directory listing)
+
+**Risiko Build Failure:** 🔴 **HIGH** → 🟢 **FIXED**
+
+---
+
 ## 📊 RINGKASAN RISIKO
 
 | Issue | Sebelum | Sesudah | Status |
@@ -212,6 +310,8 @@ for susfs in variants:
 | **KMI Mismatch** | 🟡 MEDIUM | 🟢 FIXED | ✅ |
 | **SUSFS Patch Failure** | 🟡 MEDIUM | 🟢 FIXED | ✅ |
 | **Unused Variable** | 🟢 LOW | 🟢 FIXED | ✅ |
+| **Custom Toolchain Path** | 🔴 HIGH | 🟢 FIXED | ✅ |
+| **Clang Not Found** | 🔴 HIGH | 🟢 FIXED | ✅ |
 
 ---
 
