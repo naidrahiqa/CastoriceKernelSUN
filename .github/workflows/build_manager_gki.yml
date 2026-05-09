@@ -211,7 +211,6 @@ jobs:
       tuning_profile: ${{ inputs.tuning_profile }}
       clang_toolchain: ${{ matrix.clang_toolchain }}
       release_tag: ${{ inputs.release_tag }}
-    secrets: inherit
 
   summary:
     name: "📊 Summary"
