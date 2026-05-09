@@ -118,7 +118,7 @@ jobs:
           echo "$HOME/bin" >> $GITHUB_PATH
 
       - name: Download Custom Toolchain
-        if: inputs.clang_toolchain != 'bazel-default'
+        if: inputs.clang_toolchain != 'bazel-default' && inputs.clang_toolchain != ''
         run: |
           mkdir -p prebuilts/clang/host/linux-x86
           cd prebuilts/clang/host/linux-x86
@@ -217,7 +217,7 @@ jobs:
             wildksu)  git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git -b canary KernelSU ;;
             sukisu)   git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git -b main KernelSU ;;
             rsukisu)  git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git -b main KernelSU ;;
-            kowsu)    git clone --depth=1 https://github.com/deepongi-labs/KernelSU-KoWSU.git -b main KernelSU ;;
+            kowsu)    git clone --depth=1 https://github.com/deepongi-labs/KernelSU-KoWSU.git -b master KernelSU ;;
           esac
           cp -r "$(pwd)/KernelSU/kernel" "drivers/kernelsu"
           rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
@@ -406,7 +406,7 @@ jobs:
 
       # REFACTOR: Shared Build & Package
       - name: Build Kernel (Bazel)
-        if: inputs.clang_toolchain == 'bazel-default'
+        if: inputs.clang_toolchain == 'bazel-default' || inputs.clang_toolchain == ''
         run: |
           set -euo pipefail
           cd kernel
@@ -416,7 +416,7 @@ jobs:
           SOURCE_DATE_EPOCH: "0"
 
       - name: Build Kernel (Custom Toolchain)
-        if: inputs.clang_toolchain != 'bazel-default'
+        if: inputs.clang_toolchain != 'bazel-default' && inputs.clang_toolchain != ''
         run: |
           set -euo pipefail
           cd kernel/common
@@ -438,7 +438,7 @@ jobs:
           # FIX B: Tambahkan set -euo pipefail
           set -euo pipefail
           mkdir -p $GITHUB_WORKSPACE/dist
-          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
+          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             cd kernel
             tools/bazel run --config=fast //common:kernel_aarch64_dist \
               -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
@@ -506,7 +506,7 @@ jobs:
             conservative) GOV_SHORT="Conservative" ;;
           esac
 
-          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ]; then
+          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             TOOLCHAIN_SHORT="Bazel"
           else
             CLANG_VER=$($CUSTOM_CLANG_PATH/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
