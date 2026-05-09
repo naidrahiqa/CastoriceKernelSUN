@@ -57,7 +57,7 @@ on:
         options:
           - aosp-latest
           - zyc-latest
-          - proton-latest
+          - weebx-latest
           - neutron-latest
           - azure-latest
       release_tag:
@@ -117,9 +117,11 @@ jobs:
               git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r522817.git clang
               echo "TOOLCHAIN_NAME=AOSPClang" >> $GITHUB_ENV
               ;;
-            proton-latest)
-              git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
-              echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
+            weebx-latest)
+              WEEBX_URL=$(curl -s https://api.github.com/repos/XSans0/WeebX-Clang/releases/latest | jq -r '.assets[] | select(.name | contains("WeebX-Clang")) | .browser_download_url' | head -n1)
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "$WEEBX_URL"
+              tar -xf clang.tar.gz -C clang && rm clang.tar.gz
+              echo "TOOLCHAIN_NAME=WeebXClang" >> $GITHUB_ENV
               ;;
             azure-latest)
               git clone --depth=1 https://gitlab.com/Panchajanya1999/azure-clang.git clang

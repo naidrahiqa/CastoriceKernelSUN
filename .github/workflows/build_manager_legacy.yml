@@ -103,7 +103,7 @@ on:
         options:
           - aosp-latest
           - zyc-latest
-          - proton-latest
+          - weebx-latest
           - neutron-latest
           - azure-latest
 
