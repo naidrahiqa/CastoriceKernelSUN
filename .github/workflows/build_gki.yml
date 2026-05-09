@@ -179,7 +179,11 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest \
             -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
-          cd common && make kernelversion
+          cd common
+          # 🚨 MAGIC TRICK: Lock to exact Xiaomi OEM commit to prevent Bootloop!
+          git fetch https://android.googlesource.com/kernel/common 33c1ba9ffede
+          git checkout FETCH_HEAD
+          make kernelversion
 
       - name: Set KMI Generation
         run: |
