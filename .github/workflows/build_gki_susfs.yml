@@ -21,6 +21,7 @@ on:
           - wildksu
           - sukisu
           - rsukisu
+          - kowsu
       cpu_governor:
         description: "CPU Governor"
         required: true
@@ -55,9 +56,11 @@ on:
         default: "bazel-default"
         options:
           - bazel-default
+          - aosp-latest
           - zyc-latest
           - proton-latest
           - neutron-latest
+          - azure-latest
       release_tag:
         description: "Release Tag"
         required: true
@@ -122,19 +125,25 @@ jobs:
             zyc-latest)
               ZYCLANG=$(curl -sI https://github.com/ZyCromerZ/Clang/releases/latest | awk -F/ '/location:/ {print $NF}' | tr -d '\r')
               ZYASSET=$(curl -sL "https://github.com/ZyCromerZ/Clang/releases/expanded_assets/$ZYCLANG" | grep -oP '[^/"]+\.tar.gz' | head -n1)
-              aria2c -x16 -s16 -k1M -o zyclang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
-              mkdir -p clang-zyc && tar -xf zyclang.tar.gz -C clang-zyc && rm zyclang.tar.gz
-              CLANG_VER=$(clang-zyc/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+              aria2c -x16 -s16 -k1M -o clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
+              mkdir -p clang-zyc && tar -xf clang.tar.gz -C clang-zyc && rm clang.tar.gz
               echo "CUSTOM_CLANG_PATH=$(pwd)/clang-zyc" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
-              echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
+              ;;
+            aosp-latest)
+              git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r522817.git clang-aosp
+              echo "CUSTOM_CLANG_PATH=$(pwd)/clang-aosp" >> $GITHUB_ENV
+              echo "TOOLCHAIN_NAME=AOSPClang" >> $GITHUB_ENV
               ;;
             proton-latest)
               git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang-proton
-              CLANG_VER=$(clang-proton/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
               echo "CUSTOM_CLANG_PATH=$(pwd)/clang-proton" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
-              echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
+              ;;
+            azure-latest)
+              git clone --depth=1 https://gitlab.com/Panchajanya1999/azure-clang.git clang-azure
+              echo "CUSTOM_CLANG_PATH=$(pwd)/clang-azure" >> $GITHUB_ENV
+              echo "TOOLCHAIN_NAME=AzureClang" >> $GITHUB_ENV
               ;;
             neutron-latest)
               NEUTRON_ASSET=$(curl -sL https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
@@ -179,6 +188,7 @@ jobs:
             wildksu) git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git -b canary KernelSU ;;
             sukisu) git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git -b main KernelSU ;;
             rsukisu) git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git -b main KernelSU ;;
+            kowsu) git clone --depth=1 https://github.com/deepongi-labs/KernelSU-KoWSU.git -b main KernelSU ;;
           esac
           cp -r "$(pwd)/KernelSU/kernel" "drivers/kernelsu"
           rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
@@ -214,10 +224,12 @@ jobs:
             KSU_PATCH="../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$KSU_PATCH" ]; then
               echo "Applying KernelSU SUSFS patch..."
-              cd "$KSU_KERNEL"
-              git apply --3way -p2 "../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || \
-                patch -p2 --forward --fuzz=3 < "../../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
-              cd ../..
+              # Rewrite patch paths: kernel/ -> drivers/kernelsu/ for our tree layout
+              sed 's|a/kernel/|a/drivers/kernelsu/|g; s|b/kernel/|b/drivers/kernelsu/|g' "$KSU_PATCH" > /tmp/susfs_ksu_fixed.patch
+              git apply --3way /tmp/susfs_ksu_fixed.patch || \
+                patch -p1 --forward --fuzz=3 < /tmp/susfs_ksu_fixed.patch || {
+                echo "WARNING: KSU SUSFS patch did not apply cleanly - some hunks may have failed"
+              }
               echo "KernelSU SUSFS patch applied"
             else
               echo "WARNING: KSU SUSFS patch not found at $KSU_PATCH"
@@ -292,17 +304,99 @@ jobs:
             *) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ;;
           esac
 
+          # ── Baseline Optimizations (all profiles) ──
           echo "" >> $DEFCONFIG
-          echo "# Stability Baseline" >> $DEFCONFIG
+          echo "# Memory Management - MGLRU" >> $DEFCONFIG
+          add_cfg "CONFIG_LRU_GEN=y"
+          add_cfg "CONFIG_LRU_GEN_ENABLED=y"
+          add_cfg "CONFIG_LRU_GEN_STATS=n"
+
+          echo "" >> $DEFCONFIG
+          echo "# ZRAM + ZSTD Compression" >> $DEFCONFIG
+          add_cfg "CONFIG_ZRAM=y"
+          add_cfg "CONFIG_ZRAM_WRITEBACK=y"
+          add_cfg "CONFIG_ZRAM_DEF_COMP_ZSTD=y"
+          add_cfg 'CONFIG_ZRAM_DEF_COMP="zstd"'
+          add_cfg "CONFIG_CRYPTO_ZSTD=y"
+          add_cfg "CONFIG_CRYPTO_LZ4=y"
+          add_cfg "CONFIG_CRYPTO_LZ4HC=y"
+          add_cfg "CONFIG_ZSTD_COMPRESS=y"
+          add_cfg "CONFIG_ZSTD_DECOMPRESS=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# TCP BBR Congestion Control" >> $DEFCONFIG
+          add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
+          add_cfg "CONFIG_TCP_CONG_BBR=y"
+          add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
+          add_cfg "CONFIG_NET_SCH_FQ=y"
+          add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
+          add_cfg "CONFIG_NET_SCH_FQ_CODEL=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# F2FS Filesystem" >> $DEFCONFIG
+          add_cfg "CONFIG_F2FS_FS=y"
+          add_cfg "CONFIG_F2FS_STAT_FS=y"
+          add_cfg "CONFIG_F2FS_FS_XATTR=y"
+          add_cfg "CONFIG_F2FS_FS_POSIX_ACL=y"
+          add_cfg "CONFIG_F2FS_FS_SECURITY=y"
+          add_cfg "CONFIG_F2FS_FS_ENCRYPTION=y"
+          add_cfg "CONFIG_F2FS_FS_COMPRESSION=y"
+          add_cfg "CONFIG_F2FS_FS_LZ4=y"
+          add_cfg "CONFIG_F2FS_FS_ZSTD=y"
+          add_cfg "CONFIG_F2FS_IOSTAT=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# I/O Scheduler - BFQ" >> $DEFCONFIG
+          add_cfg "CONFIG_IOSCHED_BFQ=y"
+          add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
+          add_cfg "CONFIG_BFQ_CGROUP_DEBUG=n"
+          add_cfg "CONFIG_MQ_IOSCHED_DEADLINE=y"
+          add_cfg "CONFIG_MQ_IOSCHED_KYBER=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# Power Efficient Workqueues" >> $DEFCONFIG
+          add_cfg "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# Devfreq & DVFS" >> $DEFCONFIG
+          add_cfg "CONFIG_PM_DEVFREQ=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_PERFORMANCE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_POWERSAVE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_USERSPACE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_PASSIVE=y"
+          add_cfg "CONFIG_ARM_MEMLAT_MON=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# Timers & Preemption" >> $DEFCONFIG
           add_cfg "CONFIG_HIGH_RES_TIMERS=y"
-          add_cfg "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=n"
+          add_cfg "CONFIG_NO_HZ_FULL=y"
+          add_cfg "CONFIG_TICK_CPU_ACCOUNTING=y"
+
+          echo "" >> $DEFCONFIG
+          echo "# Extra Memory Optimizations" >> $DEFCONFIG
+          add_cfg "CONFIG_KSM=y"
+          add_cfg "CONFIG_COMPACTION=y"
+          add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=y"
+          add_cfg "CONFIG_SLAB_FREELIST_RANDOM=y"
 
           if [ "$SAFETY_PROFILE" = "performance" ]; then
-            for cfg in CONFIG_HZ_1000=y CONFIG_HZ=1000 CONFIG_PREEMPT=y CONFIG_ZRAM_WRITEBACK=y CONFIG_CRYPTO_LZ4=y CONFIG_CRYPTO_ZSTD=y CONFIG_KSM=y CONFIG_LRU_GEN=y CONFIG_LRU_GEN_ENABLED=y CONFIG_TCP_CONG_BBR=y 'CONFIG_DEFAULT_TCP_CONG="bbr"' CONFIG_NET_SCH_FQ=y; do add_cfg "$cfg"; done
+            echo "" >> $DEFCONFIG
+            echo "# Performance Profile" >> $DEFCONFIG
+            add_cfg "CONFIG_HZ_1000=y"
+            add_cfg "CONFIG_HZ=1000"
+            add_cfg "CONFIG_HZ_250=n"
+            add_cfg "CONFIG_HZ_300=n"
+            add_cfg "CONFIG_PREEMPT=y"
+            add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
+            add_cfg "CONFIG_PREEMPT_NONE=n"
             if [ "$TUNING_PROFILE" = "gaming" ]; then
-              add_cfg "CONFIG_IOSCHED_BFQ=y"; add_cfg "CONFIG_MQ_IOSCHED_KYBER=y"
+              echo "# Gaming Tuning" >> $DEFCONFIG
+              add_cfg "CONFIG_SCHED_AUTOGROUP=y"
+              add_cfg "CONFIG_CGROUP_PERF=y"
             elif [ "$TUNING_PROFILE" = "social_media" ]; then
-              add_cfg "CONFIG_COMPACTION=y"; add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=y"
+              echo "# Social Media Tuning" >> $DEFCONFIG
+              add_cfg "CONFIG_SCHED_AUTOGROUP=y"
             fi
           fi
 
@@ -389,6 +483,7 @@ jobs:
             wildksu) ROOT_SHORT="WildKSU" ;;
             sukisu) ROOT_SHORT="SukiSU" ;;
             rsukisu) ROOT_SHORT="ReSukiSU" ;;
+            kowsu) ROOT_SHORT="KoWSU" ;;
           esac
           case "$GOVERNOR" in
             schedutil) GOV_SHORT="Schedutil" ;;
@@ -416,7 +511,7 @@ jobs:
             TOOLCHAIN_SUFFIX="${TOOLCHAIN_NAME}"
           fi
 
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-${TOOLCHAIN_SUFFIX}-Redmi12"
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-GKI66-${ROOT_SHORT}-SUSFS-${GOV_SHORT}-${{ inputs.tuning_profile }}-${{ inputs.safety_profile }}-${TOOLCHAIN_SUFFIX}-Redmi12"
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
           KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 SUSFS | ${KSU_METHOD} | ${GOVERNOR} | ${TOOLCHAIN_SUFFIX}] by ${AUTHOR}"
           printf '%s\n' '# AnyKernel3' 'properties() {' "kernel.string=${KERNEL_STRING}" 'do.devicecheck=1' 'do.modules=0' 'do.systemless=1' 'do.cleanup=1' 'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=15' '}' '' 'block=boot;' 'is_slot_device=auto;' 'ramdisk_compression=auto;' 'patch_vbmeta_flag=auto;' '' '. tools/ak3-core.sh;' 'dump_boot;' 'write_boot;' > anykernel.sh

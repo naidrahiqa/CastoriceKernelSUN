@@ -49,6 +49,11 @@ on:
         required: true
         type: boolean
         default: false
+      root_kowsu:
+        description: "🔒 KoWSU"
+        required: true
+        type: boolean
+        default: false
 
       # ───── CPU Governors (checkboxes) ─────
       gov_schedutil:
@@ -97,9 +102,11 @@ on:
         default: "bazel-default"
         options:
           - bazel-default
+          - aosp-latest
           - zyc-latest
           - proton-latest
           - neutron-latest
+          - azure-latest
 
 permissions:
   actions: write
@@ -126,6 +133,7 @@ jobs:
           if "${{ inputs.root_wildksu }}" == "true": roots.append("wildksu")
           if "${{ inputs.root_sukisu }}" == "true": roots.append("sukisu")
           if "${{ inputs.root_rsukisu }}" == "true": roots.append("rsukisu")
+          if "${{ inputs.root_kowsu }}" == "true": roots.append("kowsu")
 
           # Collect selected governors
           govs = []
@@ -180,7 +188,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
-      max-parallel: 3
+      max-parallel: 8
     steps:
       - name: "🔄 Trigger ${{ matrix.workflow }}"
         env:

@@ -21,6 +21,7 @@ on:
           - wildksu
           - sukisu
           - rsukisu
+          - kowsu
       cpu_governor:
         description: "CPU Governor"
         required: true
@@ -54,9 +55,11 @@ on:
         type: choice
         default: "zyc-latest"
         options:
+          - aosp-latest
           - zyc-latest
           - proton-latest
           - neutron-latest
+          - azure-latest
       release_tag:
         description: "Release Tag"
         required: true
@@ -110,9 +113,17 @@ jobs:
               aria2c -x16 -s16 -k1M -o clang.tar.gz "https://github.com/ZyCromerZ/Clang/releases/latest/download/$ZYASSET"
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
               ;;
+            aosp-latest)
+              git clone --depth=1 https://gitlab.com/crdroidandroid/android_prebuilts_clang_host_linux-x86_clang-r522817.git clang
+              echo "TOOLCHAIN_NAME=AOSPClang" >> $GITHUB_ENV
+              ;;
             proton-latest)
               git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
               echo "TOOLCHAIN_NAME=ProtonClang" >> $GITHUB_ENV
+              ;;
+            azure-latest)
+              git clone --depth=1 https://gitlab.com/Panchajanya1999/azure-clang.git clang
+              echo "TOOLCHAIN_NAME=AzureClang" >> $GITHUB_ENV
               ;;
             neutron-latest)
               NEUTRON_URL=$(curl -s https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
@@ -144,6 +155,7 @@ jobs:
             wildksu) git clone --depth=1 https://github.com/WildKernels/Wild_KSU.git -b canary KernelSU ;;
             sukisu) git clone --depth=1 https://github.com/SukiSU-Ultra/SukiSU-Ultra.git -b main KernelSU ;;
             rsukisu) git clone --depth=1 https://github.com/ReSukiSU/ReSukiSU.git -b main KernelSU ;;
+            kowsu) git clone --depth=1 https://github.com/deepongi-labs/KernelSU-KoWSU.git -b main KernelSU ;;
           esac
           cp -r "$(pwd)/KernelSU/kernel" "drivers/kernelsu"
           rm -rf "drivers/kernelsu/include/uapi" "drivers/kernelsu/uapi"
@@ -175,12 +187,13 @@ jobs:
           add_cfg "CONFIG_HAVE_KPROBES=y"
           add_cfg "CONFIG_KPROBE_EVENTS=y"
           echo "" >> $DEFCONFIG
-          echo "# TCP / Net" >> $DEFCONFIG
+          echo "# TCP BBR" >> $DEFCONFIG
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
           add_cfg "CONFIG_TCP_CONG_BBR=y"
           add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
+          add_cfg "CONFIG_NET_SCH_FQ_CODEL=y"
           echo "" >> $DEFCONFIG
           echo "# CPU Governor" >> $DEFCONFIG
           sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
@@ -190,6 +203,44 @@ jobs:
             conservative) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_CONSERVATIVE=y" ;;
             *) add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y" ;;
           esac
+          echo "" >> $DEFCONFIG
+          echo "# ZRAM + ZSTD" >> $DEFCONFIG
+          add_cfg "CONFIG_ZRAM=y"
+          add_cfg "CONFIG_ZRAM_WRITEBACK=y"
+          add_cfg "CONFIG_CRYPTO_ZSTD=y"
+          add_cfg "CONFIG_CRYPTO_LZ4=y"
+          add_cfg "CONFIG_CRYPTO_LZ4HC=y"
+          add_cfg "CONFIG_ZSTD_COMPRESS=y"
+          add_cfg "CONFIG_ZSTD_DECOMPRESS=y"
+          echo "" >> $DEFCONFIG
+          echo "# F2FS" >> $DEFCONFIG
+          add_cfg "CONFIG_F2FS_FS=y"
+          add_cfg "CONFIG_F2FS_STAT_FS=y"
+          add_cfg "CONFIG_F2FS_FS_XATTR=y"
+          add_cfg "CONFIG_F2FS_FS_POSIX_ACL=y"
+          add_cfg "CONFIG_F2FS_FS_SECURITY=y"
+          add_cfg "CONFIG_F2FS_FS_ENCRYPTION=y"
+          echo "" >> $DEFCONFIG
+          echo "# I/O Scheduler - BFQ" >> $DEFCONFIG
+          add_cfg "CONFIG_IOSCHED_BFQ=y"
+          add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
+          add_cfg "CONFIG_MQ_IOSCHED_DEADLINE=y"
+          add_cfg "CONFIG_MQ_IOSCHED_KYBER=y"
+          echo "" >> $DEFCONFIG
+          echo "# Power & Memory" >> $DEFCONFIG
+          add_cfg "CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y"
+          add_cfg "CONFIG_HIGH_RES_TIMERS=y"
+          add_cfg "CONFIG_KSM=y"
+          add_cfg "CONFIG_COMPACTION=y"
+          add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=y"
+          echo "" >> $DEFCONFIG
+          echo "# Devfreq" >> $DEFCONFIG
+          add_cfg "CONFIG_PM_DEVFREQ=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_PERFORMANCE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_POWERSAVE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_USERSPACE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_PASSIVE=y"
           LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}"
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
@@ -222,7 +273,7 @@ jobs:
               HAS_IMAGE=true
             fi
           done
-          [ "$HAS_IMAGE" = "false" ] && echo "No kernel image found!" && exit 1
+          if [ "$HAS_IMAGE" = "false" ]; then echo "No kernel image found!" && exit 1; fi
 
       - name: Upload Debug Artifacts (on failure)
         if: failure()
@@ -247,6 +298,7 @@ jobs:
             wildksu) ROOT_SHORT="WildKSU" ;;
             sukisu) ROOT_SHORT="SukiSU" ;;
             rsukisu) ROOT_SHORT="ReSukiSU" ;;
+            kowsu) ROOT_SHORT="KoWSU" ;;
           esac
           case "$GOVERNOR" in
             schedutil) GOV_SHORT="Schedutil" ;;
@@ -256,7 +308,7 @@ jobs:
           esac
           CLANG_VER=$(clang/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
           TOOLCHAIN_SHORT="${TOOLCHAIN_NAME}"
-          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${TOOLCHAIN_SHORT}${CLANG_VER}-Redmi12"
+          BASE_NAME="Castorice-${CUSTOM_NAME}-v${BUILD_VER}-Leg419-${ROOT_SHORT}-NoSUSFS-${GOV_SHORT}-${{ inputs.tuning_profile }}-${{ inputs.safety_profile }}-${TOOLCHAIN_SHORT}${CLANG_VER}-Redmi12"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
           KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [Legacy 4.19 | ${KSU_METHOD} | ${GOVERNOR}] by ${AUTHOR}"
