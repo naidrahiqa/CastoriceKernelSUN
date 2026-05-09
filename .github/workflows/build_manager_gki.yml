@@ -110,7 +110,7 @@ on:
 
 permissions:
   actions: write
-  contents: read
+  contents: write
 
 jobs:
   prepare:
@@ -182,7 +182,6 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   trigger:
-    name: "🚀 ${{ matrix.susfs == 'true' && 'GKI+SUSFS' || 'GKI' }}-${{ matrix.ksu_method }}-${{ matrix.cpu_governor }}"
     needs: prepare
     strategy:
       fail-fast: false

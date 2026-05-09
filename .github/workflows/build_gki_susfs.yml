@@ -51,7 +51,6 @@ permissions:
 
 jobs:
   call-core:
-    name: "Build GKI + SUSFS (${{ inputs.ksu_method }})"
     uses: ./.github/workflows/_build_kernel_core.yml
     permissions:
       contents: write
