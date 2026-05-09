@@ -231,10 +231,11 @@ jobs:
           add_cfg "CONFIG_IOSCHED_BFQ=y"
           add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
           add_cfg "CONFIG_HIGH_RES_TIMERS=y"
-          LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-SUSFS"
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
-          echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
+          echo "CONFIG_LOCALVERSION=\"\"" >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          echo "CONFIG_MODVERSIONS=n" >> $DEFCONFIG
+          echo "CONFIG_MODULE_FORCE_LOAD=y" >> $DEFCONFIG
 
       - name: Build Kernel
         run: |

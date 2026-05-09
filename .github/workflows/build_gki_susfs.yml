@@ -343,10 +343,11 @@ jobs:
             fi
           fi
 
-          LOCALVER="-Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}-SUSFS"
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
-          echo "CONFIG_LOCALVERSION=\"${LOCALVER}\"" >> $DEFCONFIG
+          echo "CONFIG_LOCALVERSION=\"\"" >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          echo "CONFIG_MODVERSIONS=n" >> $DEFCONFIG
+          echo "CONFIG_MODULE_FORCE_LOAD=y" >> $DEFCONFIG
 
       - name: Patch Build System
         run: |
