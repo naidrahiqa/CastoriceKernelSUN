@@ -6,30 +6,39 @@ on:
       with_susfs:
         required: true
         type: string
+        default: 'false'
       custom_name:
         required: true
         type: string
+        default: 'Starter'
       author_name:
         required: true
         type: string
+        default: 'Castorice'
       ksu_method:
         required: true
         type: string
+        default: 'kernelsu-next'
       cpu_governor:
         required: true
         type: string
+        default: 'schedutil'
       safety_profile:
         required: true
         type: string
+        default: 'stable'
       tuning_profile:
         required: true
         type: string
+        default: 'balanced'
       clang_toolchain:
         required: true
         type: string
+        default: 'bazel-default'
       release_tag:
         required: true
         type: string
+        default: 'v1.0'
 
 permissions:
   contents: write
@@ -56,6 +65,19 @@ jobs:
       # REFACTOR: Shared Environment Setup
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Debug Inputs
+        run: |
+          echo "=== WORKFLOW INPUTS ==="
+          echo "with_susfs:      '${{ inputs.with_susfs }}'"
+          echo "custom_name:     '${{ inputs.custom_name }}'"
+          echo "ksu_method:      '${{ inputs.ksu_method }}'"
+          echo "cpu_governor:    '${{ inputs.cpu_governor }}'"
+          echo "clang_toolchain: '${{ inputs.clang_toolchain }}'"
+          echo "safety_profile:  '${{ inputs.safety_profile }}'"
+          echo "tuning_profile:  '${{ inputs.tuning_profile }}'"
+          echo "release_tag:     '${{ inputs.release_tag }}'"
+          echo "========================"
 
       - name: Maximize Disk Space
         run: |
@@ -85,7 +107,8 @@ jobs:
             git curl wget bc bison flex libssl-dev make libelf-dev \
             python3 python3-pip python-is-python3 zip unzip cpio \
             kmod rsync lz4 jq patch binutils libncurses-dev \
-            pkg-config ninja-build zstd aria2 p7zip-full
+            pkg-config ninja-build zstd aria2 p7zip-full \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
 
       - name: Install repo Tool
         run: |
