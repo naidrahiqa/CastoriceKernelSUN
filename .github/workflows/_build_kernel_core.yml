@@ -218,6 +218,18 @@ jobs:
           STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
           [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE" \
             && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${KMI_GENERATION}\"/" "$STAMP_FILE" || true
+          
+          # VALIDATION: Verify KMI generation is correctly set
+          if [ -f "build.config.common" ]; then
+            if ! grep -q "KMI_GENERATION=${KMI_GENERATION}" build.config.common; then
+              echo "❌ ERROR: KMI_GENERATION not set correctly in build.config.common!"
+              echo "Expected: KMI_GENERATION=${KMI_GENERATION}"
+              echo "Found:"
+              grep "KMI_GENERATION" build.config.common || echo "  (not found)"
+              exit 1
+            fi
+            echo "✅ KMI_GENERATION validated: ${KMI_GENERATION}"
+          fi
 
       # FIX #1: Use official setup.sh for KSU integration
       - name: Setup KernelSU (${{ inputs.ksu_method }})
@@ -227,7 +239,7 @@ jobs:
           KSU_METHOD="${{ inputs.ksu_method }}"
           echo "Installing KSU variant: $KSU_METHOD"
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next-susfs/kernel/setup.sh" | bash -s builtin
+            curl -LSsf "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s builtin
           else
             echo "Unsupported KSU method: $KSU_METHOD. Only kernelsu-next is supported."
             exit 1
@@ -295,6 +307,19 @@ jobs:
             fi
           fi
           echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
+          
+          # VALIDATION: Verify critical SUSFS files exist
+          if [ "$SUSFS_INTEGRATED" = "true" ]; then
+            if [ ! -f "fs/susfs.c" ]; then
+              echo "❌ ERROR: fs/susfs.c not found after SUSFS setup!"
+              exit 1
+            fi
+            if [ ! -f "include/linux/susfs.h" ]; then
+              echo "❌ ERROR: include/linux/susfs.h not found after SUSFS setup!"
+              exit 1
+            fi
+            echo "✅ SUSFS files validated successfully"
+          fi
 
       # REFACTOR: Shared Kernel Configuration (with SUSFS injection if enabled)
       - name: Configure Kernel
@@ -440,7 +465,14 @@ jobs:
           set -euo pipefail
           cd kernel
           # FIX #2: Add --lto=thin to prevent OOM, --disk_cache for speed
-          tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast --lto=thin //common:kernel_aarch64_dist 2>&1 | tee build.log
+          # FIX: Add memory limits to prevent OOM on GitHub Actions runners
+          tools/bazel build \
+            --disk_cache=/home/runner/.cache/bazel \
+            --config=fast \
+            --lto=thin \
+            --local_ram_resources=6144 \
+            --jobs=2 \
+            //common:kernel_aarch64_dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
         env:
           SOURCE_DATE_EPOCH: "0"
@@ -552,7 +584,7 @@ jobs:
             '# AnyKernel3 Ramdisk Mod Script' 'properties() {' \
             "kernel.string=${KERNEL_STRING}" \
             'do.devicecheck=1' 'do.modules=0' 'do.systemless=1' 'do.cleanup=1' 'do.cleanuponabort=0' \
-            'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=14-15' 'supported.patchlevels=' \
+            'device.name1=fire' 'device.name2=Redmi 12' 'supported.versions=15' 'supported.patchlevels=' \
             '}' '' 'block=boot;' 'is_slot_device=auto;' 'ramdisk_compression=auto;' 'patch_vbmeta_flag=auto;' \
             '' '. tools/ak3-core.sh;' 'dump_boot;' 'write_boot;' > anykernel.sh
           for img in "$GITHUB_WORKSPACE/dist/Image" "$GITHUB_WORKSPACE/dist/Image.gz" "$GITHUB_WORKSPACE/dist/Image.lz4"; do

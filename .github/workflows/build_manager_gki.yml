@@ -142,7 +142,6 @@ jobs:
 
           include = []
           for susfs in variants:
-              workflow = "build_gki_susfs.yml" if susfs == "true" else "build_gki.yml"
               for root in roots:
                   for gov in govs:
                       for tc in toolchains:
@@ -151,7 +150,6 @@ jobs:
                               "ksu_method": root,
                               "cpu_governor": gov,
                               "clang_toolchain": tc,
-                              "workflow": workflow,
                           })
 
           print(json.dumps({"include": include}))
