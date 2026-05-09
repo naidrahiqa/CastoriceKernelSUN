@@ -119,44 +119,49 @@ Setelah flash kernel, install manager app sesuai root method lo:
 
 ## 🛠️ Build Sendiri (Advanced)
 
-Kalo mau kontrol lebih detail per build:
+Kini jauh lebih gampang dengan **🎛️ GKI Control Center**! Lo ga perlu lagi jalanin workflow satu-satu. Cukup pake satu "Manager" buat bikin semua varian sekaligus.
 
-1. **Fork** repo ini
-2. Ke tab **Actions**
-3. Pilih workflow spesifik:
-   - 🟢 `GKI 6.6 — KernelSU (No SUSFS)`
-   - 🟣 `GKI 6.6 — KernelSU + SUSFS`
-4. Klik **Run workflow**
-5. Isi form:
-   ```yaml
-   Custom Name: Gaming
-   Author Name: YourName
-   Root Method: kernelsu-next
-   CPU Governor: performance
-   Boot Safety Profile: stable     # Pilihan: stable / performance
-   Tuning Profile: balanced        # Pilihan: balanced / gaming / social_media
-   Clang Toolchain: bazel-default  # Pilihan: bazel-default / zyc-latest / weebx-latest / neutron-latest
-   Release Tag: v1.0
-   ```
-6. Tunggu proses build selesai otomatis oleh Github!
+1. **Fork** repo ini.
+2. Masuk ke tab **Actions**.
+3. Pilih workflow: **🎛️ GKI Control Center**.
+4. Klik **Run workflow**.
+5. Pilih kombinasi yang lo mau (Matrix Build):
+   - **Root Methods:** Checkbox KernelSU-Next.
+   - **SUSFS Variant:** Pilih mau yang murni atau +SUSFS.
+   - **Toolchains:** Pilih satu atau **semua sekaligus** (Bazel, ZyClang, WeebX, Neutron, Azure, AOSP).
+   - **Governors:** Masukin list (e.g. `schedutil,performance`).
 
 ### 🔨 Toolchain Options
 
-| Toolchain | Keterangan | Version |
-|:----------|:-----------|:--------|
-| **Bazel** | Google's official GKI toolchain (Paling Stabil) | Auto |
-| **ZyClang** | Balanced performance | Auto-latest |
-| **WeebX Clang**| Aggressive performance | Auto-latest |
-| **Neutron Clang**| Stability focused | Auto-latest |
+Sekarang mendukung lebih banyak toolchain dengan sistem **Smart Extraction** (Otomatis deteksi struktur archive):
+
+| Toolchain | Keterangan | Status |
+|:----------|:-----------|:-------|
+| **Bazel** | Google's official GKI toolchain | 💎 Ultra Stable |
+| **ZyClang** | Balanced gaming performance | 🚀 Fast |
+| **WeebX Clang**| Aggressive optimization | 🔥 Hot |
+| **Neutron Clang**| Stability & LLVM focus | 🛡️ Modern |
+| **Azure Clang** | Extreme compatibility (RELR fix) | 🛠️ Updated |
+| **AOSP Latest** | Cleanest build environment | 📎 Stock |
+
+---
+
+## 🚀 Technical Improvements (Terbaru!)
+
+Gw udah benerin beberapa isu krusial biar build-nya makin solid:
+- 🧠 **Smart Toolchain Extract:** Build script sekarang pinter, bisa bedain archive "flat" (ZyClang) vs "nested" otomatis. No more "Clang not found" error!
+- 🔗 **RELR / .relr.dyn Fix:** Host tools sekarang dipaksa pake system linker (`/usr/bin/ld`) biar ga bentrok sama glibc Ubuntu terbaru.
+- 🧱 **Bazel Symlink Fix:** Driver KernelSU sekarang di-copy (bukan symlink) saat build Bazel biar semua symbol (`ksu_handle_*`) ke-compile sempurna.
+- 🛡️ **Hunk Detection:** Verifikasi otomatis buat SUSFS patch, kalo ada yang gagal (hunk rejected) langsung ketauan di logs.
 
 ---
 
 ## 📊 Build Status
 
-| Workflow | Status | Last Build |
-|:---------|:-------|:-----------|
-| GKI 6.6 (No SUSFS) | [![Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki.yml) | ![Last Build](https://img.shields.io/github/last-commit/naidrahiqa/CastoriceKernelSUN?style=flat-square) |
-| GKI 6.6 + SUSFS | [![Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki_susfs.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_gki_susfs.yml) | ![Last Build](https://img.shields.io/github/last-commit/naidrahiqa/CastoriceKernelSUN?style=flat-square) |
+| Workflow | Status |
+|:---------|:-------|
+| **🎛️ GKI Control Center** | [![GKI Control Center](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_manager_gki.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_manager_gki.yml) |
+| **⚙️ Core Build Engine** | [![Core Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/_build_kernel_core.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/_build_kernel_core.yml) |
 
 ---
 

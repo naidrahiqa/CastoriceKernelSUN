@@ -144,9 +144,25 @@ jobs:
           mkdir -p prebuilts/clang/host/linux-x86
           cd prebuilts/clang/host/linux-x86
           TOOLCHAIN="${{ inputs.clang_toolchain }}"
+          # Helper: Smart tar extraction (handles both flat and nested archives)
+          smart_extract() {
+            local archive="$1" dest="$2"
+            mkdir -p "$dest"
+            # Check if archive has a top-level directory
+            local top_dirs=$(tar -tf "$archive" | head -50 | grep -oP '^[^/]+/' | sort -u | wc -l)
+            if [ "$top_dirs" -eq 1 ]; then
+              echo "  → Archive is nested, using --strip-components=1"
+              tar -xf "$archive" -C "$dest" --strip-components=1
+            else
+              echo "  → Archive is flat, extracting directly"
+              tar -xf "$archive" -C "$dest"
+            fi
+            rm -f "$archive"
+          }
+
           case "$TOOLCHAIN" in
             zyc-latest)
-              echo "Downloading ZyClang..."
+              echo "📥 Downloading ZyClang..."
               ZYASSET_URL=$(curl -sL \
                 "https://api.github.com/repos/ZyCromerZ/Clang/releases/latest" \
                 | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url' \
@@ -156,9 +172,7 @@ jobs:
               fi
               echo "Downloading from: $ZYASSET_URL"
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$ZYASSET_URL"
-              mkdir -p clang-zyc
-              tar -xf clang.tar.gz -C clang-zyc --strip-components=1
-              rm clang.tar.gz
+              smart_extract clang.tar.gz clang-zyc
               CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-zyc"
               echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=ZyClang" >> $GITHUB_ENV
@@ -172,7 +186,7 @@ jobs:
             weebx-latest)
               WEEBX_URL=$(curl -s https://api.github.com/repos/XSans0/WeebX-Clang/releases/latest | jq -r '.assets[] | select(.name | contains("WeebX-Clang")) | .browser_download_url' | head -n1)
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$WEEBX_URL"
-              mkdir -p clang-weebx && tar -xf clang.tar.gz -C clang-weebx --strip-components=1 && rm clang.tar.gz
+              smart_extract clang.tar.gz clang-weebx
               CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-weebx"
               echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=WeebXClang" >> $GITHUB_ENV
@@ -186,8 +200,7 @@ jobs:
             neutron-latest)
               NEUTRON_ASSET=$(curl -sL https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
               aria2c -x16 -s16 -k1M -o clang.tar.gz "$NEUTRON_ASSET"
-              # FIX: Konsisten nama file dan selalu pakai --strip-components=1
-              mkdir -p clang-neutron && tar -xf clang.tar.gz -C clang-neutron --strip-components=1 && rm clang.tar.gz
+              smart_extract clang.tar.gz clang-neutron
               CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-neutron"
               CLANG_VER=$($CLANG_PATH/bin/clang --version | head -n1 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
               echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
@@ -278,6 +291,58 @@ jobs:
           echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
           echo "✅ KSU $KSU_METHOD installed (version: $KSU_VERSION)"
 
+      # FIX: Verify KSU driver is properly integrated into the build system
+      - name: Verify KSU Driver Integration
+        run: |
+          set -euo pipefail
+          cd kernel/common
+          
+          # Determine driver directory
+          if [ -d "drivers/kernelsu" ] || [ -L "drivers/kernelsu" ]; then
+            KSU_DIR="drivers/kernelsu"
+          else
+            echo "❌ ERROR: drivers/kernelsu not found (neither dir nor symlink)"
+            echo "Contents of drivers/:"
+            ls -la drivers/ | grep -i ksu || echo "  (no KSU entries)"
+            exit 1
+          fi
+          
+          # FIX: If it's a symlink, resolve and copy for Bazel compatibility
+          if [ -L "$KSU_DIR" ]; then
+            echo "⚠️  KSU is a symlink, converting to real directory for Bazel compatibility..."
+            REAL_PATH=$(readlink -f "$KSU_DIR")
+            rm "$KSU_DIR"
+            cp -r "$REAL_PATH" "$KSU_DIR"
+            echo "   Copied from: $REAL_PATH"
+          fi
+          
+          # Verify critical KSU source files exist
+          for f in ksu.c allowlist.c sucompat.c Kconfig Makefile; do
+            if [ ! -f "$KSU_DIR/$f" ]; then
+              echo "❌ ERROR: $KSU_DIR/$f not found!"
+              echo "Contents of $KSU_DIR:"
+              ls -la "$KSU_DIR/" || true
+              exit 1
+            fi
+          done
+          
+          # Ensure drivers/Makefile has KSU entry
+          if ! grep -q 'CONFIG_KSU' drivers/Makefile; then
+            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+            echo "   Added KSU to drivers/Makefile"
+          fi
+          
+          # Ensure drivers/Kconfig sources KSU Kconfig
+          if ! grep -q 'kernelsu/Kconfig' drivers/Kconfig; then
+            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+            echo "   Added KSU Kconfig to drivers/Kconfig"
+          fi
+          
+          echo "✅ KSU driver integration verified"
+          echo "   Files: $(ls $KSU_DIR/*.c 2>/dev/null | wc -l) .c files"
+          echo "   Makefile entry: $(grep -c 'kernelsu' drivers/Makefile) lines"
+          echo "   Kconfig entry: $(grep -c 'kernelsu' drivers/Kconfig) lines"
+
       # REFACTOR: Conditional SUSFS Setup
       - name: Setup SUSFS
         if: inputs.with_susfs == 'true'
@@ -340,6 +405,29 @@ jobs:
             if [ ! -f "include/linux/susfs.h" ]; then
               echo "❌ ERROR: include/linux/susfs.h not found after SUSFS setup!"
               exit 1
+            fi
+            # FIX: Check for failed patch hunks (.rej files)
+            REJ_FILES=$(find . -name "*.rej" -type f 2>/dev/null)
+            if [ -n "$REJ_FILES" ]; then
+              echo "⚠️  WARNING: Found rejected patch hunks:"
+              echo "$REJ_FILES"
+              for rej in $REJ_FILES; do
+                echo "--- $rej ---"
+                cat "$rej"
+                echo "---"
+              done
+            fi
+            # FIX: Verify critical SUSFS symbols exist in patched source
+            echo "🔍 Verifying SUSFS hook symbols in kernel source..."
+            MISSING_HOOKS=0
+            for sym in susfs_is_current_ksu_domain; do
+              if ! grep -rq "$sym" fs/ include/linux/susfs.h 2>/dev/null; then
+                echo "  ⚠️  Symbol $sym not found in source"
+                MISSING_HOOKS=$((MISSING_HOOKS+1))
+              fi
+            done
+            if [ $MISSING_HOOKS -gt 0 ]; then
+              echo "⚠️  Some SUSFS hooks may be missing - patches may not have applied correctly"
             fi
             echo "✅ SUSFS files validated successfully"
           fi
@@ -515,6 +603,8 @@ jobs:
           
           if [ ! -d "$CUSTOM_CLANG_PATH/bin" ]; then
             echo "❌ ERROR: $CUSTOM_CLANG_PATH/bin directory not found!"
+            echo "Contents of $CUSTOM_CLANG_PATH:"
+            ls -la "$CUSTOM_CLANG_PATH/" || true
             exit 1
           fi
           
@@ -531,12 +621,25 @@ jobs:
           which clang || { echo "❌ ERROR: clang not in PATH after export!"; exit 1; }
           clang --version
           
+          # FIX: Use system HOSTLD/HOSTCC/HOSTCXX to avoid .relr.dyn errors
+          # Bundled ld in some toolchains (e.g. Azure) is too old for Ubuntu's glibc
+          # Use ld.lld from toolchain for kernel cross-linking, system ld for host tools
           MAKE_ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTCC=gcc HOSTCXX=g++ HOSTLD=ld"
+            HOSTCC=/usr/bin/gcc HOSTCXX=/usr/bin/g++ HOSTLD=/usr/bin/ld"
+          
+          # Check if toolchain has ld.lld, otherwise use system lld
+          if [ -f "$CUSTOM_CLANG_PATH/bin/ld.lld" ]; then
+            KERNEL_LD="ld.lld"
+          elif command -v ld.lld &>/dev/null; then
+            KERNEL_LD="ld.lld"
+          else
+            KERNEL_LD="ld"
+          fi
+          
           make $MAKE_ARGS gki_defconfig
           make -j$(nproc) $MAKE_ARGS \
-            LD=ld.lld AR=llvm-ar NM=llvm-nm \
+            LD=$KERNEL_LD AR=llvm-ar NM=llvm-nm \
             OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             2>&1 | tee ../build.log
         env:
