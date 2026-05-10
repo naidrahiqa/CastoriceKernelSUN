@@ -349,7 +349,7 @@ jobs:
             echo "⚠️  KSU is a symlink, converting to real directory for Bazel compatibility..."
             REAL_PATH=$(readlink -f "$KSU_DIR")
             rm "$KSU_DIR"
-            cp -r "$REAL_PATH" "$KSU_DIR"
+            cp -rL "$REAL_PATH" "$KSU_DIR"
             echo "   Copied from: $REAL_PATH"
           fi
           
