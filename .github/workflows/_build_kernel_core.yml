@@ -874,15 +874,42 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          set -e
           if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
-            echo "Telegram secrets not set. Skipping."
+            echo "⚠️ Telegram secrets belum diatur. Melewati step ini."
             exit 0
           fi
-          ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
-          [ -z "$ZIP_FILE" ] && echo "No zip found." && exit 0
-          CAPTION="🚀 *New Castorice Kernel Build!*%0A%0A*Name:* ${{ inputs.custom_name }} v${{ github.run_number }}%0A*Root:* ${{ inputs.ksu_method }}%0A*Governor:* ${{ inputs.cpu_governor }}%0A*SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}%0A*KMI:* ${{ env.KMI_GENERATION }}%0A*Toolchain:* ${{ inputs.clang_toolchain }}%0A%0A[Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})"
-          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
+
+          # Cari file zip di folder dist dengan path absolut
+          ZIP_FILE=$(find "$GITHUB_WORKSPACE/dist" -name "*.zip" -type f | head -n 1)
+          
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ File zip tidak ditemukan di folder dist/"
+            ls -R "$GITHUB_WORKSPACE/dist"
+            exit 1
+          fi
+
+          echo "📤 Mengirim: $(basename "$ZIP_FILE") ($(du -h "$ZIP_FILE" | cut -f1))"
+
+          # Susun caption dengan format yang lebih rapi
+          # Menggunakan heredoc agar karakter spesial dan baris baru aman
+          CAPTION=$(cat <<EOF
+          🚀 *New Castorice Kernel Build!*
+
+          *Name:* ${{ inputs.custom_name }} v${{ github.run_number }}
+          *Root:* ${{ inputs.ksu_method }}
+          *Governor:* ${{ inputs.cpu_governor }}
+          *SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}
+          *KMI:* ${{ env.KMI_GENERATION }}
+          *Toolchain:* ${{ inputs.clang_toolchain }}
+
+          [Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})
+          EOF
+          )
+
+          # Kirim ke Telegram (menggunakan -v untuk debug jika gagal)
+          curl -v -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
             -F chat_id="${TG_CHAT_ID}" \
             -F document=@"${ZIP_FILE}" \
             -F caption="${CAPTION}" \
-            -F parse_mode="Markdown"
+            -F parse_mode="Markdown" || { echo "❌ Gagal mengirim ke Telegram (Exit code: $?)"; exit 1; }
