@@ -930,17 +930,9 @@ jobs:
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}"
           # Kirim sebagai text + link, bukan upload file langsung.
           # sendDocument sering timeout karena zip kernel 20-30MB melewati limit Bot API.
-          TEXT="Castorice Kernel - Build Done
-
-Name: ${{ inputs.custom_name }} v${{ github.run_number }}
-Root: ${{ inputs.ksu_method }}
-Governor: ${{ inputs.cpu_governor }}
-SUSFS: ${SUSFS_LABEL}
-KMI: ${{ env.KMI_GENERATION }}
-Toolchain: ${{ inputs.clang_toolchain }}
-File: ${ZIP_NAME} (${ZIP_SIZE})
-
-Download: ${RELEASE_URL}"
+          # Gunakan printf dengan \n eksplisit — hindari multiline string di YAML.
+          TEXT=$(printf 'Castorice Kernel - Build Done\n\nName: ${{ inputs.custom_name }} v${{ github.run_number }}\nRoot: ${{ inputs.ksu_method }}\nGovernor: ${{ inputs.cpu_governor }}\nSUSFS: %s\nKMI: ${{ env.KMI_GENERATION }}\nToolchain: ${{ inputs.clang_toolchain }}\nFile: %s (%s)\n\nDownload: %s' \
+            "$SUSFS_LABEL" "$ZIP_NAME" "$ZIP_SIZE" "$RELEASE_URL")
           curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TG_CHAT_ID}" \
             --data-urlencode "text=${TEXT}" \
