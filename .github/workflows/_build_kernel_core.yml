@@ -625,8 +625,7 @@ jobs:
           cd kernel/common
           rm -rf android/abi_gki_protected_exports_* || true
           if [ -f "BUILD.bazel" ]; then
-            sed -i -e '/abi_gki_protected_exports/d' -e '/protected_exports/d' \
-              -e '/check_defconfig/d' \
+            sed -i -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' \
               -e 's/trim_nonlisted_kmi = True/trim_nonlisted_kmi = False/g' BUILD.bazel
           fi
@@ -653,15 +652,15 @@ jobs:
         run: |
           set -euo pipefail
           cd kernel
-          # FIX #2: Add --lto=thin to prevent OOM, --disk_cache for speed
-          # FIX: Add memory limits to prevent OOM on GitHub Actions runners
-          tools/bazel build \
+          # FIX: Use --lto=none to avoid OOM on GitHub Actions
+          # FIX: Build and extract in one step using bazel run to avoid cache invalidation
+          mkdir -p $GITHUB_WORKSPACE/dist
+          tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --config=fast \
-            --lto=thin \
+            --lto=none \
             --local_ram_resources=6144 \
-            --jobs=2 \
-            //common:kernel_aarch64_dist 2>&1 | tee build.log
+            --jobs=3 \
+            //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
         env:
           SOURCE_DATE_EPOCH: "0"
@@ -699,27 +698,13 @@ jobs:
           which clang || { echo "❌ ERROR: clang not in PATH after export!"; exit 1; }
           clang --version
           
-          # FIX: Use system HOSTLD/HOSTCC/HOSTCXX to avoid .relr.dyn errors
-          # Bundled ld in some toolchains (e.g. Azure) is too old for Ubuntu's glibc
-          # Use ld.lld from toolchain for kernel cross-linking, system ld for host tools
-          MAKE_ARGS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTCC=/usr/bin/gcc HOSTCXX=/usr/bin/g++ HOSTLD=/usr/bin/ld"
-          
-          # Check if toolchain has ld.lld, otherwise use system lld
-          if [ -f "$CUSTOM_CLANG_PATH/bin/ld.lld" ]; then
-            KERNEL_LD="ld.lld"
-          elif command -v ld.lld &>/dev/null; then
-            KERNEL_LD="ld.lld"
-          else
-            KERNEL_LD="ld"
-          fi
+          # FIX: Use LLVM=1 LLVM_IAS=1 to let kernel build system naturally pick up lld, llvm-ar, etc.
+          # This prevents mismatch errors with system gcc/ld when cross-compiling on Ubuntu.
+          MAKE_ARGS="O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
           
           make $MAKE_ARGS gki_defconfig
-          make -j$(nproc) $MAKE_ARGS \
-            LD=$KERNEL_LD AR=llvm-ar NM=llvm-nm \
-            OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            2>&1 | tee ../build.log
+          make -j$(nproc) $MAKE_ARGS 2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
@@ -731,9 +716,8 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/dist
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             cd kernel
-            tools/bazel run --config=fast //common:kernel_aarch64_dist \
-              -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 || true
-            # FIX #5: Use precise bazel-bin path instead of slow recursive search
+            # dist is already populated by 'bazel run' in Build Kernel (Bazel) step!
+            # FIX #5: Verify artifacts exist, otherwise check bazel-bin
             for artifact in Image Image.gz Image.lz4; do
               if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
                 if [ -f "bazel-bin/common/kernel_aarch64/$artifact" ]; then
