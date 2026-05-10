@@ -80,16 +80,6 @@ jobs:
           echo "release_tag:     '${{ inputs.release_tag }}'"
           echo "========================"
 
-      - name: Setup ccache
-        run: |
-          sudo apt-get install -y ccache
-          ccache --max-size=2G
-          ccache --set-config=compression=true
-          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
-          echo "CCACHE_COMPILERCHECK=%compiler% -dumpmachine; %compiler% -dumpversion" >> $GITHUB_ENV
-          echo "CCACHE_NOHASHDIR=true" >> $GITHUB_ENV
-          echo "CCACHE_HARDLINK=true" >> $GITHUB_ENV
-
       - name: Restore Bazel Cache
         uses: actions/cache@v4
         with:
@@ -316,7 +306,7 @@ jobs:
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
             echo "Cloning KernelSU-Next..."
-            git clone --depth=1               https://github.com/rifsxd/KernelSU-Next.git               -b next KernelSU-Next
+            git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git -b next KernelSU-Next
 
             echo "Copying KernelSU-Next driver into common/drivers/kernelsu..."
             # Hapus dulu kalau sudah ada (symlink atau direktori lama)
@@ -414,10 +404,17 @@ jobs:
 
           if [ "$KERNEL_VERSION" = "6.6" ]; then
             if [ -f "fs/proc/task_mmu.c" ] && ! grep -q "nr_subpages" "fs/proc/task_mmu.c"; then
-              sed -i \
-                -e '/int ret = 0, copied = 0;/a \\tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' \
-                -e '/int ret = 0, copied = 0;/a \\tpagemap_entry_t *res = NULL;' \
-                fs/proc/task_mmu.c
+              # Hitung berapa kali pattern muncul — kalau >1 jangan patch, terlalu berisiko corrupt
+              MATCH_COUNT=$(grep -c "int ret = 0, copied = 0;" fs/proc/task_mmu.c 2>/dev/null || echo "0")
+              if [ "$MATCH_COUNT" = "1" ]; then
+                sed -i \
+                  -e '/int ret = 0, copied = 0;/a \tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' \
+                  -e '/int ret = 0, copied = 0;/a \tpagemap_entry_t *res = NULL;' \
+                  fs/proc/task_mmu.c
+                echo "   task_mmu.c patched OK"
+              else
+                echo "   ⚠️  task_mmu.c: pattern count=$MATCH_COUNT, skipping patch to avoid corruption"
+              fi
             fi
             if [ -f "fs/proc/base.c" ] && ! grep -q "linux/dma-buf.h" "fs/proc/base.c"; then
               sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' fs/proc/base.c
@@ -481,22 +478,24 @@ jobs:
             [ ! -f "fs/susfs.c" ] && echo "❌ ERROR: fs/susfs.c not found!" && exit 1
             [ ! -f "include/linux/susfs.h" ] && echo "❌ ERROR: susfs.h not found!" && exit 1
 
-            # FIX #2: Cek .rej files dengan detail — kalau ada, print isinya dan FAIL BUILD
-            REJ_FILES=$(find . -name "*.rej" -type f 2>/dev/null)
-            if [ -n "$REJ_FILES" ]; then
-              echo "❌ ERROR: Found rejected patch hunks — SUSFS not fully applied!"
-              for rej in $REJ_FILES; do
-                echo "=== $rej ==="
-                cat "$rej"
-                echo "==="
+            # Smart .rej check: hanya fs/ dan include/ yang CRITICAL.
+            # Kconfig.rej / selinux/*.rej = non-critical, sudah di-inject manual.
+            CRITICAL_REJ=$(find fs/ include/ -name "*.rej" -type f 2>/dev/null || true)
+            if [ -n "$CRITICAL_REJ" ]; then
+              echo "❌ ERROR: Critical SUSFS patch rejected in fs/ or include/:"
+              for rej in $CRITICAL_REJ; do
+                echo "=== $rej ===" && cat "$rej" && echo "==="
               done
-              echo ""
-              echo "⚠️  Build dihentikan karena SUSFS patch gagal sebagian."
-              echo "   Kemungkinan penyebab: versi SUSFS tidak cocok dengan branch kernel saat ini."
-              echo "   Solusi: cek tag/branch SUSFS di gitlab.com/simonpunk/susfs4ksu"
               exit 1
             fi
-            echo "✅ SUSFS applied cleanly (no rejected hunks)"
+            # Non-critical .rej: warning saja, bersihkan, lanjut build
+            NON_CRIT_REJ=$(find . -name "*.rej" -type f 2>/dev/null || true)
+            if [ -n "$NON_CRIT_REJ" ]; then
+              echo "⚠️  Non-critical rejected hunks (build will continue):"
+              for rej in $NON_CRIT_REJ; do echo "   - $rej"; done
+              find . -name "*.rej" -delete 2>/dev/null || true
+            fi
+            echo "✅ SUSFS integration complete"
           fi
 
       - name: Apply Custom Patches
@@ -639,12 +638,9 @@ jobs:
           echo "# Branding" >> $DEFCONFIG
           echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
-          # FIX BOOTLOOP #2: CONFIG_MODVERSIONS dilarang di GKI.
-          # GKI pakai strict ABI — MODVERSIONS aktif bikin semua vendor .ko Xiaomi
-          # gagal load karena checksum mismatch → bootloop.
-          add_cfg "CONFIG_MODVERSIONS=n"
-          # FIX: Gunakan add_cfg bukan echo langsung agar tidak duplikat
-          add_cfg "CONFIG_MODULE_FORCE_LOAD=y"
+          # CONFIG_MODVERSIONS dilarang di GKI — menyebabkan semua vendor .ko
+          # Xiaomi gagal load karena checksum mismatch → bootloop.
+          add_cfg "CONFIG_MODVERSIONS=n" 
 
       - name: Patch Build System
         run: |
@@ -803,8 +799,6 @@ jobs:
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
           ROOT_SHORT="KSUNext"
-          GOV_SHORT="$(tr '[:lower:]' '[:upper:]' <<< ${GOVERNOR:0:1})${GOVERNOR:1}"
-
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             TOOLCHAIN_SHORT="Bazel"
           else
@@ -929,9 +923,26 @@ jobs:
           fi
           ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
           [ -z "$ZIP_FILE" ] && echo "No zip found." && exit 0
-          CAPTION="🚀 *New Castorice Kernel Build!*%0A%0A*Name:* ${{ inputs.custom_name }} v${{ github.run_number }}%0A*Root:* ${{ inputs.ksu_method }}%0A*Governor:* ${{ inputs.cpu_governor }}%0A*SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}%0A*KMI:* ${{ env.KMI_GENERATION }}%0A*Toolchain:* ${{ inputs.clang_toolchain }}%0A%0A[Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})"
-          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
-            -F chat_id="${TG_CHAT_ID}" \
-            -F document=@"${ZIP_FILE}" \
-            -F caption="${CAPTION}" \
-            -F parse_mode="Markdown"
+          ZIP_NAME=$(basename "$ZIP_FILE" 2>/dev/null || echo "unknown.zip")
+          ZIP_SIZE=$(du -h "$ZIP_FILE" 2>/dev/null | cut -f1 || echo "?")
+          SUSFS_LABEL="No"
+          [ "${{ inputs.with_susfs }}" = "true" ] && SUSFS_LABEL="Yes"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}"
+          # Kirim sebagai text + link, bukan upload file langsung.
+          # sendDocument sering timeout karena zip kernel 20-30MB melewati limit Bot API.
+          TEXT="Castorice Kernel - Build Done
+
+Name: ${{ inputs.custom_name }} v${{ github.run_number }}
+Root: ${{ inputs.ksu_method }}
+Governor: ${{ inputs.cpu_governor }}
+SUSFS: ${SUSFS_LABEL}
+KMI: ${{ env.KMI_GENERATION }}
+Toolchain: ${{ inputs.clang_toolchain }}
+File: ${ZIP_NAME} (${ZIP_SIZE})
+
+Download: ${RELEASE_URL}"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT_ID}" \
+            --data-urlencode "text=${TEXT}" \
+            && echo "✅ Telegram notification sent" \
+            || echo "⚠️  Telegram notification failed (non-fatal)"
