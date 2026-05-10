@@ -301,66 +301,64 @@ jobs:
           fi
           echo "✅ KMI_GENERATION=$DETECTED_KMI applied to all config files"
 
+      # FIX BOOTLOOP #1: Ganti setup.sh builtin dengan integrasi manual.
+      # setup.sh builtin buat SYMLINK drivers/kernelsu → ../KernelSU-Next/kernel
+      # yang bisa break custom toolchain build (non-Bazel) karena path resolution
+      # berbeda. Integrasi manual: clone repo, COPY (bukan symlink) folder kernel/
+      # ke drivers/kernelsu, git add agar SUSFS patch bisa apply dengan benar.
       - name: Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           set -euo pipefail
           cd kernel
+
           KSU_METHOD="${{ inputs.ksu_method }}"
           echo "Installing KSU variant: $KSU_METHOD"
-          
+
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            # Clone KernelSU-Next (repo resmi: KernelSU-Next/KernelSU-Next, branch: next-ul)
             echo "Cloning KernelSU-Next..."
-            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git -b next-ul KernelSU-Next
-            
-            # Kernel source ada di kernel/common/ — copy folder kernel/ dari repo ke drivers/kernelsu
-            echo "Integrating KernelSU-Next into kernel/common/drivers/kernelsu..."
+            git clone --depth=1               https://github.com/rifsxd/KernelSU-Next.git               -b next KernelSU-Next
+
+            echo "Copying KernelSU-Next driver into common/drivers/kernelsu..."
+            # Hapus dulu kalau sudah ada (symlink atau direktori lama)
+            rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
-            
-            # Verify file kritis ada
-            if [ ! -f "common/drivers/kernelsu/ksu.c" ]; then
-              echo "❌ ERROR: common/drivers/kernelsu/ksu.c not found!"
-              ls -la common/drivers/kernelsu/ || true
-              exit 1
+
+            # Verifikasi file kritis ada
+            for f in ksu.c Kconfig Makefile; do
+              if [ ! -f "common/drivers/kernelsu/$f" ]; then
+                echo "❌ ERROR: common/drivers/kernelsu/$f not found!"
+                ls -la common/drivers/kernelsu/ | head -20 || true
+                exit 1
+              fi
+            done
+
+            # Daftarkan ke drivers/Makefile
+            if ! grep -q 'CONFIG_KSU' common/drivers/Makefile; then
+              echo 'obj-$(CONFIG_KSU) += kernelsu/' >> common/drivers/Makefile
+              echo "   Added KSU to drivers/Makefile"
             fi
-            
-            # CRITICAL: git add supaya file KernelSU masuk ke git index
-            # Tanpa ini, git apply --3way untuk SUSFS patch akan gagal karena
-            # git tidak tahu file-file di drivers/kernelsu/ itu ada
+
+            # Daftarkan ke drivers/Kconfig
+            if ! grep -q 'kernelsu/Kconfig' common/drivers/Kconfig; then
+              sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig
+              echo "   Added KSU Kconfig to drivers/Kconfig"
+            fi
+
+            # PENTING: git add agar file masuk ke git index
+            # Tanpa ini, git apply --3way untuk SUSFS patch gagal karena
+            # git tidak mengenal file-file baru di drivers/kernelsu/
             cd common
             git add drivers/kernelsu/
             cd ..
-            
-            # Daftarkan ke drivers/Kconfig
-            if ! grep -q "drivers/kernelsu/Kconfig" common/drivers/Kconfig; then
-              echo "Adding KernelSU to drivers/Kconfig..."
-              printf '\nsource "drivers/kernelsu/Kconfig"\n' >> common/drivers/Kconfig
-            fi
-            
-            # Daftarkan ke drivers/Makefile
-            if ! grep -q "kernelsu" common/drivers/Makefile; then
-              echo "Adding KernelSU to drivers/Makefile..."
-              printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
-            fi
-            
-            # Get KSU version
+
             KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION)"
-            
+            echo "✅ KernelSU-Next integrated manually (version: $KSU_VERSION)"
           else
             echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
             exit 1
           fi
-          
-          # Final verify
-          if [ ! -d "common/drivers/kernelsu" ]; then
-            echo "❌ ERROR: common/drivers/kernelsu not found after integration!"
-            exit 1
-          fi
-          echo "✅ KernelSU integration verified"
 
-      # REFACTOR: Conditional SUSFS Setup
       - name: Setup SUSFS
         if: inputs.with_susfs == 'true'
         run: |
@@ -483,32 +481,22 @@ jobs:
             [ ! -f "fs/susfs.c" ] && echo "❌ ERROR: fs/susfs.c not found!" && exit 1
             [ ! -f "include/linux/susfs.h" ] && echo "❌ ERROR: susfs.h not found!" && exit 1
 
-            # Cek .rej files — tapi hanya CRITICAL yang block build
-            # Kconfig.rej dan selinux/rules.c.rej tidak critical:
-            #   - Kconfig.rej: SUSFS Kconfig sudah di-inject manual di fallback block di atas
-            #   - selinux/rules.c.rej: hanya tambah susfs SID calls, tidak block compile
-            # Yang CRITICAL adalah .rej di fs/ atau include/ karena itu core SUSFS code
-            CRITICAL_REJ=$(find fs/ include/ -name "*.rej" -type f 2>/dev/null || true)
-            if [ -n "$CRITICAL_REJ" ]; then
-              echo "❌ ERROR: Critical SUSFS patch rejected in fs/ or include/:"
-              for rej in $CRITICAL_REJ; do
-                echo "=== $rej ===" && cat "$rej" && echo "==="
+            # FIX #2: Cek .rej files dengan detail — kalau ada, print isinya dan FAIL BUILD
+            REJ_FILES=$(find . -name "*.rej" -type f 2>/dev/null)
+            if [ -n "$REJ_FILES" ]; then
+              echo "❌ ERROR: Found rejected patch hunks — SUSFS not fully applied!"
+              for rej in $REJ_FILES; do
+                echo "=== $rej ==="
+                cat "$rej"
+                echo "==="
               done
+              echo ""
+              echo "⚠️  Build dihentikan karena SUSFS patch gagal sebagian."
+              echo "   Kemungkinan penyebab: versi SUSFS tidak cocok dengan branch kernel saat ini."
+              echo "   Solusi: cek tag/branch SUSFS di gitlab.com/simonpunk/susfs4ksu"
               exit 1
             fi
-
-            # Log non-critical .rej sebagai warning saja
-            NON_CRIT_REJ=$(find . -name "*.rej" -type f 2>/dev/null || true)
-            if [ -n "$NON_CRIT_REJ" ]; then
-              echo "⚠️  Non-critical rejected hunks (build will continue):"
-              for rej in $NON_CRIT_REJ; do
-                echo "   - $rej"
-              done
-              # Bersihkan .rej agar tidak mengganggu build
-              find . -name "*.rej" -delete 2>/dev/null || true
-            fi
-
-            echo "✅ SUSFS integration complete"
+            echo "✅ SUSFS applied cleanly (no rejected hunks)"
           fi
 
       - name: Apply Custom Patches
@@ -599,8 +587,11 @@ jobs:
           # GKI 6.6 gunakan PREEMPT_DYNAMIC — kernel bisa switch preempt mode at runtime
           # tanpa perlu static full preempt yang break vendor .ko compatibility.
           # CONFIG_HZ di GKI 6.6 dikontrol oleh framework sendiri, tidak perlu override.
+          # FIX BOOTLOOP #3: PREEMPT_DYNAMIC=y sudah otomatis set mode preempt
+          # ke "full" saat runtime. Jangan set CONFIG_PREEMPT=n karena itu
+          # kontradiksi — PREEMPT_DYNAMIC MEMBUTUHKAN PREEMPT di Kconfig.
+          # Cukup enable PREEMPT_DYNAMIC dan disable dua mode lain yang static.
           add_cfg "CONFIG_PREEMPT_DYNAMIC=y"
-          add_cfg "CONFIG_PREEMPT=n"
           add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
           add_cfg "CONFIG_PREEMPT_NONE=n"
           add_cfg "CONFIG_RCU_BOOST=y"
@@ -648,8 +639,12 @@ jobs:
           echo "# Branding" >> $DEFCONFIG
           echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
-          add_cfg "CONFIG_MODVERSIONS=y"
-          echo "CONFIG_MODULE_FORCE_LOAD=y" >> $DEFCONFIG
+          # FIX BOOTLOOP #2: CONFIG_MODVERSIONS dilarang di GKI.
+          # GKI pakai strict ABI — MODVERSIONS aktif bikin semua vendor .ko Xiaomi
+          # gagal load karena checksum mismatch → bootloop.
+          add_cfg "CONFIG_MODVERSIONS=n"
+          # FIX: Gunakan add_cfg bukan echo langsung agar tidak duplikat
+          add_cfg "CONFIG_MODULE_FORCE_LOAD=y"
 
       - name: Patch Build System
         run: |
@@ -699,7 +694,7 @@ jobs:
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
             --lto=none \
-            --local_ram_resources=6144 \
+            --local_resources=memory=6144 \
             --jobs=3 \
             //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
@@ -813,9 +808,16 @@ jobs:
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             TOOLCHAIN_SHORT="Bazel"
           else
-            CLANG_VER=$($CUSTOM_CLANG_PATH/bin/clang --version | head -n1 \
-              | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
-            TOOLCHAIN_SHORT="${TOOLCHAIN_NAME}${CLANG_VER}"
+            # CUSTOM_CLANG_PATH di-set dari GITHUB_ENV di step Download Custom Toolchain
+            # Bisa diakses via env var yang sudah di-export ke GITHUB_ENV
+            _CLANG="${{ env.CUSTOM_CLANG_PATH }}"
+            if [ -n "$_CLANG" ] && [ -f "$_CLANG/bin/clang" ]; then
+              CLANG_VER=$("$_CLANG/bin/clang" --version | head -n1 \
+                | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
+            else
+              CLANG_VER="unknown"
+            fi
+            TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}${CLANG_VER}"
           fi
 
           SUSFS_STR="${{ inputs.with_susfs == 'true' && 'SUSFS' || 'NoSUSFS' }}"
@@ -894,26 +896,29 @@ jobs:
 
             | Info | Value |
             |------|-------|
-            | **Type** | GKI 6.6 |
+            | **Type** | GKI 6.6 ${{ inputs.with_susfs == 'true' && '+ SUSFS' || '(No SUSFS)' }} |
             | **Root** | ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }} |
             | **Governor** | ${{ inputs.cpu_governor }} |
             | **KMI Generation** | ${{ env.KMI_GENERATION }} |
-            | **SUSFS** | ${{ inputs.with_susfs }} |
+            | **SUSFS** | ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }} |
             | **Toolchain** | ${{ inputs.clang_toolchain }} |
 
             ---
-            > Wajib flash vbmeta dulu sebelum install kernel ini!
+            > ⚠️ **Wajib flash vbmeta dulu sebelum install kernel ini!**
+            > ```
             > fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img
             > fastboot --disable-verity --disable-verification flash vbmeta_system vbmeta_system.img
             > fastboot --disable-verity --disable-verification flash vbmeta_vendor vbmeta_vendor.img
+            > ```
+            > Ambil file `.img` dari ROM HyperOS 2 Fastboot yang sesuai versi lo.
           files: dist/*.zip
           draft: false
           prerelease: false
-          append_body: true
+          append_body: false  # true bikin body duplikat kalau matrix build trigger tag yang sama
 
       - name: Send to Telegram
         if: success()
-        continue-on-error: true
+        continue-on-error: true  # Telegram gagal tidak boleh bikin seluruh job merah
         env:
           TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -922,23 +927,11 @@ jobs:
             echo "Telegram secrets not set. Skipping."
             exit 0
           fi
-
-          ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n1 || echo "")
-          ZIP_NAME=$(basename "$ZIP_FILE" 2>/dev/null || echo "unknown.zip")
-          ZIP_SIZE=""
-          [ -f "$ZIP_FILE" ] && ZIP_SIZE=$(du -h "$ZIP_FILE" | cut -f1)
-
-          SUSFS_VAL="${{ inputs.with_susfs }}"
-          SUSFS_STR="No"
-          [ "$SUSFS_VAL" = "true" ] && SUSFS_STR="Yes"
-
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}"
-
-          TEXT=$(printf 'Castorice Kernel - Build Done\n\nName: ${{ inputs.custom_name }} v${{ github.run_number }}\nRoot: ${{ inputs.ksu_method }}\nGovernor: ${{ inputs.cpu_governor }}\nSUSFS: %s\nKMI: ${{ env.KMI_GENERATION }}\nToolchain: ${{ inputs.clang_toolchain }}\nFile: %s (%s)\n\nDownload: %s' \
-            "$SUSFS_STR" "$ZIP_NAME" "$ZIP_SIZE" "$RELEASE_URL")
-
-          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TG_CHAT_ID}" \
-            --data-urlencode "text=${TEXT}" \
-            && echo "Telegram notification sent" \
-            || echo "Telegram notification failed (non-fatal)"
+          ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
+          [ -z "$ZIP_FILE" ] && echo "No zip found." && exit 0
+          CAPTION="🚀 *New Castorice Kernel Build!*%0A%0A*Name:* ${{ inputs.custom_name }} v${{ github.run_number }}%0A*Root:* ${{ inputs.ksu_method }}%0A*Governor:* ${{ inputs.cpu_governor }}%0A*SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}%0A*KMI:* ${{ env.KMI_GENERATION }}%0A*Toolchain:* ${{ inputs.clang_toolchain }}%0A%0A[Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
+            -F chat_id="${TG_CHAT_ID}" \
+            -F document=@"${ZIP_FILE}" \
+            -F caption="${CAPTION}" \
+            -F parse_mode="Markdown"
