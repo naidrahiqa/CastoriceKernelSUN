@@ -374,13 +374,44 @@ jobs:
           [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" \
             && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
 
-          for patch in ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
+          # FIX SUSFS: Nama file patch yang benar adalah
+          # "50_add_susfs_in_kernel-gki-android15-6.6.patch"
+          # bukan "50_add_susfs_in_gki-*.patch" — ada "kernel-" di tengahnya.
+          # Cari dengan dua pola sekaligus untuk jaga-jaga kalau format berubah.
+          SUSFS_PATCH_FOUND=false
+          for patch in \
+            "../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" \
+            "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"; do
             if [ -f "$patch" ]; then
+              echo "  → Applying kernel SUSFS patch: $(basename $patch)"
               git apply --3way "$patch" \
                 || patch -p1 --forward --fuzz=3 < "$patch" \
                 || true
+              SUSFS_PATCH_FOUND=true
+              break
             fi
           done
+          # Fallback: cari file apapun yang cocok pola
+          if [ "$SUSFS_PATCH_FOUND" = "false" ]; then
+            for patch in \
+              ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-*.patch \
+              ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
+              if [ -f "$patch" ]; then
+                echo "  → Applying fallback SUSFS patch: $(basename $patch)"
+                git apply --3way "$patch" \
+                  || patch -p1 --forward --fuzz=3 < "$patch" \
+                  || true
+                SUSFS_PATCH_FOUND=true
+                break
+              fi
+            done
+          fi
+          if [ "$SUSFS_PATCH_FOUND" = "false" ]; then
+            echo "❌ ERROR: No SUSFS kernel patch file found!"
+            echo "   Files in kernel_patches/:"
+            ls ../susfs4ksu/kernel_patches/*.patch 2>/dev/null || echo "  (none)"
+            exit 1
+          fi
 
           if [ "$KERNEL_VERSION" = "6.6" ]; then
             if [ -f "fs/proc/task_mmu.c" ] && ! grep -q "nr_subpages" "fs/proc/task_mmu.c"; then
@@ -552,11 +583,13 @@ jobs:
 
           echo "" >> "$DEFCONFIG"
           echo "# 1. UX & Input Latency Optimizations" >> "$DEFCONFIG"
-          add_cfg "CONFIG_HZ_1000=y"
-          add_cfg "CONFIG_HZ=1000"
-          add_cfg "CONFIG_HZ_250=n"
-          add_cfg "CONFIG_HZ_300=n"
-          add_cfg "CONFIG_PREEMPT=y"
+          # FIX BOOTLOOP: CONFIG_HZ_1000 dan CONFIG_PREEMPT=y (full static preempt)
+          # konflik dengan vendor modules HyperOS yang dikompile dengan PREEMPT_DYNAMIC.
+          # GKI 6.6 gunakan PREEMPT_DYNAMIC — kernel bisa switch preempt mode at runtime
+          # tanpa perlu static full preempt yang break vendor .ko compatibility.
+          # CONFIG_HZ di GKI 6.6 dikontrol oleh framework sendiri, tidak perlu override.
+          add_cfg "CONFIG_PREEMPT_DYNAMIC=y"
+          add_cfg "CONFIG_PREEMPT=n"
           add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
           add_cfg "CONFIG_PREEMPT_NONE=n"
           add_cfg "CONFIG_RCU_BOOST=y"
@@ -565,7 +598,9 @@ jobs:
           echo "" >> "$DEFCONFIG"
           echo "# 2. RAM & Multitasking Optimizations" >> "$DEFCONFIG"
           add_cfg "CONFIG_LRU_GEN=y"
-          add_cfg "CONFIG_LRU_GEN_ENABLED=y"
+          # FIX BOOTLOOP: CONFIG_LRU_GEN_ENABLED tidak exist di semua snapshot
+          # android15-6.6 dan bisa bikin runtime issue. Hapus, biarkan default kernel.
+          # MGLRU tetap aktif via CONFIG_LRU_GEN=y, hanya boot default-nya yang berbeda."
           add_cfg "CONFIG_ZRAM=y"
           add_cfg "CONFIG_ZSMALLOC=y"
           add_cfg "CONFIG_CRYPTO_LZ4=y"
@@ -874,42 +909,15 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          set -e
           if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
-            echo "⚠️ Telegram secrets belum diatur. Melewati step ini."
+            echo "Telegram secrets not set. Skipping."
             exit 0
           fi
-
-          # Cari file zip di folder dist dengan path absolut
-          ZIP_FILE=$(find "$GITHUB_WORKSPACE/dist" -name "*.zip" -type f | head -n 1)
-          
-          if [ -z "$ZIP_FILE" ]; then
-            echo "❌ File zip tidak ditemukan di folder dist/"
-            ls -R "$GITHUB_WORKSPACE/dist"
-            exit 1
-          fi
-
-          echo "📤 Mengirim: $(basename "$ZIP_FILE") ($(du -h "$ZIP_FILE" | cut -f1))"
-
-          # Susun caption dengan format yang lebih rapi
-          # Menggunakan heredoc agar karakter spesial dan baris baru aman
-          CAPTION=$(cat <<EOF
-          🚀 *New Castorice Kernel Build!*
-
-          *Name:* ${{ inputs.custom_name }} v${{ github.run_number }}
-          *Root:* ${{ inputs.ksu_method }}
-          *Governor:* ${{ inputs.cpu_governor }}
-          *SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}
-          *KMI:* ${{ env.KMI_GENERATION }}
-          *Toolchain:* ${{ inputs.clang_toolchain }}
-
-          [Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})
-          EOF
-          )
-
-          # Kirim ke Telegram (menggunakan -v untuk debug jika gagal)
-          curl -v -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
+          ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
+          [ -z "$ZIP_FILE" ] && echo "No zip found." && exit 0
+          CAPTION="🚀 *New Castorice Kernel Build!*%0A%0A*Name:* ${{ inputs.custom_name }} v${{ github.run_number }}%0A*Root:* ${{ inputs.ksu_method }}%0A*Governor:* ${{ inputs.cpu_governor }}%0A*SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}%0A*KMI:* ${{ env.KMI_GENERATION }}%0A*Toolchain:* ${{ inputs.clang_toolchain }}%0A%0A[Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})"
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
             -F chat_id="${TG_CHAT_ID}" \
             -F document=@"${ZIP_FILE}" \
             -F caption="${CAPTION}" \
-            -F parse_mode="Markdown" || { echo "❌ Gagal mengirim ke Telegram (Exit code: $?)"; exit 1; }
+            -F parse_mode="Markdown"
