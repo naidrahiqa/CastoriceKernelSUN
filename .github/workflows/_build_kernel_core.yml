@@ -306,7 +306,8 @@ jobs:
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
             echo "Cloning KernelSU-Next..."
-            git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git -b next KernelSU-Next
+            # Repo resmi sudah pindah dari rifsxd/ ke KernelSU-Next/ org, branch: next
+            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git -b next KernelSU-Next
 
             echo "Copying KernelSU-Next driver into common/drivers/kernelsu..."
             # Hapus dulu kalau sudah ada (symlink atau direktori lama)
