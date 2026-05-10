@@ -307,59 +307,56 @@ jobs:
           cd kernel
           KSU_METHOD="${{ inputs.ksu_method }}"
           echo "Installing KSU variant: $KSU_METHOD"
+          
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            curl -LSsf "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s builtin
-          else
-            echo "Unsupported KSU method: $KSU_METHOD"
-            exit 1
-          fi
-          if [ -d "KernelSU" ]; then
-            KSU_VERSION=$(cd KernelSU && git rev-list --count HEAD)
-          elif [ -d "KernelSU-Next" ]; then
-            KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
-          else
-            KSU_VERSION="unknown"
-          fi
-          echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-          echo "✅ KSU $KSU_METHOD installed (version: $KSU_VERSION)"
-
-      - name: Verify KSU Driver Integration
-        run: |
-          set -euo pipefail
-          cd kernel/common
-          if [ -d "drivers/kernelsu" ] || [ -L "drivers/kernelsu" ]; then
-            KSU_DIR="drivers/kernelsu"
-          else
-            echo "❌ ERROR: drivers/kernelsu not found"
-            ls -la drivers/ | grep -i ksu || echo "  (no KSU entries)"
-            exit 1
-          fi
-          if [ -L "$KSU_DIR" ]; then
-            echo "⚠️  KSU is a symlink, converting to real directory for Bazel compatibility..."
-            REAL_PATH=$(readlink -f "$KSU_DIR")
-            rm "$KSU_DIR"
-            cp -rL "$REAL_PATH" "$KSU_DIR"
-            echo "   Copied from: $REAL_PATH"
-          fi
-          for f in Kconfig Makefile; do
-            if [ ! -f "$KSU_DIR/$f" ]; then
-              echo "❌ ERROR: $KSU_DIR/$f not found!"
-              ls -la "$KSU_DIR/" || true
+            # Clone KernelSU-Next repository
+            echo "Cloning KernelSU-Next..."
+            git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git -b next KernelSU-Next
+            
+            # Copy KernelSU-Next kernel module to drivers/
+            echo "Integrating KernelSU-Next into kernel..."
+            cp -r KernelSU-Next/kernel drivers/kernelsu
+            
+            # Verify critical files exist
+            if [ ! -f "drivers/kernelsu/ksu.c" ]; then
+              echo "❌ ERROR: drivers/kernelsu/ksu.c not found!"
+              ls -la drivers/kernelsu/ || true
               exit 1
             fi
-          done
-          if ! ls $KSU_DIR/*.c 1> /dev/null 2>&1 && [ ! -d "$KSU_DIR/core" ]; then
-            echo "❌ ERROR: No .c files or core/ directory found in $KSU_DIR!"
+            
+            # Add KernelSU to drivers/Kconfig
+            if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
+              echo "Adding KernelSU to drivers/Kconfig..."
+              sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+            fi
+            
+            # Add KernelSU to drivers/Makefile
+            if ! grep -q "kernelsu" drivers/Makefile; then
+              echo "Adding KernelSU to drivers/Makefile..."
+              echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+            fi
+            
+            # Get KSU version
+            KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
+            echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+            echo "✅ KernelSU-Next integrated successfully (version: $KSU_VERSION)"
+            
+          else
+            echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
+            echo "Only 'kernelsu-next' is supported."
             exit 1
           fi
-          if ! grep -q 'CONFIG_KSU' drivers/Makefile; then
-            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          
+          # Verify integration
+          if [ ! -d "drivers/kernelsu" ]; then
+            echo "❌ ERROR: drivers/kernelsu directory not found after integration!"
+            exit 1
           fi
-          if ! grep -q 'kernelsu/Kconfig' drivers/Kconfig; then
-            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
-          fi
-          echo "✅ KSU driver integration verified"
+          
+          echo "✅ KernelSU integration verified"
+          ls -la drivers/kernelsu/ | head -n 20
 
+      # REFACTOR: Conditional SUSFS Setup
       - name: Setup SUSFS
         if: inputs.with_susfs == 'true'
         run: |

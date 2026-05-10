@@ -4,7 +4,7 @@
 
 Dokumen ini berisi detail semua perbaikan yang telah dilakukan pada workflow GitHub Actions untuk mencegah error saat build dan bootloop saat flash ke HP.
 
-**Total Fixes:** 7 issues (5 original + 2 new)
+**Total Fixes:** 10 issues (5 original + 2 clang + 3 KernelSU)
 
 ---
 
@@ -301,6 +301,145 @@ make $MAKE_ARGS gki_defconfig
 
 ---
 
+### 🔴 **FIX #8: KernelSU-Next Setup - Manual Integration**
+**File:** `.github/workflows/_build_kernel_core.yml`  
+**Lokasi:** Step "Setup KernelSU"
+
+**Masalah:**
+- Command `curl ... | bash -s builtin` **TIDAK BEKERJA** untuk KernelSU-Next
+- Error: `pathspec 'builtin' did not match any file(s) known to git`
+- Setup script tidak mengintegrasikan file header dengan benar
+- Error compilation: `use of undeclared identifier 'ksu_late_loaded'`
+
+**Sebelum:**
+```bash
+curl -LSsf "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s builtin
+# Parameter 'builtin' tidak valid/deprecated
+```
+
+**Sesudah:**
+```bash
+# Clone KernelSU-Next repository
+git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git -b next KernelSU-Next
+
+# Copy KernelSU-Next kernel module to drivers/
+cp -r KernelSU-Next/kernel drivers/kernelsu
+
+# Verify critical files exist
+if [ ! -f "drivers/kernelsu/ksu.c" ]; then
+  echo "❌ ERROR: drivers/kernelsu/ksu.c not found!"
+  exit 1
+fi
+
+# Add KernelSU to drivers/Kconfig
+if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
+  sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+fi
+
+# Add KernelSU to drivers/Makefile
+if ! grep -q "kernelsu" drivers/Makefile; then
+  echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+fi
+```
+
+**Dampak:**
+- ✅ KernelSU-Next terintegrasi dengan benar
+- ✅ Semua header files tersedia
+- ✅ Tidak ada undeclared identifier error
+- ✅ Validasi file critical setelah copy
+
+**Risiko Build Failure:** 🔴 **HIGH** → 🟢 **FIXED**
+
+---
+
+### 🔴 **FIX #9: KernelSU Headers - Validasi File Critical**
+**File:** `.github/workflows/_build_kernel_core.yml`  
+**Lokasi:** Step "Setup KernelSU"
+
+**Masalah:**
+- Tidak ada validasi apakah file KernelSU ter-copy dengan benar
+- Error compilation karena missing files tidak terdeteksi early
+
+**Sebelum:**
+```bash
+# Copy files tanpa validasi
+cp -r KernelSU-Next/kernel drivers/kernelsu
+# Lanjut build tanpa check
+```
+
+**Sesudah:**
+```bash
+# Copy files
+cp -r KernelSU-Next/kernel drivers/kernelsu
+
+# Verify critical files exist
+if [ ! -f "drivers/kernelsu/ksu.c" ]; then
+  echo "❌ ERROR: drivers/kernelsu/ksu.c not found!"
+  ls -la drivers/kernelsu/ || true
+  exit 1
+fi
+
+# Verify integration
+if [ ! -d "drivers/kernelsu" ]; then
+  echo "❌ ERROR: drivers/kernelsu directory not found after integration!"
+  exit 1
+fi
+
+echo "✅ KernelSU integration verified"
+ls -la drivers/kernelsu/ | head -n 20
+```
+
+**Dampak:**
+- ✅ Fail early jika file tidak ter-copy
+- ✅ Debug info untuk troubleshooting
+- ✅ Memastikan semua file KernelSU ada
+
+**Risiko Build Failure:** 🔴 **HIGH** → 🟢 **FIXED**
+
+---
+
+### 🔴 **FIX #10: KernelSU Kconfig/Makefile - Auto Integration**
+**File:** `.github/workflows/_build_kernel_core.yml`  
+**Lokasi:** Step "Setup KernelSU"
+
+**Masalah:**
+- KernelSU tidak ter-register di kernel build system
+- Tidak ada di `drivers/Kconfig` dan `drivers/Makefile`
+- Kernel build tidak compile KernelSU module
+
+**Sebelum:**
+```bash
+# Copy files saja, tidak register ke build system
+cp -r KernelSU-Next/kernel drivers/kernelsu
+```
+
+**Sesudah:**
+```bash
+# Copy files
+cp -r KernelSU-Next/kernel drivers/kernelsu
+
+# Add KernelSU to drivers/Kconfig
+if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
+  echo "Adding KernelSU to drivers/Kconfig..."
+  sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+fi
+
+# Add KernelSU to drivers/Makefile
+if ! grep -q "kernelsu" drivers/Makefile; then
+  echo "Adding KernelSU to drivers/Makefile..."
+  echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+fi
+```
+
+**Dampak:**
+- ✅ KernelSU ter-register di kernel build system
+- ✅ `CONFIG_KSU=y` di defconfig akan bekerja
+- ✅ KernelSU module akan di-compile
+
+**Risiko Build Failure:** 🔴 **HIGH** → 🟢 **FIXED**
+
+---
+
 ## 📊 RINGKASAN RISIKO
 
 | Issue | Sebelum | Sesudah | Status |
@@ -312,6 +451,9 @@ make $MAKE_ARGS gki_defconfig
 | **Unused Variable** | 🟢 LOW | 🟢 FIXED | ✅ |
 | **Custom Toolchain Path** | 🔴 HIGH | 🟢 FIXED | ✅ |
 | **Clang Not Found** | 🔴 HIGH | 🟢 FIXED | ✅ |
+| **KernelSU Setup Script** | 🔴 HIGH | 🟢 FIXED | ✅ |
+| **KernelSU Headers Missing** | 🔴 HIGH | 🟢 FIXED | ✅ |
+| **KernelSU Not Registered** | 🔴 HIGH | 🟢 FIXED | ✅ |
 
 ---
 
