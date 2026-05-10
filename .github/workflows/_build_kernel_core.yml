@@ -926,7 +926,6 @@ jobs:
             exit 0
           fi
 
-          # Ambil nama zip untuk ditampilkan di notif
           ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n1 || echo "")
           ZIP_NAME=$(basename "$ZIP_FILE" 2>/dev/null || echo "unknown.zip")
           ZIP_SIZE=""
@@ -934,45 +933,26 @@ jobs:
             ZIP_SIZE=$(du -h "$ZIP_FILE" | cut -f1)
           fi
 
-          SUSFS_STR="${{ inputs.with_susfs == 'true' && 'Yes ✅' || 'No ❌' }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}"
+          SUSFS_VAL="${{ inputs.with_susfs }}"
+          SUSFS_STR="No"
+          [ "$SUSFS_VAL" = "true" ] && SUSFS_STR="Yes"
 
-          MESSAGE="🚀 *Castorice Kernel — Build Selesai\!*
+          TEXT="Castorice Kernel - Build Done
 
-📦 *$ZIP_NAME*
-📏 Size: ${ZIP_SIZE}
+Name: ${{ inputs.custom_name }} v${{ github.run_number }}
+Root: ${{ inputs.ksu_method }}
+Governor: ${{ inputs.cpu_governor }}
+SUSFS: ${SUSFS_STR}
+KMI: ${{ env.KMI_GENERATION }}
+Toolchain: ${{ inputs.clang_toolchain }}
+File: ${ZIP_NAME} (${ZIP_SIZE})
 
-| Info | Value |
-\|---\|---\|
-| 🏷 Name | ${{ inputs.custom_name }} v${{ github.run_number }} |
-| 🔑 Root | ${{ inputs.ksu_method }} |
-| ⚙️ Governor | ${{ inputs.cpu_governor }} |
-| 🛡 SUSFS | ${SUSFS_STR} |
-| 🔢 KMI | ${{ env.KMI_GENERATION }} |
-| 🛠 Toolchain | ${{ inputs.clang_toolchain }} |
+Download: ${RELEASE_URL}"
 
-[⬇️ Download dari GitHub Releases](${RELEASE_URL})"
-
-          # Kirim sebagai pesan teks dengan link download
-          # (tidak upload file langsung — Telegram bot limit 50MB, zip kernel bisa lebih)
-          HTTP_CODE=$(curl -s -o /tmp/tg_response.json -w "%{http_code}" \
-            -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"chat_id\": \"${TG_CHAT_ID}\",
-              \"text\": $(echo "$MESSAGE" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'),
-              \"parse_mode\": \"MarkdownV2\",
-              \"disable_web_page_preview\": false
-            }")
-
-          if [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ Telegram notification sent successfully"
-          else
-            echo "⚠️ Telegram returned HTTP $HTTP_CODE"
-            cat /tmp/tg_response.json || true
-            # Fallback: kirim plain text tanpa formatting
-            curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
-              -d chat_id="${TG_CHAT_ID}" \
-              -d text="✅ Castorice Kernel build done: $ZIP_NAME | Download: ${RELEASE_URL}" \
-              || true
-          fi
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT_ID}" \
+            --data-urlencode "text=${TEXT}" \
+            -d "disable_web_page_preview=false" \
+            && echo "✅ Telegram notification sent" \
+            || echo "⚠️ Telegram notification failed (non-fatal)"
