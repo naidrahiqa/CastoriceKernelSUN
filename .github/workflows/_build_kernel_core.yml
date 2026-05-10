@@ -309,52 +309,49 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
           
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            # Clone KernelSU-Next repository
+            # Clone KernelSU-Next (repo resmi: KernelSU-Next/KernelSU-Next, branch: next-ul)
             echo "Cloning KernelSU-Next..."
-            git clone --depth=1 https://github.com/rifsxd/KernelSU-Next.git -b next KernelSU-Next
+            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git -b next-ul KernelSU-Next
             
-            # Copy KernelSU-Next kernel module to drivers/
-            echo "Integrating KernelSU-Next into kernel..."
-            cp -r KernelSU-Next/kernel drivers/kernelsu
+            # Kernel source ada di kernel/common/ — copy folder kernel/ dari repo ke drivers/kernelsu
+            echo "Integrating KernelSU-Next into kernel/common/drivers/kernelsu..."
+            cp -r KernelSU-Next/kernel common/drivers/kernelsu
             
-            # Verify critical files exist
-            if [ ! -f "drivers/kernelsu/ksu.c" ]; then
-              echo "❌ ERROR: drivers/kernelsu/ksu.c not found!"
-              ls -la drivers/kernelsu/ || true
+            # Verify file kritis ada
+            if [ ! -f "common/drivers/kernelsu/ksu.c" ]; then
+              echo "❌ ERROR: common/drivers/kernelsu/ksu.c not found!"
+              ls -la common/drivers/kernelsu/ || true
               exit 1
             fi
             
-            # Add KernelSU to drivers/Kconfig
-            if ! grep -q "source \"drivers/kernelsu/Kconfig\"" drivers/Kconfig; then
+            # Daftarkan ke drivers/Kconfig
+            if ! grep -q "drivers/kernelsu/Kconfig" common/drivers/Kconfig; then
               echo "Adding KernelSU to drivers/Kconfig..."
-              sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+              printf '\nsource "drivers/kernelsu/Kconfig"\n' >> common/drivers/Kconfig
             fi
             
-            # Add KernelSU to drivers/Makefile
-            if ! grep -q "kernelsu" drivers/Makefile; then
+            # Daftarkan ke drivers/Makefile
+            if ! grep -q "kernelsu" common/drivers/Makefile; then
               echo "Adding KernelSU to drivers/Makefile..."
-              echo "obj-\$(CONFIG_KSU) += kernelsu/" >> drivers/Makefile
+              printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> common/drivers/Makefile
             fi
             
             # Get KSU version
             KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-            echo "✅ KernelSU-Next integrated successfully (version: $KSU_VERSION)"
+            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION)"
             
           else
             echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
-            echo "Only 'kernelsu-next' is supported."
             exit 1
           fi
           
-          # Verify integration
-          if [ ! -d "drivers/kernelsu" ]; then
-            echo "❌ ERROR: drivers/kernelsu directory not found after integration!"
+          # Final verify
+          if [ ! -d "common/drivers/kernelsu" ]; then
+            echo "❌ ERROR: common/drivers/kernelsu not found after integration!"
             exit 1
           fi
-          
           echo "✅ KernelSU integration verified"
-          ls -la drivers/kernelsu/ | head -n 20
 
       # REFACTOR: Conditional SUSFS Setup
       - name: Setup SUSFS
