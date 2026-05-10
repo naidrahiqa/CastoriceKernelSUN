@@ -608,14 +608,24 @@ jobs:
       - name: Patch Build System
         run: |
           cd kernel/common
+
+          # FIX Error 1 & 4: Hapus file abi_gki_protected_exports_* DAN
+          # hapus semua referensinya di BUILD.bazel sebelum Bazel parsing.
+          # Root cause: Bazel gagal karena file dihapus tapi BUILD.bazel masih
+          # referensikan file itu sebagai input → "missing input file" error.
           rm -rf android/abi_gki_protected_exports_* || true
           if [ -f "BUILD.bazel" ]; then
+            # Hapus baris yang referensikan abi_gki_protected_exports
+            sed -i '/abi_gki_protected_exports/d' BUILD.bazel
+            # Patch lainnya
             sed -i \
               -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' \
               -e 's/trim_nonlisted_kmi = True/trim_nonlisted_kmi = False/g' \
               BUILD.bazel
+            echo "✅ BUILD.bazel patched (protected_exports refs removed)"
           fi
+
           [ -f "modules.bzl" ] && sed -i 's/protected_modules = \[.*\]/protected_modules = []/' modules.bzl 2>/dev/null || true
           for f in build.config.gki build.config.gki.aarch64; do
             [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
@@ -667,8 +677,17 @@ jobs:
           export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
           which clang || { echo "❌ clang not in PATH!"; exit 1; }
           clang --version
+
+          # FIX Error 3: Azure (dan toolchain lama lainnya) bawa ld versi lama
+          # yang tidak support format RELR di libc.so.6 Ubuntu 22.04.
+          # Error: "unknown type [0x13] section .relr.dyn → cannot find libc.so.6"
+          # Solusi: override LD ke system linker (/usr/bin/ld.bfd) hanya untuk
+          # host tools (scripts/basic/fixdep, dll), bukan untuk target aarch64.
+          # HOSTLDFLAGS=-fuse-ld=bfd memastikan host binary link pakai system ld.
           MAKE_ARGS="O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
-            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-"
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            HOSTLDFLAGS=-fuse-ld=bfd"
+
           make $MAKE_ARGS gki_defconfig
           make -j$(nproc) $MAKE_ARGS 2>&1 | tee ../build.log
         env:
@@ -700,14 +719,21 @@ jobs:
 
       - name: Verify Build
         run: |
+          # FIX Error 2: Isolasi subshell du agar tidak trigger false positive exit 1
           HAS_IMAGE=false
           for f in dist/Image dist/Image.gz dist/Image.lz4; do
             if [ -f "$f" ]; then
-              echo "Found: $f ($(du -h $f | cut -f1))"
+              SIZE=$(du -h "$f" 2>/dev/null | cut -f1 || echo "?")
+              echo "✅ Found: $f ($SIZE)"
               HAS_IMAGE=true
             fi
           done
-          [ "$HAS_IMAGE" = "false" ] && echo "❌ No kernel image found!" && exit 1
+          if [ "$HAS_IMAGE" = "false" ]; then
+            echo "❌ No kernel image found in dist/!"
+            ls -lah dist/ || echo "  (empty or missing)"
+            exit 1
+          fi
+          echo "✅ Verify Build passed."
 
       - name: Upload Debug Artifacts (on failure)
         if: failure()
@@ -845,18 +871,18 @@ jobs:
       - name: Send to Telegram
         if: success()
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
             echo "Telegram secrets not set. Skipping."
             exit 0
           fi
           ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
           [ -z "$ZIP_FILE" ] && echo "No zip found." && exit 0
           CAPTION="🚀 *New Castorice Kernel Build!*%0A%0A*Name:* ${{ inputs.custom_name }} v${{ github.run_number }}%0A*Root:* ${{ inputs.ksu_method }}%0A*Governor:* ${{ inputs.cpu_governor }}%0A*SUSFS:* ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }}%0A*KMI:* ${{ env.KMI_GENERATION }}%0A*Toolchain:* ${{ inputs.clang_toolchain }}%0A%0A[Download from GitHub](https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }})"
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument" \
-            -F chat_id="${TELEGRAM_CHAT_ID}" \
+          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendDocument" \
+            -F chat_id="${TG_CHAT_ID}" \
             -F document=@"${ZIP_FILE}" \
             -F caption="${CAPTION}" \
             -F parse_mode="Markdown"
