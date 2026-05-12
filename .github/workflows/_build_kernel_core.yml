@@ -47,8 +47,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ANDROID_VERSION: android15
   KERNEL_VERSION: "6.6"
-  # FIX #1: KMI_GENERATION tidak lagi hardcode di sini,
-  # akan diambil dinamis dari kernel source di step "Set KMI Generation"
   KMI_GENERATION: ""
   KSU_VERSION: ""
   SUSFS_OK: "false"
@@ -237,14 +235,11 @@ jobs:
           cd common
           make kernelversion
 
-      # FIX #1: KMI_GENERATION diambil DINAMIS dari kernel source,
-      # bukan hardcode. Ini penting karena branch rolling bisa punya KMI berbeda.
       - name: Set KMI Generation
         run: |
           set -euo pipefail
           cd kernel/common
 
-          # Ambil KMI_GENERATION dari source secara dinamis
           DETECTED_KMI=""
           if [ -f "build.config.common" ]; then
             DETECTED_KMI=$(grep -oP '(?<=KMI_GENERATION=)\d+' build.config.common | head -n1)
@@ -252,14 +247,12 @@ jobs:
           if [ -z "$DETECTED_KMI" ] && [ -f "build.config.gki" ]; then
             DETECTED_KMI=$(grep -oP '(?<=KMI_GENERATION=)\d+' build.config.gki | head -n1)
           fi
-          # Fallback: cari di stamp.bzl
           if [ -z "$DETECTED_KMI" ]; then
             STAMP_FILE="../build/kernel/kleaf/impl/stamp.bzl"
             if [ -f "$STAMP_FILE" ]; then
               DETECTED_KMI=$(grep -oP '(?<=kmi_generation = ")\d+' "$STAMP_FILE" | head -n1)
             fi
           fi
-          # Fallback akhir: hardcode 8 (nilai umum android15-6.6)
           if [ -z "$DETECTED_KMI" ]; then
             echo "⚠️  WARNING: Could not detect KMI_GENERATION from source, falling back to 8"
             DETECTED_KMI="8"
@@ -268,7 +261,6 @@ jobs:
           echo "✅ KMI_GENERATION detected: $DETECTED_KMI"
           echo "KMI_GENERATION=$DETECTED_KMI" >> $GITHUB_ENV
 
-          # Tulis ke semua config file yang relevan
           if [ -f "build.config.common" ]; then
             if grep -q "KMI_GENERATION" build.config.common; then
               sed -i "s/KMI_GENERATION=.*/KMI_GENERATION=${DETECTED_KMI}/" build.config.common
@@ -284,18 +276,17 @@ jobs:
           [ -f "$STAMP_FILE" ] && grep -q "kmi_generation" "$STAMP_FILE" \
             && sed -i "s/kmi_generation = \"[0-9]*\"/kmi_generation = \"${DETECTED_KMI}\"/" "$STAMP_FILE" || true
 
-          # Verifikasi
           if [ -f "build.config.common" ] && ! grep -q "KMI_GENERATION=${DETECTED_KMI}" build.config.common; then
             echo "❌ ERROR: KMI_GENERATION not set correctly!"
             exit 1
           fi
           echo "✅ KMI_GENERATION=$DETECTED_KMI applied to all config files"
 
-      # FIX BOOTLOOP #1: Ganti setup.sh builtin dengan integrasi manual.
-      # setup.sh builtin buat SYMLINK drivers/kernelsu → ../KernelSU-Next/kernel
-      # yang bisa break custom toolchain build (non-Bazel) karena path resolution
-      # berbeda. Integrasi manual: clone repo, COPY (bukan symlink) folder kernel/
-      # ke drivers/kernelsu, git add agar SUSFS patch bisa apply dengan benar.
+      # FIX UTAMA: Clone KernelSU-Next dari branch "next" (bukan "main").
+      # Branch resmi adalah "next" — https://kernelsu-next.github.io/webpage/pages/installation.html
+      # Struktur repo: folder driver ada di KernelSU-Next/kernel/ (bukan root).
+      # KSU_VERSION diambil dari Makefile kernel driver, bukan rev-list seluruh repo
+      # (rev-list seluruh repo menghitung commit manager+userspace juga → angka salah).
       - name: Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           set -euo pipefail
@@ -305,12 +296,22 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            echo "Cloning KernelSU-Next..."
-            # Repo resmi sudah pindah dari rifsxd/ ke KernelSU-Next/ org, branch: next
-            git clone --depth=1 https://github.com/KernelSU-Next/KernelSU-Next.git -b next KernelSU-Next
+            echo "Cloning KernelSU-Next (branch: next)..."
+            # FIX: Branch resmi adalah "next", bukan "main"
+            git clone --depth=1 \
+              https://github.com/KernelSU-Next/KernelSU-Next.git \
+              -b next \
+              KernelSU-Next
+
+            # Verifikasi struktur: driver ada di subfolder kernel/
+            if [ ! -d "KernelSU-Next/kernel" ]; then
+              echo "❌ ERROR: KernelSU-Next/kernel/ directory not found!"
+              echo "   Repository structure:"
+              ls -la KernelSU-Next/ | head -30
+              exit 1
+            fi
 
             echo "Copying KernelSU-Next driver into common/drivers/kernelsu..."
-            # Hapus dulu kalau sudah ada (symlink atau direktori lama)
             rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
 
@@ -318,6 +319,7 @@ jobs:
             for f in ksu.c Kconfig Makefile; do
               if [ ! -f "common/drivers/kernelsu/$f" ]; then
                 echo "❌ ERROR: common/drivers/kernelsu/$f not found!"
+                echo "   Contents of common/drivers/kernelsu/:"
                 ls -la common/drivers/kernelsu/ | head -20 || true
                 exit 1
               fi
@@ -336,15 +338,29 @@ jobs:
             fi
 
             # PENTING: git add agar file masuk ke git index
-            # Tanpa ini, git apply --3way untuk SUSFS patch gagal karena
-            # git tidak mengenal file-file baru di drivers/kernelsu/
+            # Tanpa ini, git apply --3way untuk SUSFS patch gagal
             cd common
             git add drivers/kernelsu/
             cd ..
 
-            KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD)
+            # FIX: Ambil KSU_VERSION dari Makefile driver, bukan rev-list seluruh repo.
+            # rev-list seluruh repo menghitung semua commit termasuk manager/userspace
+            # → angka terlalu besar dan tidak mencerminkan versi kernel driver.
+            KSU_VERSION=""
+            if [ -f "KernelSU-Next/kernel/Makefile" ]; then
+              KSU_VERSION=$(grep -oP '(?<=KSU_VERSION := )\d+' KernelSU-Next/kernel/Makefile | head -n1)
+            fi
+            # Fallback ke KernelSU.h jika Makefile tidak punya versi
+            if [ -z "$KSU_VERSION" ] && [ -f "KernelSU-Next/kernel/ksu.h" ]; then
+              KSU_VERSION=$(grep -oP '(?<=KERNELSU_VERSION )\d+' KernelSU-Next/kernel/ksu.h | head -n1)
+            fi
+            # Fallback akhir: count commit di subfolder kernel/ saja
+            if [ -z "$KSU_VERSION" ]; then
+              KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD -- kernel/ 2>/dev/null || echo "unknown")
+            fi
+
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-            echo "✅ KernelSU-Next integrated manually (version: $KSU_VERSION)"
+            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION)"
           else
             echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
             exit 1
@@ -364,10 +380,6 @@ jobs:
           [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" \
             && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
 
-          # FIX SUSFS: Nama file patch yang benar adalah
-          # "50_add_susfs_in_kernel-gki-android15-6.6.patch"
-          # bukan "50_add_susfs_in_gki-*.patch" — ada "kernel-" di tengahnya.
-          # Cari dengan dua pola sekaligus untuk jaga-jaga kalau format berubah.
           SUSFS_PATCH_FOUND=false
           for patch in \
             "../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" \
@@ -381,7 +393,6 @@ jobs:
               break
             fi
           done
-          # Fallback: cari file apapun yang cocok pola
           if [ "$SUSFS_PATCH_FOUND" = "false" ]; then
             for patch in \
               ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-*.patch \
@@ -405,7 +416,6 @@ jobs:
 
           if [ "$KERNEL_VERSION" = "6.6" ]; then
             if [ -f "fs/proc/task_mmu.c" ] && ! grep -q "nr_subpages" "fs/proc/task_mmu.c"; then
-              # Hitung berapa kali pattern muncul — kalau >1 jangan patch, terlalu berisiko corrupt
               MATCH_COUNT=$(grep -c "int ret = 0, copied = 0;" fs/proc/task_mmu.c 2>/dev/null || echo "0")
               if [ "$MATCH_COUNT" = "1" ]; then
                 sed -i \
@@ -428,8 +438,6 @@ jobs:
             KSU_PATCH="../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
             if [ -f "$KSU_PATCH" ]; then
               echo "Applying KernelSU SUSFS patch..."
-              # FIX #2: Deteksi path prefix patch secara otomatis
-              # KernelSU-Next bisa punya path 'a/kernel/' ATAU 'a/drivers/kernelsu/'
               if grep -q "a/drivers/kernelsu/" "$KSU_PATCH"; then
                 echo "   Patch already uses drivers/kernelsu/ path, applying as-is"
                 git apply --3way "$KSU_PATCH" \
@@ -474,13 +482,10 @@ jobs:
           fi
           echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
 
-          # Validasi hasil SUSFS
           if [ "$SUSFS_INTEGRATED" = "true" ]; then
             [ ! -f "fs/susfs.c" ] && echo "❌ ERROR: fs/susfs.c not found!" && exit 1
             [ ! -f "include/linux/susfs.h" ] && echo "❌ ERROR: susfs.h not found!" && exit 1
 
-            # Smart .rej check: hanya fs/ dan include/ yang CRITICAL.
-            # Kconfig.rej / selinux/*.rej = non-critical, sudah di-inject manual.
             CRITICAL_REJ=$(find fs/ include/ -name "*.rej" -type f 2>/dev/null || true)
             if [ -n "$CRITICAL_REJ" ]; then
               echo "❌ ERROR: Critical SUSFS patch rejected in fs/ or include/:"
@@ -489,7 +494,6 @@ jobs:
               done
               exit 1
             fi
-            # Non-critical .rej: warning saja, bersihkan, lanjut build
             NON_CRIT_REJ=$(find . -name "*.rej" -type f 2>/dev/null || true)
             if [ -n "$NON_CRIT_REJ" ]; then
               echo "⚠️  Non-critical rejected hunks (build will continue):"
@@ -582,15 +586,6 @@ jobs:
 
           echo "" >> "$DEFCONFIG"
           echo "# 1. UX & Input Latency Optimizations" >> "$DEFCONFIG"
-          # FIX BOOTLOOP: CONFIG_HZ_1000 dan CONFIG_PREEMPT=y (full static preempt)
-          # konflik dengan vendor modules HyperOS yang dikompile dengan PREEMPT_DYNAMIC.
-          # GKI 6.6 gunakan PREEMPT_DYNAMIC — kernel bisa switch preempt mode at runtime
-          # tanpa perlu static full preempt yang break vendor .ko compatibility.
-          # CONFIG_HZ di GKI 6.6 dikontrol oleh framework sendiri, tidak perlu override.
-          # FIX BOOTLOOP #3: PREEMPT_DYNAMIC=y sudah otomatis set mode preempt
-          # ke "full" saat runtime. Jangan set CONFIG_PREEMPT=n karena itu
-          # kontradiksi — PREEMPT_DYNAMIC MEMBUTUHKAN PREEMPT di Kconfig.
-          # Cukup enable PREEMPT_DYNAMIC dan disable dua mode lain yang static.
           add_cfg "CONFIG_PREEMPT_DYNAMIC=y"
           add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
           add_cfg "CONFIG_PREEMPT_NONE=n"
@@ -600,9 +595,6 @@ jobs:
           echo "" >> "$DEFCONFIG"
           echo "# 2. RAM & Multitasking Optimizations" >> "$DEFCONFIG"
           add_cfg "CONFIG_LRU_GEN=y"
-          # FIX BOOTLOOP: CONFIG_LRU_GEN_ENABLED tidak exist di semua snapshot
-          # android15-6.6 dan bisa bikin runtime issue. Hapus, biarkan default kernel.
-          # MGLRU tetap aktif via CONFIG_LRU_GEN=y, hanya boot default-nya yang berbeda."
           add_cfg "CONFIG_ZRAM=y"
           add_cfg "CONFIG_ZSMALLOC=y"
           add_cfg "CONFIG_CRYPTO_LZ4=y"
@@ -639,23 +631,15 @@ jobs:
           echo "# Branding" >> $DEFCONFIG
           echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
-          # CONFIG_MODVERSIONS dilarang di GKI — menyebabkan semua vendor .ko
-          # Xiaomi gagal load karena checksum mismatch → bootloop.
-          add_cfg "CONFIG_MODVERSIONS=n" 
+          add_cfg "CONFIG_MODVERSIONS=n"
 
       - name: Patch Build System
         run: |
           cd kernel/common
 
-          # FIX Error 1 & 4: Hapus file abi_gki_protected_exports_* DAN
-          # hapus semua referensinya di BUILD.bazel sebelum Bazel parsing.
-          # Root cause: Bazel gagal karena file dihapus tapi BUILD.bazel masih
-          # referensikan file itu sebagai input → "missing input file" error.
           rm -rf android/abi_gki_protected_exports_* || true
           if [ -f "BUILD.bazel" ]; then
-            # Hapus baris yang referensikan abi_gki_protected_exports
             sed -i '/abi_gki_protected_exports/d' BUILD.bazel
-            # Patch lainnya
             sed -i \
               -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' \
@@ -716,12 +700,6 @@ jobs:
           which clang || { echo "❌ clang not in PATH!"; exit 1; }
           clang --version
 
-          # FIX Error 3: Azure (dan toolchain lama lainnya) bawa ld versi lama
-          # yang tidak support format RELR di libc.so.6 Ubuntu 22.04.
-          # Error: "unknown type [0x13] section .relr.dyn → cannot find libc.so.6"
-          # Solusi: override LD ke system linker (/usr/bin/ld.bfd) hanya untuk
-          # host tools (scripts/basic/fixdep, dll), bukan untuk target aarch64.
-          # HOSTLDFLAGS=-fuse-ld=bfd memastikan host binary link pakai system ld.
           MAKE_ARGS="O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             HOSTLDFLAGS=-fuse-ld=bfd"
@@ -757,7 +735,6 @@ jobs:
 
       - name: Verify Build
         run: |
-          # FIX Error 2: Isolasi subshell du agar tidak trigger false positive exit 1
           HAS_IMAGE=false
           for f in dist/Image dist/Image.gz dist/Image.lz4; do
             if [ -f "$f" ]; then
@@ -786,12 +763,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      # FIX #3: AnyKernel3 — patch_vbmeta_flag diset ke 0 (bukan auto)
-      # "auto" di HyperOS 2 bisa setengah jalan karena AVB strict.
-      # Lebih aman matikan, user wajib flash vbmeta manual via fastboot.
-      #
-      # FIX #4: Urutan prioritas image diubah → Image.gz > Image.lz4 > Image
-      # GKI 6.6 boot partition Redmi 12 lebih compatible dengan compressed image.
       - name: Package AnyKernel3
         run: |
           CUSTOM_NAME="${{ inputs.custom_name }}"
@@ -800,19 +771,19 @@ jobs:
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
           ROOT_SHORT="KSUNext"
+
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             TOOLCHAIN_SHORT="Bazel"
           else
-            # CUSTOM_CLANG_PATH di-set dari GITHUB_ENV di step Download Custom Toolchain
-            # Bisa diakses via env var yang sudah di-export ke GITHUB_ENV
-            _CLANG="${{ env.CUSTOM_CLANG_PATH }}"
+            # FIX: Baca CUSTOM_CLANG_PATH dari env (sudah di-export di step Download Custom Toolchain)
+            _CLANG="${CUSTOM_CLANG_PATH:-}"
             if [ -n "$_CLANG" ] && [ -f "$_CLANG/bin/clang" ]; then
               CLANG_VER=$("$_CLANG/bin/clang" --version | head -n1 \
                 | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
             else
               CLANG_VER="unknown"
             fi
-            TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}${CLANG_VER}"
+            TOOLCHAIN_SHORT="${TOOLCHAIN_NAME:-custom}${CLANG_VER}"
           fi
 
           SUSFS_STR="${{ inputs.with_susfs == 'true' && 'SUSFS' || 'NoSUSFS' }}"
@@ -851,7 +822,6 @@ jobs:
             'dump_boot;' \
             'write_boot;' > anykernel.sh
 
-          # FIX #4: Prioritaskan compressed image (Image.gz > Image.lz4 > Image)
           SELECTED_IMG=""
           for img in \
             "$GITHUB_WORKSPACE/dist/Image.gz" \
@@ -880,6 +850,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # FIX: Hapus "append_body: false" — bukan key valid di softprops/action-gh-release@v2.
+      # Gunakan "make_latest: false" untuk kontrol release ordering saja jika diperlukan.
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -909,11 +881,10 @@ jobs:
           files: dist/*.zip
           draft: false
           prerelease: false
-          append_body: false  # true bikin body duplikat kalau matrix build trigger tag yang sama
 
       - name: Send to Telegram
         if: success()
-        continue-on-error: true  # Telegram gagal tidak boleh bikin seluruh job merah
+        continue-on-error: true
         env:
           TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -922,20 +893,61 @@ jobs:
             echo "Telegram secrets not set. Skipping."
             exit 0
           fi
+
           ZIP_FILE=$(ls dist/*.zip 2>/dev/null | head -n 1)
           [ -z "$ZIP_FILE" ] && echo "No zip found." && exit 0
-          ZIP_NAME=$(basename "$ZIP_FILE" 2>/dev/null || echo "unknown.zip")
+
+          ZIP_NAME=$(basename "$ZIP_FILE")
+          # du -b = ukuran dalam bytes (portable, tanpa --apparent-size)
+          ZIP_BYTES=$(du -b "$ZIP_FILE" 2>/dev/null | cut -f1 || echo "0")
           ZIP_SIZE=$(du -h "$ZIP_FILE" 2>/dev/null | cut -f1 || echo "?")
+
           SUSFS_LABEL="No"
           [ "${{ inputs.with_susfs }}" = "true" ] && SUSFS_LABEL="Yes"
+
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${{ inputs.release_tag }}"
-          # Kirim sebagai text + link, bukan upload file langsung.
-          # sendDocument sering timeout karena zip kernel 20-30MB melewati limit Bot API.
-          # Gunakan printf dengan \n eksplisit — hindari multiline string di YAML.
-          TEXT=$(printf 'Castorice Kernel - Build Done\n\nName: ${{ inputs.custom_name }} v${{ github.run_number }}\nRoot: ${{ inputs.ksu_method }}\nGovernor: ${{ inputs.cpu_governor }}\nSUSFS: %s\nKMI: ${{ env.KMI_GENERATION }}\nToolchain: ${{ inputs.clang_toolchain }}\nFile: %s (%s)\n\nDownload: %s' \
-            "$SUSFS_LABEL" "$ZIP_NAME" "$ZIP_SIZE" "$RELEASE_URL")
-          curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TG_CHAT_ID}" \
-            --data-urlencode "text=${TEXT}" \
-            && echo "✅ Telegram notification sent" \
-            || echo "⚠️  Telegram notification failed (non-fatal)"
+
+          # Telegram sendDocument limit: 50MB (52428800 bytes)
+          TG_LIMIT=52428800
+
+          # Caption pakai HTML parse_mode agar rapi di Telegram
+          # Telegram caption max 1024 chars — jaga tetap ringkas
+          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Name:</b> ${{ inputs.custom_name }} v${{ github.run_number }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> ${{ inputs.cpu_governor }}\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
+            "$SUSFS_LABEL" "$ZIP_SIZE" "$RELEASE_URL")
+
+          TG_API="https://api.telegram.org/bot${TG_BOT_TOKEN}"
+
+          if [ "$ZIP_BYTES" -le "$TG_LIMIT" ]; then
+            echo "📤 Uploading zip directly to Telegram ($ZIP_SIZE)..."
+            # sendDocument: upload file + caption sekaligus
+            # --form multipart diperlukan untuk binary upload
+            HTTP_CODE=$(curl -s -o /tmp/tg_response.json -w "%{http_code}" \
+              -X POST "${TG_API}/sendDocument" \
+              -F "chat_id=${TG_CHAT_ID}" \
+              -F "document=@${ZIP_FILE};filename=${ZIP_NAME}" \
+              -F "caption=${CAPTION}" \
+              -F "parse_mode=HTML")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "✅ File uploaded to Telegram successfully"
+            else
+              echo "⚠️  Upload failed (HTTP $HTTP_CODE), falling back to text notification"
+              cat /tmp/tg_response.json || true
+
+              # Fallback: kirim teks + link saja
+              curl -s -X POST "${TG_API}/sendMessage" \
+                -F "chat_id=${TG_CHAT_ID}" \
+                -F "text=${CAPTION}" \
+                -F "parse_mode=HTML" \
+                && echo "✅ Fallback text notification sent" \
+                || echo "⚠️  Fallback text notification also failed (non-fatal)"
+            fi
+          else
+            echo "⚠️  Zip size ($ZIP_SIZE) exceeds Telegram 50MB limit — sending link only"
+            curl -s -X POST "${TG_API}/sendMessage" \
+              -F "chat_id=${TG_CHAT_ID}" \
+              -F "text=${CAPTION}" \
+              -F "parse_mode=HTML" \
+              && echo "✅ Text notification sent (file too large to upload)" \
+              || echo "⚠️  Text notification failed (non-fatal)"
+          fi
