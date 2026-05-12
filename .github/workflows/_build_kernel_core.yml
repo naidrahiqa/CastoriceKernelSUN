@@ -845,7 +845,9 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: "Castorice-GKI-6.6-${{ inputs.with_susfs == 'true' && 'SUSFS-' || '' }}${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}"
+          # Nama harus unik per job dalam satu workflow run.
+          # Sertakan semua dimensi matrix agar tidak conflict saat parallel matrix jobs (error 409).
+          name: "Castorice-GKI-6.6-${{ inputs.with_susfs == 'true' && 'SUSFS-' || '' }}${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}"
           path: dist/*.zip
           if-no-files-found: warn
           retention-days: 30
