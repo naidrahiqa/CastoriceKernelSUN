@@ -296,9 +296,12 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            echo "Cloning KernelSU-Next (default branch)..."
+            # Branch 'dev' punya struktur lengkap: policy/, core/, uapi/, dll
+            # Branch 'next-ul' adalah versi lama (flat structure) yang tidak kompatibel
+            echo "Cloning KernelSU-Next (branch: dev)..."
             git clone --depth=1 \
               https://github.com/KernelSU-Next/KernelSU-Next.git \
+              -b dev \
               KernelSU-Next
 
             # Verifikasi struktur: driver ada di subfolder kernel/
@@ -313,15 +316,10 @@ jobs:
             rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
 
-            # FIX: uapi/app_profile.h diinclude dengan path relatif dari allowlist.h
-            # Compiler tidak tahu lokasi uapi/ kecuali kita buat symlink atau copy
-            # ke lokasi yang dicari: drivers/kernelsu/uapi/ sudah ada dari cp di atas,
-            # tapi Bazel sandbox tidak expose subfolder uapi/ ke include path.
-            # Solusi: copy juga uapi/ ke include/uapi/linux/ agar bisa ditemukan
-            # sebagai system header, DAN pastikan ada di dalam drivers/kernelsu/uapi/
-            if [ -d "common/drivers/kernelsu/uapi" ]; then
-              echo "   Copying KernelSU uapi headers to include/uapi/linux/..."
-              cp -v common/drivers/kernelsu/uapi/*.h common/include/uapi/linux/ 2>/dev/null || true
+            # Verifikasi uapi/ ada (branch dev punya struktur lengkap)
+            if [ ! -d "common/drivers/kernelsu/uapi" ]; then
+              echo "   ⚠️  uapi/ not found — listing kernelsu dir:"
+              ls common/drivers/kernelsu/ || true
             fi
 
             # Verifikasi file kritis ada
