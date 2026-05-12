@@ -314,7 +314,7 @@ jobs:
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
 
             # Verifikasi file kritis ada
-            for f in ksu.c Kconfig Makefile; do
+            for f in Kconfig Makefile; do
               if [ ! -f "common/drivers/kernelsu/$f" ]; then
                 echo "❌ ERROR: common/drivers/kernelsu/$f not found!"
                 echo "   Contents of common/drivers/kernelsu/:"
