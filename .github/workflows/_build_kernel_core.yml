@@ -282,8 +282,8 @@ jobs:
           fi
           echo "✅ KMI_GENERATION=$DETECTED_KMI applied to all config files"
 
-      # FIX UTAMA: Clone KernelSU-Next dari branch "next" (bukan "main").
-      # Branch resmi adalah "next" — https://kernelsu-next.github.io/webpage/pages/installation.html
+      # FIX UTAMA: Clone KernelSU-Next menggunakan default branch.
+      # Solusi terbaik: jangan hardcode branch karena rawan perubahan (main/stable/next).
       # Struktur repo: folder driver ada di KernelSU-Next/kernel/ (bukan root).
       # KSU_VERSION diambil dari Makefile kernel driver, bukan rev-list seluruh repo
       # (rev-list seluruh repo menghitung commit manager+userspace juga → angka salah).
@@ -296,11 +296,9 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            echo "Cloning KernelSU-Next (branch: next)..."
-            # FIX: Branch resmi adalah "next", bukan "main"
+            echo "Cloning KernelSU-Next (default branch)..."
             git clone --depth=1 \
               https://github.com/KernelSU-Next/KernelSU-Next.git \
-              -b next \
               KernelSU-Next
 
             # Verifikasi struktur: driver ada di subfolder kernel/
@@ -754,7 +752,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gki-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}
+          name: gki-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}
           path: |
             kernel/build.log
             kernel/common/build.log
@@ -883,6 +881,111 @@ jobs:
           files: dist/*.zip
           draft: false
           prerelease: false
+
+      - name: Notify Telegram on Failure
+        if: failure()
+        continue-on-error: true
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+            echo "Telegram secrets not set. Skipping failure notification."
+            exit 0
+          fi
+
+          TG_API="https://api.telegram.org/bot${TG_BOT_TOKEN}"
+          ACTIONS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          SUSFS_LABEL="No"
+          [ "${{ inputs.with_susfs }}" = "true" ] && SUSFS_LABEL="Yes"
+
+          # ── 1. Kumpulkan error log ───────────────────────────────────────
+          ERROR_LOG="/tmp/castorice_error.log"
+          : > "$ERROR_LOG"
+
+          for log_candidate in \
+            "kernel/build.log" \
+            "kernel/common/build.log"; do
+            if [ -f "$log_candidate" ]; then
+              echo "=== $(basename $log_candidate) — filtered errors ===" >> "$ERROR_LOG"
+              grep -iE "error:|fatal:|undefined reference|cannot find|No such file|failed|❌" \
+                "$log_candidate" | tail -60 >> "$ERROR_LOG" 2>/dev/null || true
+              echo "" >> "$ERROR_LOG"
+              echo "--- raw tail (last 80 lines) ---" >> "$ERROR_LOG"
+              tail -80 "$log_candidate" >> "$ERROR_LOG" 2>/dev/null || true
+              echo "" >> "$ERROR_LOG"
+            fi
+          done
+
+          # Tangkap .rej file (SUSFS/patch failure)
+          REJ_FILES=$(find kernel/common -name "*.rej" 2>/dev/null | head -5)
+          if [ -n "$REJ_FILES" ]; then
+            echo "=== REJECTED PATCH HUNKS ===" >> "$ERROR_LOG"
+            for rej in $REJ_FILES; do
+              echo "--- $rej ---" >> "$ERROR_LOG"
+              cat "$rej" >> "$ERROR_LOG"
+              echo "" >> "$ERROR_LOG"
+            done
+          fi
+
+          # Fallback kalau log kosong (error di pre-build step)
+          if [ ! -s "$ERROR_LOG" ]; then
+            printf "No build.log found.\nError likely in a pre-build step (git clone / toolchain / SUSFS).\nCheck GitHub Actions:\n%s\n" \
+              "$ACTIONS_URL" > "$ERROR_LOG"
+          fi
+
+          LOG_LINES=$(wc -l < "$ERROR_LOG")
+          LOG_BYTES=$(du -b "$ERROR_LOG" 2>/dev/null | cut -f1 || echo "0")
+
+          # ── 2. Header notif (sendMessage) ───────────────────────────────
+          HEADER=$(printf \
+            '<b>❌ Castorice Kernel — Build FAILED</b>\n\n'\
+            '<b>Name:</b> ${{ inputs.custom_name }} v${{ github.run_number }}\n'\
+            '<b>Root:</b> ${{ inputs.ksu_method }}\n'\
+            '<b>Governor:</b> ${{ inputs.cpu_governor }}\n'\
+            '<b>SUSFS:</b> %s\n'\
+            '<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n'\
+            '<b>Triggered by:</b> ${{ github.actor }}\n\n'\
+            '<a href="%s">🔍 Full log di GitHub Actions</a>\n\n'\
+            '<i>⬇️ Error log dikirim sebagai file di bawah</i>' \
+            "$SUSFS_LABEL" "$ACTIONS_URL")
+
+          curl -s -X POST "${TG_API}/sendMessage" \
+            -F "chat_id=${TG_CHAT_ID}" \
+            -F "text=${HEADER}" \
+            -F "parse_mode=HTML" \
+            && echo "✅ Header notification sent" \
+            || echo "⚠️  Header notification failed"
+
+          # ── 3. Upload error log sebagai file .txt ───────────────────────
+          LOG_FILENAME="error-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}-v${{ github.run_number }}.log"
+          cp "$ERROR_LOG" "/tmp/${LOG_FILENAME}"
+
+          echo "📤 Uploading error log (${LOG_LINES} lines, ${LOG_BYTES} bytes)..."
+          HTTP_CODE=$(curl -s -o /tmp/tg_log_resp.json -w "%{http_code}" \
+            -X POST "${TG_API}/sendDocument" \
+            -F "chat_id=${TG_CHAT_ID}" \
+            -F "document=@/tmp/${LOG_FILENAME};filename=${LOG_FILENAME}" \
+            -F "caption=📋 Error log — ${{ inputs.ksu_method }} / ${{ inputs.cpu_governor }} / ${{ inputs.clang_toolchain }}" \
+            -F "parse_mode=HTML")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "✅ Error log uploaded to Telegram"
+          else
+            echo "⚠️  Log upload failed (HTTP $HTTP_CODE)"
+            cat /tmp/tg_log_resp.json || true
+
+            # Fallback: paste 30 baris terakhir sebagai <pre> block
+            SNIPPET=$(tail -30 "$ERROR_LOG" | head -c 3500)
+            FALLBACK=$(printf '<b>📋 Error snippet (last 30 lines):</b>\n<pre>%s</pre>' "$SNIPPET")
+            curl -s -X POST "${TG_API}/sendMessage" \
+              -F "chat_id=${TG_CHAT_ID}" \
+              -F "text=${FALLBACK}" \
+              -F "parse_mode=HTML" \
+              && echo "✅ Fallback snippet sent" \
+              || echo "⚠️  Fallback snippet also failed (non-fatal)"
+          fi
 
       - name: Send to Telegram
         if: success()
