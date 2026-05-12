@@ -313,6 +313,17 @@ jobs:
             rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
 
+            # FIX: uapi/app_profile.h diinclude dengan path relatif dari allowlist.h
+            # Compiler tidak tahu lokasi uapi/ kecuali kita buat symlink atau copy
+            # ke lokasi yang dicari: drivers/kernelsu/uapi/ sudah ada dari cp di atas,
+            # tapi Bazel sandbox tidak expose subfolder uapi/ ke include path.
+            # Solusi: copy juga uapi/ ke include/uapi/linux/ agar bisa ditemukan
+            # sebagai system header, DAN pastikan ada di dalam drivers/kernelsu/uapi/
+            if [ -d "common/drivers/kernelsu/uapi" ]; then
+              echo "   Copying KernelSU uapi headers to include/uapi/linux/..."
+              cp -v common/drivers/kernelsu/uapi/*.h common/include/uapi/linux/ 2>/dev/null || true
+            fi
+
             # Verifikasi file kritis ada
             for f in Kconfig Makefile; do
               if [ ! -f "common/drivers/kernelsu/$f" ]; then
@@ -427,6 +438,27 @@ jobs:
             fi
             if [ -f "fs/proc/base.c" ] && ! grep -q "linux/dma-buf.h" "fs/proc/base.c"; then
               sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' fs/proc/base.c
+            fi
+          fi
+
+          # FIX: selinux/hooks.c extern conflict dari SUSFS patch
+          # SUSFS patch menambahkan deklarasi extern yang sudah ada di hooks.c
+          # sehingga compiler error "cannot combine with previous 'extern' declaration"
+          # Solusi: hapus baris extern duplikat yang ditambahkan SUSFS
+          if [ -f "security/selinux/hooks.c" ]; then
+            # Cek apakah ada duplikat extern susfs declarations
+            if grep -c "extern int susfs_" security/selinux/hooks.c 2>/dev/null | grep -q "^[2-9]"; then
+              echo "   Fixing duplicate extern susfs declarations in selinux/hooks.c..."
+              # Hapus semua extern susfs_ lines kecuali yang pertama dari setiap deklarasi
+              awk '
+                /extern int susfs_/ {
+                  if (seen[$0]++) next
+                }
+                { print }
+              ' security/selinux/hooks.c > /tmp/hooks_fixed.c \
+                && mv /tmp/hooks_fixed.c security/selinux/hooks.c \
+                && echo "   selinux/hooks.c deduplication done" \
+                || echo "   ⚠️  selinux/hooks.c deduplication failed, continuing anyway"
             fi
           fi
 
@@ -768,32 +800,30 @@ jobs:
           AUTHOR="${{ inputs.author_name }}"
           KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          ROOT_SHORT="KSUNext"
+          # Ambil TOOLCHAIN_NAME dari env yang sudah di-set di step Build
+          TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}"
+          # Fallback kalau kosong
+          [ -z "$TOOLCHAIN_SHORT" ] && TOOLCHAIN_SHORT="Bazel"
 
-          if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
-            TOOLCHAIN_SHORT="Bazel"
-          else
-            # FIX: Baca CUSTOM_CLANG_PATH dari env (sudah di-export di step Download Custom Toolchain)
-            _CLANG="${CUSTOM_CLANG_PATH:-}"
-            if [ -n "$_CLANG" ] && [ -f "$_CLANG/bin/clang" ]; then
-              CLANG_VER=$("$_CLANG/bin/clang" --version | head -n1 \
-                | grep -oP '\d+\.\d+\.\d+' | head -n1 | cut -d. -f1)
-            else
-              CLANG_VER="unknown"
-            fi
-            TOOLCHAIN_SHORT="${TOOLCHAIN_NAME:-custom}${CLANG_VER}"
+          # SUSFS: hanya sebut kalau memang ada SUSFS, non-SUSFS tidak perlu label
+          SUSFS_STR=""
+          if [ "${{ inputs.with_susfs }}" == "true" ]; then
+            SUSFS_STR="-SUSFS"
           fi
 
-          SUSFS_STR="${{ inputs.with_susfs == 'true' && 'SUSFS' || 'NoSUSFS' }}"
-          BASE_NAME="${CUSTOM_NAME}-v${BUILD_VER}-GKI-${ROOT_SHORT}-${SUSFS_STR}-${TOOLCHAIN_SHORT}"
+          # Nama file: {CustomName}-v{Build}-GKI[-SUSFS]-{Toolchain}-AnyKernel3.zip
+          # Tidak ada embel KSUNext, tidak ada NoSUSFS
+          BASE_NAME="${CUSTOM_NAME}-v${BUILD_VER}-GKI${SUSFS_STR}-${TOOLCHAIN_SHORT}"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
 
+          # kernel.string: nama kernel yang muncul di kernel manager app
+          # Format: {KernelName}-{CustomName}-v{Build} [info] by {Developer}
           if [ "${{ inputs.with_susfs }}" == "true" ]; then
-            KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 SUSFS | ${KSU_METHOD} | ${GOVERNOR} | ${TOOLCHAIN_SHORT}] by ${AUTHOR}"
+            KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 | SUSFS | ${GOVERNOR} | ${TOOLCHAIN_SHORT}] by ${AUTHOR}"
           else
-            KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 | ${KSU_METHOD} | ${GOVERNOR}] by ${AUTHOR}"
+            KERNEL_STRING="Castorice-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 | ${GOVERNOR} | ${TOOLCHAIN_SHORT}] by ${AUTHOR}"
           fi
 
           printf '%s\n' \
@@ -941,7 +971,9 @@ jobs:
           # ── 2. Header notif (sendMessage) ───────────────────────────────
           HEADER=$(printf \
             '<b>❌ Castorice Kernel — Build FAILED</b>\n\n'\
-            '<b>Name:</b> ${{ inputs.custom_name }} v${{ github.run_number }}\n'\
+            '<b>Kernel Name:</b> ${{ inputs.custom_name }}\n'\
+            '<b>Version:</b> v${{ github.run_number }}\n'\
+            '<b>Developer:</b> ${{ inputs.author_name }}\n'\
             '<b>Root:</b> ${{ inputs.ksu_method }}\n'\
             '<b>Governor:</b> ${{ inputs.cpu_governor }}\n'\
             '<b>SUSFS:</b> %s\n'\
@@ -1017,7 +1049,7 @@ jobs:
 
           # Caption pakai HTML parse_mode agar rapi di Telegram
           # Telegram caption max 1024 chars — jaga tetap ringkas
-          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Name:</b> ${{ inputs.custom_name }} v${{ github.run_number }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> ${{ inputs.cpu_governor }}\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
+          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Kernel Name:</b> ${{ inputs.custom_name }}\n<b>Version:</b> v${{ github.run_number }}\n<b>Developer:</b> ${{ inputs.author_name }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> ${{ inputs.cpu_governor }}\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
             "$SUSFS_LABEL" "$ZIP_SIZE" "$RELEASE_URL")
 
           TG_API="https://api.telegram.org/bot${TG_BOT_TOKEN}"
