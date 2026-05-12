@@ -346,11 +346,11 @@ jobs:
             # → angka terlalu besar dan tidak mencerminkan versi kernel driver.
             KSU_VERSION=""
             if [ -f "KernelSU-Next/kernel/Makefile" ]; then
-              KSU_VERSION=$(grep -oP '(?<=KSU_VERSION := )\d+' KernelSU-Next/kernel/Makefile | head -n1)
+              KSU_VERSION=$(grep -oP '(?<=KSU_VERSION := )\d+' KernelSU-Next/kernel/Makefile | head -n1 || true)
             fi
-            # Fallback ke KernelSU.h jika Makefile tidak punya versi
+            # Fallback ke ksu.h jika Makefile tidak punya versi
             if [ -z "$KSU_VERSION" ] && [ -f "KernelSU-Next/kernel/ksu.h" ]; then
-              KSU_VERSION=$(grep -oP '(?<=KERNELSU_VERSION )\d+' KernelSU-Next/kernel/ksu.h | head -n1)
+              KSU_VERSION=$(grep -oP '(?<=KERNELSU_VERSION )\d+' KernelSU-Next/kernel/ksu.h | head -n1 || true)
             fi
             # Fallback akhir: count commit di subfolder kernel/ saja
             if [ -z "$KSU_VERSION" ]; then
@@ -952,9 +952,9 @@ jobs:
             "$SUSFS_LABEL" "$ACTIONS_URL")
 
           curl -s -X POST "${TG_API}/sendMessage" \
-            -F "chat_id=${TG_CHAT_ID}" \
-            -F "text=${HEADER}" \
-            -F "parse_mode=HTML" \
+            --form-string "chat_id=${TG_CHAT_ID}" \
+            --form-string "text=${HEADER}" \
+            --form-string "parse_mode=HTML" \
             && echo "✅ Header notification sent" \
             || echo "⚠️  Header notification failed"
 
@@ -965,10 +965,10 @@ jobs:
           echo "📤 Uploading error log (${LOG_LINES} lines, ${LOG_BYTES} bytes)..."
           HTTP_CODE=$(curl -s -o /tmp/tg_log_resp.json -w "%{http_code}" \
             -X POST "${TG_API}/sendDocument" \
-            -F "chat_id=${TG_CHAT_ID}" \
+            --form-string "chat_id=${TG_CHAT_ID}" \
             -F "document=@/tmp/${LOG_FILENAME};filename=${LOG_FILENAME}" \
-            -F "caption=📋 Error log — ${{ inputs.ksu_method }} / ${{ inputs.cpu_governor }} / ${{ inputs.clang_toolchain }}" \
-            -F "parse_mode=HTML")
+            --form-string "caption=📋 Error log — ${{ inputs.ksu_method }} / ${{ inputs.cpu_governor }} / ${{ inputs.clang_toolchain }}" \
+            --form-string "parse_mode=HTML" || echo "000")
 
           if [ "$HTTP_CODE" = "200" ]; then
             echo "✅ Error log uploaded to Telegram"
@@ -980,9 +980,9 @@ jobs:
             SNIPPET=$(tail -30 "$ERROR_LOG" | head -c 3500)
             FALLBACK=$(printf '<b>📋 Error snippet (last 30 lines):</b>\n<pre>%s</pre>' "$SNIPPET")
             curl -s -X POST "${TG_API}/sendMessage" \
-              -F "chat_id=${TG_CHAT_ID}" \
-              -F "text=${FALLBACK}" \
-              -F "parse_mode=HTML" \
+              --form-string "chat_id=${TG_CHAT_ID}" \
+              --form-string "text=${FALLBACK}" \
+              --form-string "parse_mode=HTML" \
               && echo "✅ Fallback snippet sent" \
               || echo "⚠️  Fallback snippet also failed (non-fatal)"
           fi
@@ -1028,10 +1028,10 @@ jobs:
             # --form multipart diperlukan untuk binary upload
             HTTP_CODE=$(curl -s -o /tmp/tg_response.json -w "%{http_code}" \
               -X POST "${TG_API}/sendDocument" \
-              -F "chat_id=${TG_CHAT_ID}" \
+              --form-string "chat_id=${TG_CHAT_ID}" \
               -F "document=@${ZIP_FILE};filename=${ZIP_NAME}" \
-              -F "caption=${CAPTION}" \
-              -F "parse_mode=HTML")
+              --form-string "caption=${CAPTION}" \
+              --form-string "parse_mode=HTML" || echo "000")
 
             if [ "$HTTP_CODE" = "200" ]; then
               echo "✅ File uploaded to Telegram successfully"
@@ -1041,18 +1041,18 @@ jobs:
 
               # Fallback: kirim teks + link saja
               curl -s -X POST "${TG_API}/sendMessage" \
-                -F "chat_id=${TG_CHAT_ID}" \
-                -F "text=${CAPTION}" \
-                -F "parse_mode=HTML" \
+                --form-string "chat_id=${TG_CHAT_ID}" \
+                --form-string "text=${CAPTION}" \
+                --form-string "parse_mode=HTML" \
                 && echo "✅ Fallback text notification sent" \
                 || echo "⚠️  Fallback text notification also failed (non-fatal)"
             fi
           else
             echo "⚠️  Zip size ($ZIP_SIZE) exceeds Telegram 50MB limit — sending link only"
             curl -s -X POST "${TG_API}/sendMessage" \
-              -F "chat_id=${TG_CHAT_ID}" \
-              -F "text=${CAPTION}" \
-              -F "parse_mode=HTML" \
+              --form-string "chat_id=${TG_CHAT_ID}" \
+              --form-string "text=${CAPTION}" \
+              --form-string "parse_mode=HTML" \
               && echo "✅ Text notification sent (file too large to upload)" \
               || echo "⚠️  Text notification failed (non-fatal)"
           fi
