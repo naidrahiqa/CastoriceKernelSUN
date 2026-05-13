@@ -931,17 +931,13 @@ jobs:
           tag_name: "${{ inputs.release_tag }}"
           name: "Castorice Kernel ${{ inputs.release_tag }}"
           body: |
-            ## Castorice-${{ inputs.custom_name }}-v${{ github.run_number }}
-            **Built:** ${{ env.BUILD_TIME }} (run #${{ github.run_number }})
-
-            | Info | Value |
-            |------|-------|
-            | **Type** | GKI 6.6 ${{ inputs.with_susfs == 'true' && '+ SUSFS' || '(No SUSFS)' }} |
-            | **Root** | ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }} |
-            | **Governor** | ${{ inputs.cpu_governor }} |
-            | **KMI Generation** | ${{ env.KMI_GENERATION }} |
-            | **SUSFS** | ${{ inputs.with_susfs == 'true' && 'Yes' || 'No' }} |
-            | **Toolchain** | ${{ inputs.clang_toolchain }} |
+            ### 📦 Castorice-${{ inputs.custom_name }}
+            - **Type:** GKI 6.6 ${{ inputs.with_susfs == 'true' && '+ SUSFS' || '(No SUSFS)' }}
+            - **Root:** ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
+            - **Governor:** ${{ inputs.cpu_governor }}
+            - **KMI:** ${{ env.KMI_GENERATION }}
+            - **Toolchain:** ${{ inputs.clang_toolchain }}
+            - **Built:** ${{ env.BUILD_TIME }} (run #${{ github.run_number }})
 
             ---
             > ⚠️ **Wajib flash vbmeta dulu sebelum install kernel ini!**
