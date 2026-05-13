@@ -853,9 +853,10 @@ jobs:
             SUSFS_STR="-SUSFS"
           fi
 
-          # Nama file: {CustomName}-v{Build}-GKI[-SUSFS]-{Toolchain}-AnyKernel3.zip
-          # Tidak ada embel KSUNext, tidak ada NoSUSFS
-          BASE_NAME="${CUSTOM_NAME}-v${BUILD_VER}-GKI${SUSFS_STR}-${TOOLCHAIN_SHORT}"
+          # Nama file: {CustomName}-{Toolchain}[-SUSFS]-{DDMMYYYY}
+          # Nanti otomatis ditambah suffix -AnyKernel3.zip di command zip
+          BUILD_DATE=$(date -u '+%d%m%Y')
+          BASE_NAME="${CUSTOM_NAME}-${TOOLCHAIN_SHORT}${SUSFS_STR}-${BUILD_DATE}"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
 
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
