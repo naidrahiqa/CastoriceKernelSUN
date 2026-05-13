@@ -316,10 +316,39 @@ jobs:
             rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
 
-            # Verifikasi uapi/ ada (branch dev punya struktur lengkap)
-            if [ ! -d "common/drivers/kernelsu/uapi" ]; then
-              echo "   ⚠️  uapi/ not found — listing kernelsu dir:"
-              ls common/drivers/kernelsu/ || true
+            # FIX: uapi/ ada di REPO ROOT (KernelSU-Next/uapi/), bukan di kernel/.
+            # Symlink kernel/include/uapi → ../../uapi break setelah copy.
+            # Solusi: copy uapi/ dari repo root dan fix broken symlink.
+            if [ -d "KernelSU-Next/uapi" ]; then
+              echo "   Copying uapi/ from repo root..."
+              cp -r KernelSU-Next/uapi common/drivers/kernelsu/uapi
+
+              # Fix broken symlink di include/uapi
+              if [ -L "common/drivers/kernelsu/include/uapi" ]; then
+                echo "   Fixing broken include/uapi symlink..."
+                rm -f common/drivers/kernelsu/include/uapi
+                ln -sf ../uapi common/drivers/kernelsu/include/uapi
+              elif [ ! -e "common/drivers/kernelsu/include/uapi" ]; then
+                echo "   Creating include/uapi symlink..."
+                mkdir -p common/drivers/kernelsu/include
+                ln -sf ../uapi common/drivers/kernelsu/include/uapi
+              fi
+            else
+              echo "   ⚠️  KernelSU-Next/uapi/ not found at repo root!"
+              echo "   Checking if uapi exists inside kernel/..."
+              ls -la KernelSU-Next/ | head -20
+            fi
+
+            # Verifikasi uapi/app_profile.h bisa di-resolve
+            if [ -f "common/drivers/kernelsu/uapi/app_profile.h" ]; then
+              echo "   ✅ uapi/app_profile.h found (direct)"
+            elif [ -f "common/drivers/kernelsu/include/uapi/app_profile.h" ]; then
+              echo "   ✅ uapi/app_profile.h found (via include/uapi symlink)"
+            else
+              echo "   ❌ ERROR: uapi/app_profile.h not resolvable!"
+              echo "   Contents of drivers/kernelsu/:"
+              find common/drivers/kernelsu/ -name "*.h" -path "*/uapi/*" 2>/dev/null || echo "  (none)"
+              exit 1
             fi
 
             # Verifikasi file kritis ada
@@ -350,20 +379,35 @@ jobs:
             git add drivers/kernelsu/
             cd ..
 
-            # FIX: Ambil KSU_VERSION dari Makefile driver, bukan rev-list seluruh repo.
-            # rev-list seluruh repo menghitung semua commit termasuk manager/userspace
-            # → angka terlalu besar dan tidak mencerminkan versi kernel driver.
+            # FIX: Ambil KSU_VERSION. Branch dev pakai Kbuild yang menghitung:
+            # KSU_VERSION = 30000 + git rev-list --count HEAD
+            # Makefile di dev branch TIDAK punya KSU_VERSION :=
             KSU_VERSION=""
-            if [ -f "KernelSU-Next/kernel/Makefile" ]; then
-              KSU_VERSION=$(grep -oP '(?<=KSU_VERSION := )\d+' KernelSU-Next/kernel/Makefile | head -n1 || true)
+
+            # Method 1: Hitung pakai cara yang sama dengan Kbuild
+            # PENTING: clone --depth=1 → rev-list cuma return 1
+            # Perlu unshallow dulu agar commit count akurat
+            if [ -d "KernelSU-Next/.git" ]; then
+              echo "   Fetching full history for version calculation..."
+              (cd KernelSU-Next && git fetch --unshallow 2>/dev/null || true)
+              (cd KernelSU-Next && git fetch --tags 2>/dev/null || true)
+              GIT_COUNT=$(cd KernelSU-Next && git rev-list --count HEAD 2>/dev/null || echo "")
+              if [ -n "$GIT_COUNT" ] && [ "$GIT_COUNT" -gt 1 ]; then
+                KSU_VERSION=$((30000 + GIT_COUNT))
+              fi
             fi
-            # Fallback ke ksu.h jika Makefile tidak punya versi
-            if [ -z "$KSU_VERSION" ] && [ -f "KernelSU-Next/kernel/ksu.h" ]; then
-              KSU_VERSION=$(grep -oP '(?<=KERNELSU_VERSION )\d+' KernelSU-Next/kernel/ksu.h | head -n1 || true)
-            fi
-            # Fallback akhir: count commit di subfolder kernel/ saja
+
+            # Fallback: coba ambil dari tag
             if [ -z "$KSU_VERSION" ]; then
-              KSU_VERSION=$(cd KernelSU-Next && git rev-list --count HEAD -- kernel/ 2>/dev/null || echo "unknown")
+              KSU_TAG=$(cd KernelSU-Next && git describe --tags --abbrev=0 2>/dev/null || echo "")
+              if [ -n "$KSU_TAG" ]; then
+                KSU_VERSION=$(echo "$KSU_TAG" | grep -oP '\d+' | tail -n1 || echo "unknown")
+              fi
+            fi
+
+            # Fallback akhir
+            if [ -z "$KSU_VERSION" ]; then
+              KSU_VERSION="unknown"
             fi
 
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
@@ -989,7 +1033,8 @@ jobs:
             || echo "⚠️  Header notification failed"
 
           # ── 3. Upload error log sebagai file .txt ───────────────────────
-          LOG_FILENAME="error-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}-v${{ github.run_number }}.log"
+          LOG_DATE=$(date -u '+%d%m%Y')
+          LOG_FILENAME="error-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}-${LOG_DATE}.log"
           cp "$ERROR_LOG" "/tmp/${LOG_FILENAME}"
 
           echo "📤 Uploading error log (${LOG_LINES} lines, ${LOG_BYTES} bytes)..."
