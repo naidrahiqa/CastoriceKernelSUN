@@ -500,11 +500,7 @@ jobs:
                   # Add include at top
                   sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
                   # Safer injection: find the opening brace of kernelsu_init and add after it
-                  sed -i '/int __init kernelsu_init(void)/,/{/ { /^{/a \
-#ifdef CONFIG_KSU_SUSFS\
-\tsusfs_init();\
-#endif
-                  }' drivers/kernelsu/core/init.c
+                  perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
                   echo "   ✅ susfs_init() injected into core/init.c"
                 else
                   echo "   ℹ️  susfs_init() already present, skipping"
