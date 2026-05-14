@@ -509,21 +509,33 @@ jobs:
           KSU_KERNEL="drivers/kernelsu"
           SUSFS_INTEGRATED=false
           if [ -d "$KSU_KERNEL" ]; then
-            KSU_PATCH="../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-            if [ -f "$KSU_PATCH" ]; then
-              echo "Applying KernelSU SUSFS patch..."
-              if grep -q "a/drivers/kernelsu/" "$KSU_PATCH"; then
-                echo "   Patch already uses drivers/kernelsu/ path, applying as-is"
-                git apply --3way "$KSU_PATCH" \
-                  || patch -p1 --forward --fuzz=3 < "$KSU_PATCH" \
-                  || true
-              else
-                echo "   Rewriting patch path from kernel/ to drivers/kernelsu/"
-                sed 's|a/kernel/|a/drivers/kernelsu/|g; s|b/kernel/|b/drivers/kernelsu/|g' \
-                  "$KSU_PATCH" > /tmp/susfs_ksu_fixed.patch
-                git apply --3way /tmp/susfs_ksu_fixed.patch \
-                  || patch -p1 --forward --fuzz=3 < /tmp/susfs_ksu_fixed.patch \
-                  || true
+            # Untuk KernelSU-Next branch dev, patch 10_enable_susfs_for_ksu.patch DARI susfs4ksu
+            # MERUSAK core/init.c karena struktur kodenya udah beda jauh (bikin bootloop/compile error).
+            # Solusi: Kita inject manual `susfs_init()` secara aman khusus untuk KernelSU-Next.
+            if [ "$KSU_METHOD" = "kernelsu-next" ]; then
+              echo "   KernelSU-Next detected. Manually injecting SUSFS hooks..."
+              if [ -f "common/drivers/kernelsu/core/init.c" ]; then
+                # Tambah include
+                sed -i '1i #include <linux/susfs.h>' common/drivers/kernelsu/core/init.c
+                # Inject susfs_init() ke dalam kernelsu_init
+                sed -i '/int __init kernelsu_init(void)/a \
+\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n' common/drivers/kernelsu/core/init.c
+                echo "   ✅ susfs_init() injected into core/init.c"
+              fi
+            else
+              # Untuk root method lain (KSU biasa), baru pakai patch standar
+              KSU_PATCH="../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+              if [ -f "$KSU_PATCH" ]; then
+                echo "Applying KernelSU SUSFS patch..."
+                if grep -q "a/drivers/kernelsu/" "$KSU_PATCH"; then
+                  echo "   Patch already uses drivers/kernelsu/ path, applying as-is"
+                  git apply --3way "$KSU_PATCH" || patch -p1 --forward --fuzz=3 < "$KSU_PATCH" || true
+                else
+                  echo "   Rewriting patch path from kernel/ to drivers/kernelsu/"
+                  sed 's|a/kernel/|a/drivers/kernelsu/|g; s|b/kernel/|b/drivers/kernelsu/|g' \
+                    "$KSU_PATCH" > /tmp/susfs_ksu_fixed.patch
+                  git apply --3way /tmp/susfs_ksu_fixed.patch || patch -p1 --forward --fuzz=3 < /tmp/susfs_ksu_fixed.patch || true
+                fi
               fi
             fi
 
