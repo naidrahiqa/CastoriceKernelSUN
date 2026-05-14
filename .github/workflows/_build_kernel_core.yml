@@ -224,6 +224,8 @@ jobs:
           fi
           echo "✅ Custom toolchain ready: $TOOLCHAIN"
           $CLANG_PATH/bin/clang --version | head -n1
+          CLANG_VER=$($CLANG_PATH/bin/clang --version | head -n1 | sed 's/ (http.*//g' | awk '{$1=$1};1')
+          echo "TOOLCHAIN_VER=$CLANG_VER" >> $GITHUB_ENV
           cd $GITHUB_WORKSPACE
 
       - name: Sync Android Common Kernel
@@ -751,6 +753,7 @@ jobs:
             --jobs=3 \
             //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
+          echo "TOOLCHAIN_VER=AOSP Clang (Kleaf Default)" >> $GITHUB_ENV
         env:
           SOURCE_DATE_EPOCH: "0"
 
@@ -937,6 +940,7 @@ jobs:
             - **Governor:** ${{ inputs.cpu_governor }}
             - **KMI:** ${{ env.KMI_GENERATION }}
             - **Toolchain:** ${{ inputs.clang_toolchain }}
+              - *${{ env.TOOLCHAIN_VER }}*
             - **Built:** ${{ env.BUILD_TIME }} (run #${{ github.run_number }})
 
             ---
@@ -1089,7 +1093,7 @@ jobs:
 
           # Caption pakai HTML parse_mode agar rapi di Telegram
           # Telegram caption max 1024 chars — jaga tetap ringkas
-          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Kernel Name:</b> ${{ inputs.custom_name }}\n<b>Version:</b> v${{ github.run_number }}\n<b>Developer:</b> ${{ inputs.author_name }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> ${{ inputs.cpu_governor }}\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
+          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Kernel Name:</b> ${{ inputs.custom_name }}\n<b>Version:</b> v${{ github.run_number }}\n<b>Developer:</b> ${{ inputs.author_name }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> ${{ inputs.cpu_governor }}\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n  └ <i>${{ env.TOOLCHAIN_VER }}</i>\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
             "$SUSFS_LABEL" "$ZIP_SIZE" "$RELEASE_URL")
 
           TG_API="https://api.telegram.org/bot${TG_BOT_TOKEN}"
