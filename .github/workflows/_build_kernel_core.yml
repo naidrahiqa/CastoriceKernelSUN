@@ -298,70 +298,35 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            # Branch 'dev' punya struktur lengkap: policy/, core/, uapi/, dll
-            # Branch 'next-ul' adalah versi lama (flat structure) yang tidak kompatibel
-            echo "Cloning KernelSU-Next (branch: dev)..."
-            git clone --depth=1 \
+            # CRITICAL: Clone full repo (NOT --depth=1) so Kbuild can compute
+            # KSU_VERSION via git rev-list. With depth=1 → version=1 → bootloop!
+            echo "Cloning KernelSU-Next (full history for version calc)..."
+            git clone \
               https://github.com/KernelSU-Next/KernelSU-Next.git \
               -b dev \
               KernelSU-Next
 
-            # Verifikasi struktur: driver ada di subfolder kernel/
             if [ ! -d "KernelSU-Next/kernel" ]; then
               echo "❌ ERROR: KernelSU-Next/kernel/ directory not found!"
-              echo "   Repository structure:"
               ls -la KernelSU-Next/ | head -30
               exit 1
             fi
 
-            echo "Copying KernelSU-Next driver into common/drivers/kernelsu..."
+            # CRITICAL FIX: Use SYMLINK, not copy! This is what the official
+            # setup.sh does. Symlink preserves .git so Kbuild detects KSU_VERSION
+            # via git rev-list. cp -r breaks this → KSU_VERSION=1 → bootloop.
+            echo "Creating symlink: common/drivers/kernelsu → KernelSU-Next/kernel..."
             rm -rf common/drivers/kernelsu
-            cp -r KernelSU-Next/kernel common/drivers/kernelsu
+            KSU_ABS_PATH="$(realpath KernelSU-Next/kernel)"
+            DRIVER_DIR="$(realpath common/drivers)"
+            ln -sf "$KSU_ABS_PATH" "$DRIVER_DIR/kernelsu"
 
-            # FIX: uapi/ ada di REPO ROOT (KernelSU-Next/uapi/), bukan di kernel/.
-            # Symlink kernel/include/uapi → ../../uapi break setelah copy.
-            # Solusi: copy uapi/ dari repo root dan fix broken symlink.
-            if [ -d "KernelSU-Next/uapi" ]; then
-              echo "   Copying uapi/ from repo root..."
-              cp -r KernelSU-Next/uapi common/drivers/kernelsu/uapi
-
-              # Fix broken symlink di include/uapi
-              if [ -L "common/drivers/kernelsu/include/uapi" ]; then
-                echo "   Fixing broken include/uapi symlink..."
-                rm -f common/drivers/kernelsu/include/uapi
-                ln -sf ../uapi common/drivers/kernelsu/include/uapi
-              elif [ ! -e "common/drivers/kernelsu/include/uapi" ]; then
-                echo "   Creating include/uapi symlink..."
-                mkdir -p common/drivers/kernelsu/include
-                ln -sf ../uapi common/drivers/kernelsu/include/uapi
-              fi
-            else
-              echo "   ⚠️  KernelSU-Next/uapi/ not found at repo root!"
-              echo "   Checking if uapi exists inside kernel/..."
-              ls -la KernelSU-Next/ | head -20
+            # Verify symlink works
+            if [ ! -f "common/drivers/kernelsu/Kconfig" ]; then
+              echo "❌ Symlink broken! Falling back to copy..."
+              rm -rf common/drivers/kernelsu
+              cp -r KernelSU-Next/kernel common/drivers/kernelsu
             fi
-
-            # Verifikasi uapi/app_profile.h bisa di-resolve
-            if [ -f "common/drivers/kernelsu/uapi/app_profile.h" ]; then
-              echo "   ✅ uapi/app_profile.h found (direct)"
-            elif [ -f "common/drivers/kernelsu/include/uapi/app_profile.h" ]; then
-              echo "   ✅ uapi/app_profile.h found (via include/uapi symlink)"
-            else
-              echo "   ❌ ERROR: uapi/app_profile.h not resolvable!"
-              echo "   Contents of drivers/kernelsu/:"
-              find common/drivers/kernelsu/ -name "*.h" -path "*/uapi/*" 2>/dev/null || echo "  (none)"
-              exit 1
-            fi
-
-            # Verifikasi file kritis ada
-            for f in Kconfig Makefile; do
-              if [ ! -f "common/drivers/kernelsu/$f" ]; then
-                echo "❌ ERROR: common/drivers/kernelsu/$f not found!"
-                echo "   Contents of common/drivers/kernelsu/:"
-                ls -la common/drivers/kernelsu/ | head -20 || true
-                exit 1
-              fi
-            done
 
             # Daftarkan ke drivers/Makefile
             if ! grep -q 'CONFIG_KSU' common/drivers/Makefile; then
@@ -375,44 +340,24 @@ jobs:
               echo "   Added KSU Kconfig to drivers/Kconfig"
             fi
 
-            # git add modified drivers/ files for Bazel
+            # git add for Bazel (need -f because symlink target is outside tree)
             cd common
-            git add drivers/Makefile drivers/Kconfig drivers/kernelsu/
+            git add -f drivers/Makefile drivers/Kconfig
+            # For Bazel: add all KSU source files so sandbox can see them
+            find drivers/kernelsu -name '*.c' -o -name '*.h' -o -name 'Kconfig' -o -name 'Kbuild' -o -name 'Makefile' | xargs git add -f 2>/dev/null || true
             cd ..
 
-            # FIX: Ambil KSU_VERSION. Branch dev pakai Kbuild yang menghitung:
-            # KSU_VERSION = 30000 + git rev-list --count HEAD
-            # Makefile di dev branch TIDAK punya KSU_VERSION :=
-            KSU_VERSION=""
-
-            # Method 1: Hitung pakai cara yang sama dengan Kbuild
-            # PENTING: clone --depth=1 → rev-list cuma return 1
-            # Perlu unshallow dulu agar commit count akurat
-            if [ -d "KernelSU-Next/.git" ]; then
-              echo "   Fetching full history for version calculation..."
-              (cd KernelSU-Next && git fetch --unshallow 2>/dev/null || true)
-              (cd KernelSU-Next && git fetch --tags 2>/dev/null || true)
-              GIT_COUNT=$(cd KernelSU-Next && git rev-list --count HEAD 2>/dev/null || echo "")
-              if [ -n "$GIT_COUNT" ] && [ "$GIT_COUNT" -gt 1 ]; then
-                KSU_VERSION=$((30000 + GIT_COUNT))
-              fi
-            fi
-
-            # Fallback: coba ambil dari tag
-            if [ -z "$KSU_VERSION" ]; then
-              KSU_TAG=$(cd KernelSU-Next && git describe --tags --abbrev=0 2>/dev/null || echo "")
-              if [ -n "$KSU_TAG" ]; then
-                KSU_VERSION=$(echo "$KSU_TAG" | grep -oP '\d+' | tail -n1 || echo "unknown")
-              fi
-            fi
-
-            # Fallback akhir
-            if [ -z "$KSU_VERSION" ]; then
-              KSU_VERSION="unknown"
+            # Calculate KSU_VERSION the same way Kbuild does
+            GIT_COUNT=$(cd KernelSU-Next && git rev-list --count HEAD 2>/dev/null || echo "0")
+            if [ "$GIT_COUNT" -gt 1 ]; then
+              KSU_VERSION=$((30000 + GIT_COUNT))
+            else
+              # Last resort fallback
+              KSU_VERSION="30000"
             fi
 
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION)"
+            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION, commits: $GIT_COUNT)"
           else
             echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
             exit 1
@@ -517,15 +462,24 @@ jobs:
             if [ "$KSU_METHOD" = "kernelsu-next" ]; then
               echo "   KernelSU-Next detected. Manually injecting SUSFS hooks..."
               if [ -f "drivers/kernelsu/core/init.c" ]; then
-                # Tambah include
-                sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
-                # Inject susfs_init() ke dalam kernelsu_init
-                 perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
-                git add drivers/kernelsu/core/init.c
-                echo "   ✅ susfs_init() injected into core/init.c"
+                # Check if already injected (idempotent)
+                if ! grep -q 'susfs_init' drivers/kernelsu/core/init.c; then
+                  # Add include at top
+                  sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
+                  # Safer injection: find the opening brace of kernelsu_init and add after it
+                  sed -i '/int __init kernelsu_init(void)/,/{/ { /^{/a \
+#ifdef CONFIG_KSU_SUSFS\
+\tsusfs_init();\
+#endif
+                  }' drivers/kernelsu/core/init.c
+                  echo "   ✅ susfs_init() injected into core/init.c"
+                else
+                  echo "   ℹ️  susfs_init() already present, skipping"
+                fi
+                git add -f drivers/kernelsu/core/init.c 2>/dev/null || true
               else
                 echo "   ❌ drivers/kernelsu/core/init.c NOT FOUND!"
-                ls -R drivers/kernelsu/ | head -n 20
+                find drivers/kernelsu/ -name 'init.c' 2>/dev/null || echo "   (no init.c found)"
               fi
             else
               # Untuk root method lain (KSU biasa), baru pakai patch standar
@@ -559,21 +513,17 @@ jobs:
                 'config KSU_SUSFS_SUS_MAP' '  bool "Hide mmapped files from proc maps"' '  depends on KSU_SUSFS' '  default y' \
                 'endmenu' >> "$KSU_KERNEL/Kconfig"
             fi
-            # Patch Makefile untuk info SUSFS dan KSU_VERSION
+            # SUSFS version info (DO NOT add ccflags here - Kconfig handles CONFIG_KSU_SUSFS)
+            # DO NOT inject -DKSU_VERSION here - Kbuild computes it from git (symlink preserves .git)
             if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
               printf '%s\n' \
                 '## SUSFS ##' \
                 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)' \
                 '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E "^#define SUSFS_VERSION" | cut -d" " -f3 | sed "s/\"//g"))' \
                 '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))' \
-                'ccflags-y += -DCONFIG_KSU_SUSFS=1' \
                 'else' \
                 '$(info -- SUSFS not integrated)' \
                 'endif' >> "$KSU_KERNEL/Makefile"
-            fi
-            # Pastikan KSU_VERSION yang kita hitung di workflow dipaksa masuk ke Makefile
-            if [ -n "$KSU_VERSION" ] && [ "$KSU_VERSION" != "unknown" ]; then
-               echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> "$KSU_KERNEL/Makefile"
             fi
             git add "$KSU_KERNEL/Makefile" "$KSU_KERNEL/Kconfig" 2>/dev/null || true
             grep -q "config KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
@@ -631,8 +581,14 @@ jobs:
           }
 
           echo "" >> "$DEFCONFIG"
-          echo "# KernelSU" >> "$DEFCONFIG"
+          echo "# KernelSU + Dependencies" >> "$DEFCONFIG"
           add_cfg "CONFIG_KSU=y"
+          # CRITICAL: KSU Kconfig has 'depends on KPROBES && EXT4_FS'
+          # Without these, CONFIG_KSU silently becomes =n → no root → bootloop-like behavior
+          add_cfg "CONFIG_KPROBES=y"
+          add_cfg "CONFIG_HAVE_KPROBES=y"
+          add_cfg "CONFIG_KPROBE_EVENTS=y"
+          add_cfg "CONFIG_EXT4_FS=y"
 
           if [ "${{ inputs.with_susfs }}" == "true" ]; then
             if [ "$SUSFS_OK" = "true" ]; then
@@ -684,16 +640,11 @@ jobs:
           sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_${GOV_UPPER}=y"
 
-          echo "" >> "$DEFCONFIG"
-          echo "# RAM & Multitasking (Built-in for Stability)" >> "$DEFCONFIG"
-          add_cfg "CONFIG_ZRAM=y"
-          add_cfg "CONFIG_ZSMALLOC=y"
-          add_cfg "CONFIG_ZSMALLOC_STAT=y"
-          add_cfg "CONFIG_ZRAM_DEF_COMP_LZ4=y"
-          add_cfg "CONFIG_CRYPTO_LZ4=y"
+          # NOTE: Do NOT override ZRAM/ZSMALLOC here. GKI manages these as
+          # modules. Forcing =y conflicts with vendor DLKM loading → bootloop.
 
           echo "" >> "$DEFCONFIG"
-          echo "# Network & Storage Optimizations (Safe)" >> "$DEFCONFIG"
+          echo "# Network Optimizations (Safe)" >> "$DEFCONFIG"
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
           add_cfg "CONFIG_TCP_CONG_BBR=y"
           add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
@@ -705,7 +656,9 @@ jobs:
           echo "# Branding" >> $DEFCONFIG
           echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
-          add_cfg "CONFIG_MODVERSIONS=n"
+          # NOTE: Do NOT set CONFIG_MODVERSIONS=n here!
+          # Vendor DLKM modules (display, touch, camera) need MODVERSIONS
+          # to load. Disabling it = modules fail to load = bootloop.
           git add arch/arm64/configs/gki_defconfig
           echo "✅ Defconfig finalized and added to git"
 
