@@ -556,8 +556,8 @@ jobs:
                 'config KSU_SUSFS_SUS_MAP' '  bool "Hide mmapped files from proc maps"' '  depends on KSU_SUSFS' '  default y' \
                 'endmenu' >> "$KSU_KERNEL/Kconfig"
             fi
-            # Patch Kbuild untuk info SUSFS dan KSU_VERSION
-            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Kbuild" 2>/dev/null; then
+            # Patch Makefile untuk info SUSFS dan KSU_VERSION
+            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
               printf '%s\n' \
                 '## SUSFS ##' \
                 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)' \
@@ -566,11 +566,11 @@ jobs:
                 'ccflags-y += -DCONFIG_KSU_SUSFS=1' \
                 'else' \
                 '$(info -- SUSFS not integrated)' \
-                'endif' >> "$KSU_KERNEL/Kbuild"
+                'endif' >> "$KSU_KERNEL/Makefile"
             fi
-            # Pastikan KSU_VERSION yang kita hitung di workflow dipaksa masuk ke Kbuild
+            # Pastikan KSU_VERSION yang kita hitung di workflow dipaksa masuk ke Makefile
             if [ -n "$KSU_VERSION" ] && [ "$KSU_VERSION" != "unknown" ]; then
-               echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> "$KSU_KERNEL/Kbuild"
+               echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> "$KSU_KERNEL/Makefile"
             fi
             grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
           fi
@@ -679,44 +679,12 @@ jobs:
           add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_${GOV_UPPER}=y"
 
           echo "" >> "$DEFCONFIG"
-          echo "# 1. UX & Input Latency Optimizations" >> "$DEFCONFIG"
-          add_cfg "CONFIG_PREEMPT_DYNAMIC=y"
-          add_cfg "CONFIG_PREEMPT_VOLUNTARY=n"
-          add_cfg "CONFIG_PREEMPT_NONE=n"
-          add_cfg "CONFIG_RCU_BOOST=y"
-          add_cfg "CONFIG_HIGH_RES_TIMERS=y"
-
-          echo "" >> "$DEFCONFIG"
-          echo "# 2. RAM & Multitasking Optimizations" >> "$DEFCONFIG"
-          add_cfg "CONFIG_LRU_GEN=y"
-          add_cfg "CONFIG_CRYPTO_LZ4=y"
-          add_cfg "CONFIG_CRYPTO_ZSTD=y"
-
-          echo "" >> "$DEFCONFIG"
-          echo "# 3. Network & Storage" >> "$DEFCONFIG"
+          echo "# Network & Storage Optimizations (Safe)" >> "$DEFCONFIG"
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
           add_cfg "CONFIG_TCP_CONG_BBR=y"
           add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
-          add_cfg "CONFIG_IOSCHED_BFQ=y"
-          add_cfg "CONFIG_BFQ_GROUP_IOSCHED=y"
-
-          echo "" >> "$DEFCONFIG"
-          echo "# 4. Disable Heavy Debugging" >> "$DEFCONFIG"
-          add_cfg "CONFIG_SLUB_DEBUG=n"
-          add_cfg "CONFIG_DEBUG_KMEMLEAK=n"
-          add_cfg "CONFIG_PAGE_POISONING=n"
-
-          if [ "$SAFETY_PROFILE" = "performance" ]; then
-            echo "" >> "$DEFCONFIG"
-            echo "# 5. Performance Tuning Profile" >> "$DEFCONFIG"
-            if [ "$TUNING_PROFILE" = "gaming" ]; then
-              add_cfg "CONFIG_SCHED_AUTOGROUP=y"
-            elif [ "$TUNING_PROFILE" = "social_media" ]; then
-              add_cfg "CONFIG_COMPACTION=y"
-            fi
-          fi
 
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo "" >> $DEFCONFIG
@@ -745,8 +713,6 @@ jobs:
             [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
           done
           if [ -f "build.config.gki.aarch64" ]; then
-            sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' build.config.gki.aarch64
-            sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' build.config.gki.aarch64
             sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' build.config.gki.aarch64
           fi
           [ -f "../build/kernel/abi/check_buildtime_symbol_protection.py" ] \
