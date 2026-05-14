@@ -375,10 +375,9 @@ jobs:
               echo "   Added KSU Kconfig to drivers/Kconfig"
             fi
 
-            # PENTING: git add agar file masuk ke git index
-            # Tanpa ini, git apply --3way untuk SUSFS patch gagal
+            # git add modified drivers/ files for Bazel
             cd common
-            git add drivers/kernelsu/
+            git add drivers/Makefile drivers/Kconfig drivers/kernelsu/
             cd ..
 
             # FIX: Ambil KSU_VERSION. Branch dev pakai Kbuild yang menghitung:
@@ -714,28 +713,36 @@ jobs:
         run: |
           cd kernel/common
 
-          if [ -f "BUILD.bazel" ]; then
+           if [ -f "BUILD.bazel" ]; then
             sed -i \
               -e '/check_defconfig/d' \
-              -e 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' \
-              -e 's/trim_nonlisted_kmi = True/trim_nonlisted_kmi = False/g' \
+              -e 's/kmi_symbol_list_strict_mode = .*/kmi_symbol_list_strict_mode = False,/g' \
+              -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
-            echo "✅ BUILD.bazel patched (strict mode disabled)"
+            git add BUILD.bazel
+            echo "✅ BUILD.bazel patched and added to git"
           fi
           for f in build.config.gki build.config.gki.aarch64; do
-            [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
+            if [ -f "$f" ]; then
+              sed -i '/check_defconfig/d' "$f"
+              git add "$f"
+            fi
           done
           if [ -f "build.config.gki.aarch64" ]; then
             sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' build.config.gki.aarch64
+            git add build.config.gki.aarch64
           fi
           [ -f "../build/kernel/abi/check_buildtime_symbol_protection.py" ] \
             && perl -i -pe 's/^(\s*)return 1$/$1return 0/g' \
               "../build/kernel/abi/check_buildtime_symbol_protection.py"
           [ -f "../build/kernel/kleaf/impl/stamp.bzl" ] \
             && sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' \
-              ../build/kernel/kleaf/impl/stamp.bzl
+              ../build/kernel/kleaf/impl/stamp.bzl \
+            && git add ../build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
+          git add scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
+          git add .scmversion 2>/dev/null || true
 
       - name: Build Kernel (Bazel)
         if: inputs.clang_toolchain == 'bazel-default' || inputs.clang_toolchain == ''
