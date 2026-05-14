@@ -680,8 +680,6 @@ jobs:
           echo "" >> "$DEFCONFIG"
           echo "# 2. RAM & Multitasking Optimizations" >> "$DEFCONFIG"
           add_cfg "CONFIG_LRU_GEN=y"
-          add_cfg "CONFIG_ZRAM=y"
-          add_cfg "CONFIG_ZSMALLOC=y"
           add_cfg "CONFIG_CRYPTO_LZ4=y"
           add_cfg "CONFIG_CRYPTO_ZSTD=y"
 
