@@ -679,6 +679,66 @@ jobs:
           # NOTE: Do NOT set CONFIG_MODVERSIONS=n here!
           # Vendor DLKM modules (display, touch, camera) need MODVERSIONS
           # to load. Disabling it = modules fail to load = bootloop.
+
+          # ─── Lightweight Optimization ─────────────────────────────────
+          # Previous builds booted but were TOO HEAVY compared to stock.
+          # These configs strip debug bloat, reduce tracing overhead, and
+          # optimize memory/timer for a lean GKI kernel on Redmi 12 (fire).
+          echo "" >> "$DEFCONFIG"
+          echo "# Lightweight Optimization (strip debug + reduce overhead)" >> "$DEFCONFIG"
+
+          # 1. Strip debug info — BIGGEST impact on kernel size (~30-50% reduction)
+          #    CONFIG_DEBUG_INFO=y embeds DWARF symbols into vmlinux, massively
+          #    inflating the Image. Not needed for production kernels.
+          sed -i '/^CONFIG_DEBUG_INFO=y/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_DEBUG_INFO_DWARF/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_DEBUG_INFO_BTF/d' "$DEFCONFIG"
+          add_cfg "CONFIG_DEBUG_INFO_NONE=y"
+
+          # 2. Disable SLUB debug — removes runtime memory allocator checks
+          #    that add overhead on every kmalloc/kfree call
+          add_cfg "CONFIG_SLUB_DEBUG=n"
+
+          # 3. Disable kernel tracing — ftrace hooks add measurable CPU cost
+          #    even when not actively tracing (function entry/exit overhead)
+          #    NOTE: KPROBES is kept enabled because KernelSU depends on it!
+          add_cfg "CONFIG_FUNCTION_TRACER=n"
+          add_cfg "CONFIG_IRQSOFF_TRACER=n"
+          add_cfg "CONFIG_SCHED_TRACER=n"
+          add_cfg "CONFIG_STACK_TRACER=n"
+
+          # 4. Timer frequency — 300Hz balances responsiveness vs power drain
+          #    Stock Android typically uses 300Hz. 1000Hz wastes battery on
+          #    budget SoCs like Helio G88 with minimal latency benefit.
+          sed -i '/^CONFIG_HZ_1000/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_HZ_250/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_HZ=/d' "$DEFCONFIG"
+          add_cfg "CONFIG_HZ_300=y"
+          add_cfg "CONFIG_HZ=300"
+
+          # 5. Memory management — MGLRU is more efficient than legacy LRU
+          #    for Android workloads (better page reclaim under pressure)
+          add_cfg "CONFIG_LRU_GEN=y"
+          add_cfg "CONFIG_LRU_GEN_ENABLED=y"
+
+          # 6. Disable Transparent Hugepages — saves RAM on Android devices
+          #    THP is designed for server workloads, wastes memory on phones
+          add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=n"
+
+          # 7. Kernel compression — LZ4 has fastest decompression, reduces
+          #    boot time compared to gzip/zstd on budget hardware
+          add_cfg "CONFIG_KERNEL_LZ4=y"
+
+          # 8. Disable misc debug features that add runtime overhead
+          add_cfg "CONFIG_DEBUG_KERNEL=n"
+          add_cfg "CONFIG_SCHED_DEBUG=n"
+          add_cfg "CONFIG_DEBUG_PREEMPT=n"
+          add_cfg "CONFIG_DEBUG_BUGVERBOSE=n"
+          add_cfg "CONFIG_PRINTK_TIME=n"
+
+          echo "✅ Lightweight optimization applied"
+          # ─── End Optimization ──────────────────────────────────────────
+
           git add arch/arm64/configs/gki_defconfig
           echo "✅ Defconfig finalized and added to git"
 
@@ -733,9 +793,12 @@ jobs:
           set -euo pipefail
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
+          # LTO=thin produces ~10-15% smaller + faster kernel vs LTO=none.
+          # Full LTO is too slow for CI (OOM on 7GB runner). Thin LTO is
+          # the sweet spot: cross-module optimization without excessive RAM.
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --lto=none \
+            --lto=thin \
             --local_resources=memory=6144 \
             --jobs=3 \
             //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
