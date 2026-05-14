@@ -514,12 +514,15 @@ jobs:
             # Solusi: Kita inject manual `susfs_init()` secara aman khusus untuk KernelSU-Next.
             if [ "$KSU_METHOD" = "kernelsu-next" ]; then
               echo "   KernelSU-Next detected. Manually injecting SUSFS hooks..."
-              if [ -f "common/drivers/kernelsu/core/init.c" ]; then
+              if [ -f "drivers/kernelsu/core/init.c" ]; then
                 # Tambah include
-                sed -i '1i #include <linux/susfs.h>' common/drivers/kernelsu/core/init.c
+                sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
                 # Inject susfs_init() ke dalam kernelsu_init
-                perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n/' common/drivers/kernelsu/core/init.c
+                perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
                 echo "   ✅ susfs_init() injected into core/init.c"
+              else
+                echo "   ❌ drivers/kernelsu/core/init.c NOT FOUND!"
+                ls -R drivers/kernelsu/ | head -n 20
               fi
             else
               # Untuk root method lain (KSU biasa), baru pakai patch standar
@@ -553,15 +556,21 @@ jobs:
                 'config KSU_SUSFS_SUS_MAP' '  bool "Hide mmapped files from proc maps"' '  depends on KSU_SUSFS' '  default y' \
                 'endmenu' >> "$KSU_KERNEL/Kconfig"
             fi
-            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
+            # Patch Kbuild untuk info SUSFS dan KSU_VERSION
+            if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Kbuild" 2>/dev/null; then
               printf '%s\n' \
                 '## SUSFS ##' \
                 'ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)' \
                 '$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E "^#define SUSFS_VERSION" | cut -d" " -f3 | sed "s/\"//g"))' \
                 '$(info -- SUSFS_VERSION: $(SUSFS_VERSION))' \
+                'ccflags-y += -DCONFIG_KSU_SUSFS=1' \
                 'else' \
                 '$(info -- SUSFS not integrated)' \
-                'endif' >> "$KSU_KERNEL/Makefile"
+                'endif' >> "$KSU_KERNEL/Kbuild"
+            fi
+            # Pastikan KSU_VERSION yang kita hitung di workflow dipaksa masuk ke Kbuild
+            if [ -n "$KSU_VERSION" ] && [ "$KSU_VERSION" != "unknown" ]; then
+               echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> "$KSU_KERNEL/Kbuild"
             fi
             grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
           fi
