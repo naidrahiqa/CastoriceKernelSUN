@@ -433,6 +433,9 @@ jobs:
           [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" \
             && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
 
+          # git add files so Bazel sees them
+          git add fs/susfs.c include/linux/susfs.h fs/Makefile 2>/dev/null || true
+
           SUSFS_PATCH_FOUND=false
           for patch in \
             "../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" \
@@ -518,7 +521,8 @@ jobs:
                 # Tambah include
                 sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
                 # Inject susfs_init() ke dalam kernelsu_init
-                perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
+                 perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
+                git add drivers/kernelsu/core/init.c
                 echo "   ✅ susfs_init() injected into core/init.c"
               else
                 echo "   ❌ drivers/kernelsu/core/init.c NOT FOUND!"
@@ -572,6 +576,7 @@ jobs:
             if [ -n "$KSU_VERSION" ] && [ "$KSU_VERSION" != "unknown" ]; then
                echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> "$KSU_KERNEL/Makefile"
             fi
+            git add "$KSU_KERNEL/Makefile" "$KSU_KERNEL/Kconfig" 2>/dev/null || true
             grep -q "config KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
           fi
           echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
@@ -702,6 +707,8 @@ jobs:
           echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
           add_cfg "CONFIG_MODVERSIONS=n"
+          git add arch/arm64/configs/gki_defconfig
+          echo "✅ Defconfig finalized and added to git"
 
       - name: Patch Build System
         run: |
