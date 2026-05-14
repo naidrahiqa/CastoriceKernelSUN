@@ -298,8 +298,8 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            # CRITICAL: Clone full repo (NOT --depth=1) so Kbuild can compute
-            # KSU_VERSION via git rev-list. With depth=1 → version=1 → bootloop!
+            # CRITICAL: Clone full repo (NOT --depth=1) so we can compute
+            # KSU_VERSION via git rev-list before copying.
             echo "Cloning KernelSU-Next (full history for version calc)..."
             git clone \
               https://github.com/KernelSU-Next/KernelSU-Next.git \
@@ -312,20 +312,50 @@ jobs:
               exit 1
             fi
 
-            # CRITICAL FIX: Use SYMLINK, not copy! This is what the official
-            # setup.sh does. Symlink preserves .git so Kbuild detects KSU_VERSION
-            # via git rev-list. cp -r breaks this → KSU_VERSION=1 → bootloop.
-            echo "Creating symlink: common/drivers/kernelsu → KernelSU-Next/kernel..."
-            rm -rf common/drivers/kernelsu
-            KSU_ABS_PATH="$(realpath KernelSU-Next/kernel)"
-            DRIVER_DIR="$(realpath common/drivers)"
-            ln -sf "$KSU_ABS_PATH" "$DRIVER_DIR/kernelsu"
+            # Calculate KSU_VERSION BEFORE copying (we need .git access)
+            GIT_COUNT=$(cd KernelSU-Next && git rev-list --count HEAD 2>/dev/null || echo "0")
+            if [ "$GIT_COUNT" -gt 1 ]; then
+              KSU_VERSION=$((30000 + GIT_COUNT))
+            else
+              KSU_VERSION="30000"
+            fi
+            KSU_TAG=$(cd KernelSU-Next && git describe --abbrev=0 --tags 2>/dev/null || echo "v${KSU_VERSION}")
 
-            # Verify symlink works
+            # CRITICAL FIX: Use COPY, not symlink!
+            # Bazel sandbox isolates the build — symlinks to paths outside the
+            # sandbox tree are NOT followed. This caused:
+            #   - KSU_GIT_VERSION not defined (git not visible → version=1 → bootloop)
+            #   - Source files invisible to sandbox in some cases
+            # Since copy loses .git, we inject version via ccflags below.
+            echo "Copying KernelSU-Next/kernel to common/drivers/kernelsu..."
+            rm -rf common/drivers/kernelsu
+            cp -r KernelSU-Next/kernel common/drivers/kernelsu
+
+            # Verify copy succeeded
             if [ ! -f "common/drivers/kernelsu/Kconfig" ]; then
-              echo "❌ Symlink broken! Falling back to copy..."
-              rm -rf common/drivers/kernelsu
-              cp -r KernelSU-Next/kernel common/drivers/kernelsu
+              echo "❌ ERROR: KernelSU driver files not found after copy!"
+              ls -la common/drivers/kernelsu/ || true
+              exit 1
+            fi
+
+            # CRITICAL FIX: Inject KSU_GIT_VERSION and KSU_GIT_VERSION_TAG
+            # directly into Kbuild ccflags. This bypasses git detection which
+            # ALWAYS fails in Bazel sandbox (no .git visible).
+            # Without this → KSU_GIT_VERSION=1 → KernelSU Manager rejects kernel → bootloop.
+            KBUILD_FILE="common/drivers/kernelsu/Kbuild"
+            if [ -f "$KBUILD_FILE" ]; then
+              # Comment out the error/warning lines about git version
+              sed -i 's/^\(.*"KSU_GIT_VERSION not defined!.*\)$/# \1/' "$KBUILD_FILE"
+              sed -i 's/^\(.*"KSU_VERSION_TAG not defined!.*\)$/# \1/' "$KBUILD_FILE"
+
+              # Append forced version defines
+              echo "" >> "$KBUILD_FILE"
+              echo "# Injected by CI — Bazel sandbox cannot access .git" >> "$KBUILD_FILE"
+              echo "ccflags-y += -DKSU_GIT_VERSION=${KSU_VERSION}" >> "$KBUILD_FILE"
+              echo 'ccflags-y += -DKSU_GIT_VERSION_TAG=\"'"${KSU_TAG}"'\"' >> "$KBUILD_FILE"
+              echo "✅ KSU_GIT_VERSION=${KSU_VERSION} and TAG=${KSU_TAG} injected into Kbuild"
+            else
+              echo "⚠️  Kbuild not found, version injection skipped"
             fi
 
             # Daftarkan ke drivers/Makefile
@@ -340,24 +370,14 @@ jobs:
               echo "   Added KSU Kconfig to drivers/Kconfig"
             fi
 
-            # git add for Bazel (need -f because symlink target is outside tree)
+            # git add for Bazel — all files must be tracked
             cd common
             git add -f drivers/Makefile drivers/Kconfig
-            # For Bazel: add all KSU source files so sandbox can see them
-            find drivers/kernelsu -name '*.c' -o -name '*.h' -o -name 'Kconfig' -o -name 'Kbuild' -o -name 'Makefile' | xargs git add -f 2>/dev/null || true
+            git add -f drivers/kernelsu/ 2>/dev/null || true
             cd ..
 
-            # Calculate KSU_VERSION the same way Kbuild does
-            GIT_COUNT=$(cd KernelSU-Next && git rev-list --count HEAD 2>/dev/null || echo "0")
-            if [ "$GIT_COUNT" -gt 1 ]; then
-              KSU_VERSION=$((30000 + GIT_COUNT))
-            else
-              # Last resort fallback
-              KSU_VERSION="30000"
-            fi
-
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION, commits: $GIT_COUNT)"
+            echo "✅ KernelSU-Next integrated (version: $KSU_VERSION, tag: $KSU_TAG, commits: $GIT_COUNT)"
           else
             echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
             exit 1
@@ -666,12 +686,22 @@ jobs:
         run: |
           cd kernel/common
 
-           if [ -f "BUILD.bazel" ]; then
+          if [ -f "BUILD.bazel" ]; then
             sed -i \
               -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = .*/kmi_symbol_list_strict_mode = False,/g' \
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
+
+            # CRITICAL FIX: Remove zram.ko and zsmalloc.ko from module_outs.
+            # These are expected as loadable modules (.ko) by BUILD.bazel, but
+            # GKI defconfig may build them differently (built-in or not at all).
+            # If they're not in staging/lib/modules/ → build fails with:
+            #   "ERROR: Unable to find drivers/block/zram/zram.ko"
+            sed -i '/"drivers\/block\/zram\/zram\.ko"/d' BUILD.bazel
+            sed -i '/"mm\/zsmalloc\.ko"/d' BUILD.bazel
+            echo "   Removed zram.ko and zsmalloc.ko from module_outs"
+
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
           fi
