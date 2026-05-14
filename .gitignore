@@ -13,4 +13,5 @@ legacy_logs.zip
 *.log
 error_gki.txt
 error_legacy.txt
-Nyimpenn_log
+Nyimpenn_log/
+booting/

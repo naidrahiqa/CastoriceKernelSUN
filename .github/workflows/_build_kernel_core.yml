@@ -235,6 +235,19 @@ jobs:
             -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
           cd common
+
+          # CRITICAL FIX: Match exact KMI version 6.6.58 for Redmi 12 (fire)
+          # Stock boot.img has version '6.6.58-android15-8-g33c1ba9ffede-4k'.
+          # We must use this exact commit so vendor modules (LCM, touch) load correctly!
+          echo "Fetching exact commit for 6.6.58 (33c1ba9ffede)..."
+          git fetch https://android.googlesource.com/kernel/common 33c1ba9ffede --depth=1 || true
+          if git show 33c1ba9ffede >/dev/null 2>&1; then
+            git checkout 33c1ba9ffede
+            echo "✅ Successfully checked out 6.6.58 (33c1ba9ffede)"
+          else
+            echo "⚠️ Failed to fetch exact commit! Build may produce KMI mismatch."
+          fi
+
           make kernelversion
 
       - name: Set KMI Generation
@@ -660,8 +673,15 @@ jobs:
           sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_${GOV_UPPER}=y"
 
-          # NOTE: Do NOT override ZRAM/ZSMALLOC here. GKI manages these as
-          # modules. Forcing =y conflicts with vendor DLKM loading → bootloop.
+          # NOTE: ZRAM/ZSMALLOC bazel fix
+          # Bazel complains about missing zram.ko/zsmalloc.ko. We force them
+          # to be built as modules (=m) so Bazel finds them in module_outs.
+          echo "" >> "$DEFCONFIG"
+          echo "# ZRAM Fix" >> "$DEFCONFIG"
+          add_cfg "CONFIG_ZSMALLOC=m"
+          add_cfg "CONFIG_ZRAM=m"
+          add_cfg "CONFIG_CRYPTO_LZ4=y"
+          add_cfg "CONFIG_ZRAM_DEF_COMP_LZ4=y"
 
           echo "" >> "$DEFCONFIG"
           echo "# Network Optimizations (Safe)" >> "$DEFCONFIG"
@@ -725,9 +745,10 @@ jobs:
           #    THP is designed for server workloads, wastes memory on phones
           add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=n"
 
-          # 7. Kernel compression — LZ4 has fastest decompression, reduces
-          #    boot time compared to gzip/zstd on budget hardware
-          add_cfg "CONFIG_KERNEL_LZ4=y"
+          # 7. Kernel compression — Revert to GZIP (Stock Redmi 12 format)
+          #    Xiaomi bootloaders can be picky. Sticking to GZIP avoids "bad image" errors.
+          add_cfg "CONFIG_KERNEL_GZIP=y"
+          sed -i '/^CONFIG_KERNEL_LZ4=y/d' "$DEFCONFIG"
 
           # 8. Disable misc debug features that add runtime overhead
           add_cfg "CONFIG_DEBUG_KERNEL=n"
@@ -752,15 +773,6 @@ jobs:
               -e 's/kmi_symbol_list_strict_mode = .*/kmi_symbol_list_strict_mode = False,/g' \
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
-
-            # CRITICAL FIX: Remove zram.ko and zsmalloc.ko from module_outs.
-            # These are expected as loadable modules (.ko) by BUILD.bazel, but
-            # GKI defconfig may build them differently (built-in or not at all).
-            # If they're not in staging/lib/modules/ → build fails with:
-            #   "ERROR: Unable to find drivers/block/zram/zram.ko"
-            sed -i '/"drivers\/block\/zram\/zram\.ko"/d' BUILD.bazel
-            sed -i '/"mm\/zsmalloc\.ko"/d' BUILD.bazel
-            echo "   Removed zram.ko and zsmalloc.ko from module_outs"
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
