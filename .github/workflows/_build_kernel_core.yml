@@ -518,8 +518,7 @@ jobs:
                 # Tambah include
                 sed -i '1i #include <linux/susfs.h>' common/drivers/kernelsu/core/init.c
                 # Inject susfs_init() ke dalam kernelsu_init
-                sed -i '/int __init kernelsu_init(void)/a \
-\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n' common/drivers/kernelsu/core/init.c
+                perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n    susfs_init();\n#endif\n/' common/drivers/kernelsu/core/init.c
                 echo "   ✅ susfs_init() injected into core/init.c"
               fi
             else
