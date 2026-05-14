@@ -572,9 +572,10 @@ jobs:
             if [ -n "$KSU_VERSION" ] && [ "$KSU_VERSION" != "unknown" ]; then
                echo "ccflags-y += -DKSU_VERSION=$KSU_VERSION" >> "$KSU_KERNEL/Makefile"
             fi
-            grep -q "KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
+            grep -q "config KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
           fi
           echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
+          echo "✅ SUSFS_INTEGRATED status: $SUSFS_INTEGRATED"
 
           if [ "$SUSFS_INTEGRATED" = "true" ]; then
             [ ! -f "fs/susfs.c" ] && echo "❌ ERROR: fs/susfs.c not found!" && exit 1
@@ -635,6 +636,7 @@ jobs:
               echo "# SUSFS" >> $DEFCONFIG
               for cfg in \
                 CONFIG_KSU_SUSFS \
+                CONFIG_SUSFS \
                 CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT \
                 CONFIG_KSU_SUSFS_SUS_MOUNT \
                 CONFIG_KSU_SUSFS_SUS_MAP \
@@ -679,6 +681,14 @@ jobs:
           add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_${GOV_UPPER}=y"
 
           echo "" >> "$DEFCONFIG"
+          echo "# RAM & Multitasking (Built-in for Stability)" >> "$DEFCONFIG"
+          add_cfg "CONFIG_ZRAM=y"
+          add_cfg "CONFIG_ZSMALLOC=y"
+          add_cfg "CONFIG_ZSMALLOC_STAT=y"
+          add_cfg "CONFIG_ZRAM_DEF_COMP_LZ4=y"
+          add_cfg "CONFIG_CRYPTO_LZ4=y"
+
+          echo "" >> "$DEFCONFIG"
           echo "# Network & Storage Optimizations (Safe)" >> "$DEFCONFIG"
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
           add_cfg "CONFIG_TCP_CONG_BBR=y"
@@ -697,18 +707,14 @@ jobs:
         run: |
           cd kernel/common
 
-          rm -rf android/abi_gki_protected_exports_* || true
           if [ -f "BUILD.bazel" ]; then
-            sed -i '/abi_gki_protected_exports/d' BUILD.bazel
             sed -i \
               -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = True/kmi_symbol_list_strict_mode = False/g' \
               -e 's/trim_nonlisted_kmi = True/trim_nonlisted_kmi = False/g' \
               BUILD.bazel
-            echo "✅ BUILD.bazel patched (protected_exports refs removed)"
+            echo "✅ BUILD.bazel patched (strict mode disabled)"
           fi
-
-          [ -f "modules.bzl" ] && sed -i 's/protected_modules = \[.*\]/protected_modules = []/' modules.bzl 2>/dev/null || true
           for f in build.config.gki build.config.gki.aarch64; do
             [ -f "$f" ] && sed -i '/check_defconfig/d' "$f"
           done
@@ -881,10 +887,12 @@ jobs:
             'write_boot;' > anykernel.sh
 
           SELECTED_IMG=""
+          # Prioritaskan Image (raw) atau Image.lz4 untuk GKI agar tidak bootloop
+          # Image.gz seringkali tidak didukung bootloader GKI tertentu
           for img in \
-            "$GITHUB_WORKSPACE/dist/Image.gz" \
+            "$GITHUB_WORKSPACE/dist/Image" \
             "$GITHUB_WORKSPACE/dist/Image.lz4" \
-            "$GITHUB_WORKSPACE/dist/Image"; do
+            "$GITHUB_WORKSPACE/dist/Image.gz"; do
             if [ -f "$img" ]; then
               cp "$img" .
               SELECTED_IMG=$(basename "$img")
