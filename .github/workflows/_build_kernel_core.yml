@@ -827,12 +827,11 @@ jobs:
           set -euo pipefail
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
-          # LTO=thin produces ~10-15% smaller + faster kernel vs LTO=none.
-          # Full LTO is too slow for CI (OOM on 7GB runner). Thin LTO is
-          # the sweet spot: cross-module optimization without excessive RAM.
+          # LTO=none is the safest for debugging bootloops. 
+          # It avoids complex optimizations that might break on custom toolchains.
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --lto=thin \
+            --lto=none \
             --local_resources=memory=6144 \
             --jobs=3 \
             //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
