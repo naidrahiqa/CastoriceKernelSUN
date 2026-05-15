@@ -726,11 +726,11 @@ jobs:
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
           # ─── WIFI & CONNECTIVITY FIX ──────────────────────────────────
-          # Gunakan =m (module) biar Bazel gak error, tapi pastiin aktif
-          add_cfg "CONFIG_CFG80211=m"
+          # Gunakan =y (built-in) biar Bazel gak repot mikirin file .ko dan WMT langsung nemu WLAN
+          add_cfg "CONFIG_CFG80211=y"
           add_cfg "CONFIG_NL80211_TESTMODE=y"
           add_cfg "CONFIG_CFG80211_WEXT=y"
-          add_cfg "CONFIG_MAC80211=m"
+          add_cfg "CONFIG_MAC80211=y"
           
           # MediaTek Specific (Connectivity)
           add_cfg "CONFIG_MTK_COMBO_WIFI=y"
@@ -781,9 +781,8 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            sed -i '/module_outs = \[/a \        "net/wireless/cfg80211.ko",\n        "net/mac80211/mac80211.ko",' BUILD.bazel
             git add BUILD.bazel
-            echo "✅ BUILD.bazel patched with WiFi modules"
+            echo "✅ BUILD.bazel patched and added to git"
           fi
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
