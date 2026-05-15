@@ -78,6 +78,38 @@ jobs:
           echo "release_tag:     '${{ inputs.release_tag }}'"
           echo "========================"
 
+      - name: Initialize Environment
+        run: |
+          # Toolchain Short Name
+          TC_NAME="${{ inputs.clang_toolchain }}"
+          if [ "$TC_NAME" = "bazel-default" ] || [ -z "$TC_NAME" ]; then
+            TC_NAME="Bazel"
+          elif [ "$TC_NAME" = "zyc-latest" ]; then
+            TC_NAME="ZyClang"
+          elif [ "$TC_NAME" = "aosp-latest" ]; then
+            TC_NAME="AOSPClang"
+          elif [ "$TC_NAME" = "weebx-latest" ]; then
+            TC_NAME="WeebXClang"
+          elif [ "$TC_NAME" = "azure-latest" ]; then
+            TC_NAME="AzureClang"
+          elif [ "$TC_NAME" = "neutron-latest" ]; then
+            TC_NAME="NeutronClang"
+          fi
+          echo "TOOLCHAIN_NAME=${TC_NAME}" >> $GITHUB_ENV
+          
+          # SUSFS Suffix
+          SUSFS_LABEL=""
+          [ "${{ inputs.with_susfs }}" = "true" ] && SUSFS_LABEL="-SUSFS"
+          
+          # Build Date
+          BUILD_DATE=$(date -u '+%d%m%Y')
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
+          
+          # Base Filename: {CustomName}-{Toolchain}-{Root}-{Governor}[-SUSFS]-{Date}
+          BASE_NAME="${{ inputs.custom_name }}-${TC_NAME}-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}${SUSFS_LABEL}-${BUILD_DATE}"
+          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
+          echo "✅ Environment initialized: ${BASE_NAME}"
+
       - name: Restore Bazel Cache
         uses: actions/cache@v4
         with:
@@ -884,7 +916,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gki-debug-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}
+          name: "Debug-${{ env.ZIP_NAME }}"
           path: |
             kernel/build.log
             kernel/common/build.log
@@ -898,24 +930,9 @@ jobs:
           CUSTOM_NAME="${{ inputs.custom_name }}"
           BUILD_VER="${{ github.run_number }}"
           AUTHOR="${{ inputs.author_name }}"
-          KSU_METHOD="${{ inputs.ksu_method }}"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          # Ambil TOOLCHAIN_NAME dari env yang sudah di-set di step Build
           TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}"
-          # Fallback kalau kosong
-          [ -z "$TOOLCHAIN_SHORT" ] && TOOLCHAIN_SHORT="Bazel"
-
-          # SUSFS: hanya sebut kalau memang ada SUSFS, non-SUSFS tidak perlu label
-          SUSFS_STR=""
-          if [ "${{ inputs.with_susfs }}" == "true" ]; then
-            SUSFS_STR="-SUSFS"
-          fi
-
-          # Nama file: {CustomName}-{Toolchain}[-SUSFS]-{DDMMYYYY}
-          # Nanti otomatis ditambah suffix -AnyKernel3.zip di command zip
-          BUILD_DATE=$(date -u '+%d%m%Y')
-          BASE_NAME="${CUSTOM_NAME}-${TOOLCHAIN_SHORT}${SUSFS_STR}-${BUILD_DATE}"
-          echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
+          BASE_NAME="${{ env.ZIP_NAME }}"
 
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
 
@@ -976,9 +993,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          # Nama harus unik per job dalam satu workflow run.
-          # Sertakan semua dimensi matrix agar tidak conflict saat parallel matrix jobs (error 409).
-          name: "Castorice-GKI-6.6-${{ inputs.with_susfs == 'true' && 'SUSFS-' || '' }}${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}"
+          name: "${{ env.ZIP_NAME }}"
           path: dist/*.zip
           if-no-files-found: warn
           retention-days: 30
@@ -1091,8 +1106,7 @@ jobs:
             || echo "⚠️  Header notification failed"
 
           # ── 3. Upload error log sebagai file .txt ───────────────────────
-          LOG_DATE=$(date -u '+%d%m%Y')
-          LOG_FILENAME="error-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}-${{ inputs.clang_toolchain }}-${LOG_DATE}.log"
+          LOG_FILENAME="${{ env.ZIP_NAME }}-Error.log"
           cp "$ERROR_LOG" "/tmp/${LOG_FILENAME}"
 
           echo "📤 Uploading error log (${LOG_LINES} lines, ${LOG_BYTES} bytes)..."
