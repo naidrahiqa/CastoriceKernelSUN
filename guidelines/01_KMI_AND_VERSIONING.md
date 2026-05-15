@@ -19,3 +19,11 @@
   CONFIG_KERNEL_GZIP=y
   # DILARANG MENGGUNAKAN CONFIG_KERNEL_LZ4=y
   ```
+
+## 3. AnyKernel3 Packaging (Image.gz Priority)
+- **Kenapa?** Meskipun build ngasilin file `Image` (raw) dan `Image.gz`, AnyKernel3 **HARUS** memprioritaskan `Image.gz` untuk Redmi 12 (fire). File `Image` mentah seringkali ditolak bootloader Mediatek atau bikin "bad image" error.
+- **Implementasi:** Pastikan di workflow CI/CD, urutan loop pencarian file adalah:
+  1. `Image.gz` (Prioritas Utama)
+  2. `Image.lz4`
+  3. `Image` (Terakhir/Fallback)
+- **Status:** Sudah diperbaiki di workflow per 15 Mei 2026. JANGAN ditukar lagi urutannya.

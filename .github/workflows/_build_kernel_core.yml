@@ -1012,12 +1012,13 @@ jobs:
             'write_boot;' > anykernel.sh
 
           SELECTED_IMG=""
-          # Prioritaskan Image.gz untuk Redmi 12 (Helio G88) GKI bootloader agar tidak bootloop
-          # Image (raw) seringkali bikin "bad image" atau bootloop pada Xiaomi Mediatek
+          # CRITICAL: Prioritaskan Image.gz untuk Redmi 12 (Helio G88).
+          # Bootloader Xiaomi MTK sering gagal booting kalau dikasih raw 'Image'.
+          # Urutan: gz (best compatibility) > lz4 > raw Image (fallback)
           for img in \
-            "$GITHUB_WORKSPACE/dist/Image" \
             "$GITHUB_WORKSPACE/dist/Image.gz" \
-            "$GITHUB_WORKSPACE/dist/Image.lz4"; do
+            "$GITHUB_WORKSPACE/dist/Image.lz4" \
+            "$GITHUB_WORKSPACE/dist/Image"; do
             if [ -f "$img" ]; then
               cp "$img" .
               SELECTED_IMG=$(basename "$img")
