@@ -726,22 +726,17 @@ jobs:
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
           # ─── WIFI & CONNECTIVITY FIX ──────────────────────────────────
-          # Paksa built-in biar WMT gak telat nemu probe function
-          add_cfg "CONFIG_CFG80211=y"
+          # Gunakan =m (module) biar Bazel gak error, tapi pastiin aktif
+          add_cfg "CONFIG_CFG80211=m"
           add_cfg "CONFIG_NL80211_TESTMODE=y"
           add_cfg "CONFIG_CFG80211_WEXT=y"
-          add_cfg "CONFIG_MAC80211=y"
+          add_cfg "CONFIG_MAC80211=m"
           
           # MediaTek Specific (Connectivity)
           add_cfg "CONFIG_MTK_COMBO_WIFI=y"
           add_cfg "CONFIG_MTK_COMBO_BT=y"
           add_cfg "CONFIG_MTK_COMBO_GPS=y"
           
-          # SELinux Permissive (Temporary for WiFi/Hotspot debug)
-          sed -i 's/security=selinux/security=selinux selinux=0/g' $DEFCONFIG || true
-          echo 'CONFIG_CMDLINE="selinux=0"' >> $DEFCONFIG
-          echo "CONFIG_CMDLINE_EXTEND=y" >> $DEFCONFIG
-
           # ─── HOTSPOT FIX (Netfilter NAT) ──────────────────────────────
           echo "" >> "$DEFCONFIG"
           echo "# Netfilter for Hotspot/Tethering" >> "$DEFCONFIG"
@@ -772,7 +767,6 @@ jobs:
           add_cfg "CONFIG_PSTORE_RAM_CONSOLE_SIZE=0x40000"
           add_cfg "CONFIG_PSTORE_RAM_PMSG_SIZE=0x80000"
 
-          echo "✅ Config applied: Branding + NAT Fix + PStore (Risky fixes reverted)"       echo "# PStore / RAMoops Debugging" >> "$DEFCONFIG"
           add_cfg "CONFIG_PSTORE=y"
           add_cfg "CONFIG_PSTORE_CONSOLE=y"
           add_cfg "CONFIG_PSTORE_PMSG=y"
@@ -782,7 +776,6 @@ jobs:
           add_cfg "CONFIG_PSTORE_RAM_CONSOLE_SIZE=0x40000"
           add_cfg "CONFIG_PSTORE_RAM_PMSG_SIZE=0x80000"
 
-          echo "✅ Config applied: debug strip + WiFi fix + tethering + GPU fix + PStore"
 
           git add arch/arm64/configs/gki_defconfig
           echo "✅ Defconfig finalized and added to git"
