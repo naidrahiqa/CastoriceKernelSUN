@@ -781,6 +781,28 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
+            # FIX: WiFi modules (cfg80211/mac80211) are forced to =m by GKI Kconfig
+            # even when defconfig says =y. Bazel requires ALL built .ko files to be
+            # listed in module_outs, otherwise build fails with:
+            #   "The following kernel modules are built but not copied"
+            # Custom toolchain (make) doesn't have this strict check → that's why
+            # ZyClang succeeds but Bazel fails.
+            WIFI_MODULES=(
+              "net/wireless/cfg80211.ko"
+              "net/mac80211/mac80211.ko"
+            )
+            for mod in "${WIFI_MODULES[@]}"; do
+              if ! grep -q "\"${mod}\"" BUILD.bazel; then
+                # Insert into module_outs list (before the closing bracket)
+                sed -i "/module_outs\s*=\s*\[/,/\]/{
+                  /\]/ i\\    \"${mod}\",
+                }" BUILD.bazel
+                echo "  → Added ${mod} to module_outs"
+              else
+                echo "  → ${mod} already in module_outs"
+              fi
+            done
+
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
           fi
