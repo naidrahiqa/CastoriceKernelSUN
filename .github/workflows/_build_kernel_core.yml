@@ -877,16 +877,18 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/dist
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             cd kernel
+            # Extract Images
             for artifact in Image Image.gz Image.lz4; do
-              if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
-                if [ -f "bazel-bin/common/kernel_aarch64/$artifact" ]; then
-                  cp -v "bazel-bin/common/kernel_aarch64/$artifact" "$GITHUB_WORKSPACE/dist/" || true
-                fi
+              if [ -f "bazel-bin/common/kernel_aarch64/$artifact" ]; then
+                cp -v "bazel-bin/common/kernel_aarch64/$artifact" "$GITHUB_WORKSPACE/dist/" || true
               fi
             done
+            # Extract Modules from Bazel (they are usually in the dist_dir we specified)
+            # But let's be safe and find them if they are missing
+            find "$GITHUB_WORKSPACE/dist" -name "*.ko" || echo "No modules in dist yet"
           else
-            # Extraction for Custom Toolchain (from 'out' directory)
-            # We copy all variants to dist/ and let AnyKernel3 step pick the best one.
+            # Extraction for Custom Toolchain (ZyClang)
+            # 1. Images
             for img in \
               kernel/common/out/arch/arm64/boot/Image \
               kernel/common/out/arch/arm64/boot/Image.gz \
@@ -895,9 +897,12 @@ jobs:
                 cp -v "$img" "$GITHUB_WORKSPACE/dist/"
               fi
             done
+            # 2. Modules (CRITICAL for WiFi/Hotspot)
+            echo "📦 Extracting modules from out/ directory..."
+            find kernel/common/out -name "*.ko" -exec cp -v {} "$GITHUB_WORKSPACE/dist/" \;
           fi
-          echo "📦 dist/ contents:"
-          ls -lah $GITHUB_WORKSPACE/dist/ || true
+          echo "📦 dist/ contents after extraction:"
+          ls -R $GITHUB_WORKSPACE/dist/ || true
 
       - name: Verify Build
         run: |
