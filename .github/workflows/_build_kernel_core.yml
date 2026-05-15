@@ -776,27 +776,41 @@ jobs:
           cd kernel/common
 
           if [ -f "BUILD.bazel" ]; then
-            # Download buildozer (official Bazel editing tool)
-            # This is MUCH safer than 'sed' for editing Bazel files
-            if [ ! -f "$HOME/bin/buildozer" ]; then
-              mkdir -p "$HOME/bin"
-              curl -sL https://github.com/bazelbuild/buildtools/releases/download/v7.1.2/buildozer-linux-amd64 -o "$HOME/bin/buildozer"
-              chmod +x "$HOME/bin/buildozer"
-            fi
-            export PATH="$HOME/bin:$PATH"
-
-            # Apply general patches
             sed -i \
               -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = .*/kmi_symbol_list_strict_mode = False,/g' \
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Official way to add modules using buildozer
-            # This solves the "built but not copied" error for WiFi modules
-            echo "  → Registering WiFi modules in BUILD.bazel using buildozer..."
-            buildozer 'add module_outs net/wireless/cfg80211.ko' //common:kernel_aarch64
-            buildozer 'add module_outs net/mac80211/mac80211.ko' //common:kernel_aarch64
+            # FIX: Add WiFi modules to module_outs.
+            # cfg80211.ko and mac80211.ko are forced =m by GKI Kconfig.
+            # Bazel needs them in module_outs or it errors "built but not copied".
+            # Write Python script to temp file to avoid YAML indentation issues.
+            cat > /tmp/fix_bazel_modules.py << 'FIXEOF'
+            import re, sys
+            with open('BUILD.bazel','r') as f:
+                content = f.read()
+            mods = ['"net/wireless/cfg80211.ko"', '"net/mac80211/mac80211.ko"']
+            m = re.search(r'(module_outs\s*=\s*\[)(.*?)(\])', content, re.DOTALL)
+            if not m:
+                print('module_outs not found, skipping')
+                sys.exit(0)
+            existing = m.group(2)
+            adds = ''
+            for mod in mods:
+                if mod not in existing:
+                    adds += '\n        ' + mod + ','
+                    print('Added ' + mod)
+                else:
+                    print(mod + ' already present')
+            if adds:
+                nb = m.group(1) + existing.rstrip() + adds + '\n    ' + m.group(3)
+                content = content[:m.start()] + nb + content[m.end():]
+                with open('BUILD.bazel','w') as f:
+                    f.write(content)
+                print('BUILD.bazel updated')
+            FIXEOF
+            python3 /tmp/fix_bazel_modules.py
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
@@ -877,18 +891,15 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/dist
           if [ "${{ inputs.clang_toolchain }}" = "bazel-default" ] || [ -z "${{ inputs.clang_toolchain }}" ]; then
             cd kernel
-            # Extract Images
             for artifact in Image Image.gz Image.lz4; do
-              if [ -f "bazel-bin/common/kernel_aarch64/$artifact" ]; then
-                cp -v "bazel-bin/common/kernel_aarch64/$artifact" "$GITHUB_WORKSPACE/dist/" || true
+              if [ ! -f "$GITHUB_WORKSPACE/dist/$artifact" ]; then
+                if [ -f "bazel-bin/common/kernel_aarch64/$artifact" ]; then
+                  cp -v "bazel-bin/common/kernel_aarch64/$artifact" "$GITHUB_WORKSPACE/dist/" || true
+                fi
               fi
             done
-            # Extract Modules from Bazel (they are usually in the dist_dir we specified)
-            # But let's be safe and find them if they are missing
-            find "$GITHUB_WORKSPACE/dist" -name "*.ko" || echo "No modules in dist yet"
           else
-            # Extraction for Custom Toolchain (ZyClang)
-            # 1. Images
+            # Extraction for Custom Toolchain (from 'out' directory)
             for img in \
               kernel/common/out/arch/arm64/boot/Image \
               kernel/common/out/arch/arm64/boot/Image.gz \
@@ -897,12 +908,17 @@ jobs:
                 cp -v "$img" "$GITHUB_WORKSPACE/dist/"
               fi
             done
-            # 2. Modules (CRITICAL for WiFi/Hotspot)
-            echo "📦 Extracting modules from out/ directory..."
-            find kernel/common/out -name "*.ko" -exec cp -v {} "$GITHUB_WORKSPACE/dist/" \;
+            # Also grab WiFi modules if they exist (for AnyKernel3 packaging)
+            for mod in cfg80211.ko mac80211.ko; do
+              FOUND=$(find kernel/common/out -name "$mod" -type f 2>/dev/null | head -1)
+              if [ -n "$FOUND" ]; then
+                cp -v "$FOUND" "$GITHUB_WORKSPACE/dist/"
+                echo "✅ Extracted module: $mod"
+              fi
+            done
           fi
-          echo "📦 dist/ contents after extraction:"
-          ls -R $GITHUB_WORKSPACE/dist/ || true
+          echo "📦 dist/ contents:"
+          ls -lah $GITHUB_WORKSPACE/dist/ || true
 
       - name: Verify Build
         run: |
