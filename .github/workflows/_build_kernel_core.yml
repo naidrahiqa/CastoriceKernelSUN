@@ -343,6 +343,7 @@ jobs:
             echo "Copying KernelSU-Next/kernel to common/drivers/kernelsu..."
             rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
+            cp -r KernelSU-Next/uapi common/drivers/kernelsu/uapi 2>/dev/null || true
 
             # Verify copy succeeded
             if [ ! -f "common/drivers/kernelsu/Kconfig" ]; then
@@ -351,22 +352,18 @@ jobs:
               exit 1
             fi
 
-            # CRITICAL FIX: Inject KSU_GIT_VERSION and KSU_GIT_VERSION_TAG
+            # CRITICAL FIX: Inject KSU_VERSION and KSU_VERSION_TAG
             # directly into Kbuild ccflags. This bypasses git detection which
             # ALWAYS fails in Bazel sandbox (no .git visible).
-            # Without this → KSU_GIT_VERSION=1 → KernelSU Manager rejects kernel → bootloop.
+            # Without this → KSU_VERSION=1 → KernelSU Manager rejects kernel.
             KBUILD_FILE="common/drivers/kernelsu/Kbuild"
             if [ -f "$KBUILD_FILE" ]; then
-              # Comment out the error/warning lines about git version
-              sed -i 's/^\(.*"KSU_GIT_VERSION not defined!.*\)$/# \1/' "$KBUILD_FILE"
-              sed -i 's/^\(.*"KSU_VERSION_TAG not defined!.*\)$/# \1/' "$KBUILD_FILE"
-
-              # Append forced version defines
+              # Undefine any previous KSU_VERSION and redefine it
               echo "" >> "$KBUILD_FILE"
               echo "# Injected by CI — Bazel sandbox cannot access .git" >> "$KBUILD_FILE"
-              echo "ccflags-y += -DKSU_GIT_VERSION=${KSU_VERSION}" >> "$KBUILD_FILE"
-              echo 'ccflags-y += -DKSU_GIT_VERSION_TAG=\"'"${KSU_TAG}"'\"' >> "$KBUILD_FILE"
-              echo "✅ KSU_GIT_VERSION=${KSU_VERSION} and TAG=${KSU_TAG} injected into Kbuild"
+              echo "ccflags-y += -UKSU_VERSION -DKSU_VERSION=${KSU_VERSION}" >> "$KBUILD_FILE"
+              echo "ccflags-y += -UKSU_VERSION_TAG -DKSU_VERSION_TAG=\"\\\"${KSU_TAG}\\\"\"" >> "$KBUILD_FILE"
+              echo "✅ KSU_VERSION=${KSU_VERSION} and TAG=${KSU_TAG} injected into Kbuild"
             else
               echo "⚠️  Kbuild not found, version injection skipped"
             fi
@@ -500,7 +497,7 @@ jobs:
                   # Add include at top
                   sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
                   # Safer injection: find the opening brace of kernelsu_init and add after it
-                  perl -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
+                  perl -0777 -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
                   echo "   ✅ susfs_init() injected into core/init.c"
                 else
                   echo "   ℹ️  susfs_init() already present, skipping"
@@ -955,12 +952,12 @@ jobs:
             'write_boot;' > anykernel.sh
 
           SELECTED_IMG=""
-          # Prioritaskan Image (raw) atau Image.lz4 untuk GKI agar tidak bootloop
-          # Image.gz seringkali tidak didukung bootloader GKI tertentu
+          # Prioritaskan Image.gz untuk Redmi 12 (Helio G88) GKI bootloader agar tidak bootloop
+          # Image (raw) seringkali bikin "bad image" atau bootloop pada Xiaomi Mediatek
           for img in \
-            "$GITHUB_WORKSPACE/dist/Image" \
+            "$GITHUB_WORKSPACE/dist/Image.gz" \
             "$GITHUB_WORKSPACE/dist/Image.lz4" \
-            "$GITHUB_WORKSPACE/dist/Image.gz"; do
+            "$GITHUB_WORKSPACE/dist/Image"; do
             if [ -f "$img" ]; then
               cp "$img" .
               SELECTED_IMG=$(basename "$img")
