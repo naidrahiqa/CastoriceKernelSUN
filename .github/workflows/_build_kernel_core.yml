@@ -110,13 +110,17 @@ jobs:
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
           echo "✅ Environment initialized: ${BASE_NAME}"
 
+      # FIX 4: Cache key pakai hashFiles bukan github.sha
+      # github.sha berubah setiap commit → cache NEVER HIT.
+      # hashFiles patches + workflow = cache invalidate hanya saat config berubah.
       - name: Restore Bazel Cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/bazel
-          key: gki-bazel-${{ inputs.ksu_method }}-${{ inputs.clang_toolchain }}-${{ github.sha }}
+          key: gki-bazel-${{ inputs.ksu_method }}-${{ inputs.clang_toolchain }}-${{ hashFiles('patches/**', '.github/workflows/_build_kernel_core.yml') }}
           restore-keys: |
             gki-bazel-${{ inputs.ksu_method }}-${{ inputs.clang_toolchain }}-
+            gki-bazel-${{ inputs.ksu_method }}-
             gki-bazel-
 
       - name: Maximize Disk Space
@@ -265,7 +269,21 @@ jobs:
           mkdir -p kernel && cd kernel
           repo init -u https://android.googlesource.com/kernel/manifest \
             -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
+
+          # FIX 6: Retry loop untuk repo sync
+          # Network flakes di GitHub Actions runner sering bikin sync gagal.
+          # 3x retry dengan 30s delay = lebih reliable.
+          SYNC_OK=false
+          for attempt in 1 2 3; do
+            echo "repo sync attempt $attempt/3..."
+            if repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync; then
+              SYNC_OK=true
+              break
+            fi
+            echo "⚠️ Sync failed, retrying in 30s..."
+            sleep 30
+          done
+          [ "$SYNC_OK" = "false" ] && echo "❌ repo sync gagal setelah 3 percobaan" && exit 1
           cd common
 
           # CRITICAL FIX: Match exact KMI version 6.6.58 for Redmi 12 (fire)
@@ -425,8 +443,10 @@ jobs:
             exit 1
           fi
 
+      # FIX 1: Re-enable SUSFS step — was hardcoded `if: false` for testing.
+      # Sekarang mengikuti input `with_susfs` dari matrix dispatcher.
       - name: Setup SUSFS
-        if: false # FORCED DISABLE FOR TESTING
+        if: inputs.with_susfs == 'true'
         run: |
           set -euo pipefail
           cd kernel
@@ -508,21 +528,29 @@ jobs:
             # Solusi: Kita inject manual `susfs_init()` secara aman khusus untuk KernelSU-Next.
             if [ "$KSU_METHOD" = "kernelsu-next" ]; then
               echo "   KernelSU-Next detected. Manually injecting SUSFS hooks..."
-              if [ -f "drivers/kernelsu/core/init.c" ]; then
+
+              # FIX 3: Cari init.c secara dinamis — path bisa berubah antar versi KSU-Next.
+              # Sebelumnya hardcoded "drivers/kernelsu/core/init.c" yang bisa tidak ada.
+              INIT_C=$(find common/drivers/kernelsu -name 'init.c' | head -n1)
+              if [ -z "$INIT_C" ]; then
+                echo "❌ ERROR: init.c tidak ditemukan di drivers/kernelsu/"
+                find common/drivers/kernelsu/ | head -20
+                exit 1
+              fi
+              echo "✅ Found init.c at: $INIT_C"
+
+              if [ -f "$INIT_C" ]; then
                 # Check if already injected (idempotent)
-                if ! grep -q 'susfs_init' drivers/kernelsu/core/init.c; then
+                if ! grep -q 'susfs_init' "$INIT_C"; then
                   # Add include at top
-                  sed -i '1i #include <linux/susfs.h>' drivers/kernelsu/core/init.c
+                  sed -i '1i #include <linux/susfs.h>' "$INIT_C"
                   # Safer injection: find the opening brace of kernelsu_init and add after it
-                  perl -0777 -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n/' drivers/kernelsu/core/init.c
-                  echo "   ✅ susfs_init() injected into core/init.c"
+                  perl -0777 -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n/' "$INIT_C"
+                  echo "   ✅ susfs_init() injected into $INIT_C"
                 else
                   echo "   ℹ️  susfs_init() already present, skipping"
                 fi
-                git add -f drivers/kernelsu/core/init.c 2>/dev/null || true
-              else
-                echo "   ❌ drivers/kernelsu/core/init.c NOT FOUND!"
-                find drivers/kernelsu/ -name 'init.c' 2>/dev/null || echo "   (no init.c found)"
+                git add -f "$INIT_C" 2>/dev/null || true
               fi
             else
               # Untuk root method lain (KSU biasa), baru pakai patch standar
@@ -669,6 +697,13 @@ jobs:
           echo "# Module Compatibility" >> "$DEFCONFIG"
           add_cfg "CONFIG_MODULE_SIG_FORCE=n"
           add_cfg "CONFIG_MODULE_SIG_ALL=n"
+
+          # FIX 7: tuning_profile dan safety_profile belum diimplementasi
+          # TODO: tuning_profile (${{ inputs.tuning_profile }}) dan safety_profile (${{ inputs.safety_profile }})
+          # belum diimplementasi. Reserved untuk future optimization presets.
+          # Contoh rencana:
+          #   - tuning_profile=gaming  → CONFIG_HZ=1000, aggressive sched
+          #   - safety_profile=performance → skip debug flags
 
           echo "" >> "$DEFCONFIG"
           echo "# CPU Governor" >> "$DEFCONFIG"

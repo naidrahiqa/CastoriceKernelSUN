@@ -117,6 +117,12 @@ jobs:
           # Collect selected governors
           govs = [g.strip() for g in "${{ inputs.cpu_governors }}".split(",") if g.strip()]
 
+          # FIX 5: Validasi governor — tangkap typo sebelum build berjalan 2+ jam
+          VALID_GOVS = {'schedutil', 'performance', 'ondemand', 'conservative', 'powersave', 'userspace', 'walt'}
+          invalid = [g for g in govs if g not in VALID_GOVS]
+          if invalid:
+              raise SystemExit(f"❌ Governor tidak valid: {invalid}. Pilih dari: {sorted(VALID_GOVS)}")
+
           # Collect selected SUSFS variants
           variants = []
           if "${{ inputs.build_no_susfs }}" == "true": variants.append("false")
