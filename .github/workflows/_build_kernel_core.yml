@@ -776,33 +776,27 @@ jobs:
           cd kernel/common
 
           if [ -f "BUILD.bazel" ]; then
+            # Download buildozer (official Bazel editing tool)
+            # This is MUCH safer than 'sed' for editing Bazel files
+            if [ ! -f "$HOME/bin/buildozer" ]; then
+              mkdir -p "$HOME/bin"
+              curl -sL https://github.com/bazelbuild/buildtools/releases/download/v7.1.2/buildozer-linux-amd64 -o "$HOME/bin/buildozer"
+              chmod +x "$HOME/bin/buildozer"
+            fi
+            export PATH="$HOME/bin:$PATH"
+
+            # Apply general patches
             sed -i \
               -e '/check_defconfig/d' \
               -e 's/kmi_symbol_list_strict_mode = .*/kmi_symbol_list_strict_mode = False,/g' \
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: WiFi modules (cfg80211/mac80211) are forced to =m by GKI Kconfig
-            # even when defconfig says =y. Bazel requires ALL built .ko files to be
-            # listed in module_outs, otherwise build fails with:
-            #   "The following kernel modules are built but not copied"
-            # Custom toolchain (make) doesn't have this strict check → that's why
-            # ZyClang succeeds but Bazel fails.
-            WIFI_MODULES=(
-              "net/wireless/cfg80211.ko"
-              "net/mac80211/mac80211.ko"
-            )
-            for mod in "${WIFI_MODULES[@]}"; do
-              if ! grep -q "\"${mod}\"" BUILD.bazel; then
-                # Insert into module_outs list (before the closing bracket)
-                sed -i "/module_outs\s*=\s*\[/,/\]/{
-                  /\]/ i\\    \"${mod}\",
-                }" BUILD.bazel
-                echo "  → Added ${mod} to module_outs"
-              else
-                echo "  → ${mod} already in module_outs"
-              fi
-            done
+            # FIX: Official way to add modules using buildozer
+            # This solves the "built but not copied" error for WiFi modules
+            echo "  → Registering WiFi modules in BUILD.bazel using buildozer..."
+            buildozer 'add module_outs net/wireless/cfg80211.ko' //common:kernel_aarch64
+            buildozer 'add module_outs net/mac80211/mac80211.ko' //common:kernel_aarch64
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
