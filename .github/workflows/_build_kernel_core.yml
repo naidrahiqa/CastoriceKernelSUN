@@ -733,10 +733,22 @@ jobs:
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
 
+          # CRITICAL: Stock Redmi 12 (fire) uses 4K page size.
+          # Must match exactly or vendor modules fail to load → bootloop.
+          # Stock boot.img version: '6.6.58-android15-8-g33c1ba9ffede-4k'
+          # The '-4k' suffix comes from LOCALVERSION and indicates page size.
+          echo "" >> "$DEFCONFIG"
+          echo "# Page Size (MUST match stock = 4K)" >> "$DEFCONFIG"
+          add_cfg "CONFIG_ARM64_4K_PAGES=y"
+          add_cfg "CONFIG_ARM64_PAGE_SHIFT=12"
+          sed -i '/^CONFIG_ARM64_16K_PAGES/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_ARM64_64K_PAGES/d' "$DEFCONFIG"
+
+          # Force '-4k' suffix to match stock KMI exactly
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
-          echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION="-4k"' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
           # NOTE: Do NOT set CONFIG_MODVERSIONS=n here!
           # Vendor DLKM modules (display, touch, camera) need MODVERSIONS
