@@ -726,11 +726,12 @@ jobs:
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
           # ─── WIFI & CONNECTIVITY FIX ──────────────────────────────────
-          # Gunakan =y (built-in) biar Bazel gak repot mikirin file .ko dan WMT langsung nemu WLAN
-          add_cfg "CONFIG_CFG80211=y"
+          # JANGAN pakai =y — GKI Kconfig override ke =m, jadi .ko-nya
+          # yang dipakai bukan built-in. Harus =m supaya Bazel copy .ko-nya.
+          add_cfg "CONFIG_CFG80211=m"
           add_cfg "CONFIG_NL80211_TESTMODE=y"
           add_cfg "CONFIG_CFG80211_WEXT=y"
-          add_cfg "CONFIG_MAC80211=y"
+          add_cfg "CONFIG_MAC80211=m"
           
           # MediaTek Specific (Connectivity)
           add_cfg "CONFIG_MTK_COMBO_WIFI=y"
@@ -958,7 +959,7 @@ jobs:
             'properties() {' \
             "kernel.string=${KERNEL_STRING}" \
             'do.devicecheck=1' \
-            'do.modules=0' \
+            'do.modules=1' \
             'do.systemless=1' \
             'do.cleanup=1' \
             'do.cleanuponabort=0' \
@@ -976,6 +977,39 @@ jobs:
             '. tools/ak3-core.sh;' \
             'dump_boot;' \
             'write_boot;' > anykernel.sh
+
+          # ─── TAMBAHKAN INI: Copy WiFi modules ───────────────────────
+          # cfg80211 dan mac80211 harus ikut di-flash bareng kernel.
+          # AnyKernel3 akan push .ko ini ke /vendor/lib/modules/ saat install.
+          MODULES_DIR="modules/vendor/lib/modules"
+          mkdir -p "$MODULES_DIR"
+
+          MODULES_FOUND=false
+          for mod in \
+            "$GITHUB_WORKSPACE/dist/net/wireless/cfg80211.ko" \
+            "$GITHUB_WORKSPACE/dist/net/mac80211/mac80211.ko"; do
+            if [ -f "$mod" ]; then
+              cp "$mod" "$MODULES_DIR/"
+              echo "✅ Copied $(basename $mod)"
+              MODULES_FOUND=true
+            else
+              echo "⚠️  Module not found: $mod"
+            fi
+          done
+
+          # Kalau modules gak ketemu di subdir, cari flat di dist/
+          if [ "$MODULES_FOUND" = "false" ]; then
+            for mod in cfg80211.ko mac80211.ko; do
+              if [ -f "$GITHUB_WORKSPACE/dist/$mod" ]; then
+                cp "$GITHUB_WORKSPACE/dist/$mod" "$MODULES_DIR/"
+                echo "✅ Copied (flat) $mod"
+                MODULES_FOUND=true
+              fi
+            done
+          fi
+
+          [ "$MODULES_FOUND" = "false" ] && echo "❌ WiFi modules tidak ditemukan! Build akan lanjut tapi WiFi kemungkinan tetap mati."
+          # ─── END MODULE COPY ────────────────────────────────────────
 
           SELECTED_IMG=""
           # CRITICAL: Prioritaskan Image.gz untuk Redmi 12 (Helio G88).
