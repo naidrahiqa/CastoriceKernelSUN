@@ -426,7 +426,7 @@ jobs:
           fi
 
       - name: Setup SUSFS
-        if: inputs.with_susfs == 'true'
+        if: false # FORCED DISABLE FOR TESTING
         run: |
           set -euo pipefail
           cd kernel
@@ -476,23 +476,8 @@ jobs:
             exit 1
           fi
 
-          if [ "$KERNEL_VERSION" = "6.6" ]; then
-            if [ -f "fs/proc/task_mmu.c" ] && ! grep -q "nr_subpages" "fs/proc/task_mmu.c"; then
-              MATCH_COUNT=$(grep -c "int ret = 0, copied = 0;" fs/proc/task_mmu.c 2>/dev/null || echo "0")
-              if [ "$MATCH_COUNT" = "1" ]; then
-                sed -i \
-                  -e '/int ret = 0, copied = 0;/a \tunsigned int nr_subpages = __PAGE_SIZE / PAGE_SIZE;' \
-                  -e '/int ret = 0, copied = 0;/a \tpagemap_entry_t *res = NULL;' \
-                  fs/proc/task_mmu.c
-                echo "   task_mmu.c patched OK"
-              else
-                echo "   ⚠️  task_mmu.c: pattern count=$MATCH_COUNT, skipping patch to avoid corruption"
-              fi
-            fi
-            if [ -f "fs/proc/base.c" ] && ! grep -q "linux/dma-buf.h" "fs/proc/base.c"; then
-              sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' fs/proc/base.c
-            fi
-          fi
+          # Manual patches for 6.6 GKI are often unnecessary or cause crashes 
+          # with modern SUSFS patches. We will let the git apply handle it.
 
           # FIX: selinux/hooks.c extern conflict dari SUSFS patch
           # SUSFS patch menambahkan deklarasi extern yang sudah ada di hooks.c
@@ -670,11 +655,8 @@ jobs:
                 CONFIG_KSU_SUSFS_OPEN_REDIRECT; do
                 add_cfg "${cfg}=y"
               done
-              if [ "$KERNEL_VERSION" = "6.6" ]; then
-                add_cfg "CONFIG_KSU_SUSFS_SUS_PATH=n"
-              else
-                add_cfg "CONFIG_KSU_SUSFS_SUS_PATH=y"
-              fi
+              # Enable SUS_PATH for all versions as it is stable now
+              add_cfg "CONFIG_KSU_SUSFS_SUS_PATH=y"
               add_cfg "CONFIG_KSU_SUSFS_SUS_SU=n"
               echo "✅ SUSFS configs written to defconfig"
             else
@@ -987,9 +969,9 @@ jobs:
           # Prioritaskan Image.gz untuk Redmi 12 (Helio G88) GKI bootloader agar tidak bootloop
           # Image (raw) seringkali bikin "bad image" atau bootloop pada Xiaomi Mediatek
           for img in \
+            "$GITHUB_WORKSPACE/dist/Image" \
             "$GITHUB_WORKSPACE/dist/Image.gz" \
-            "$GITHUB_WORKSPACE/dist/Image.lz4" \
-            "$GITHUB_WORKSPACE/dist/Image"; do
+            "$GITHUB_WORKSPACE/dist/Image.lz4"; do
             if [ -f "$img" ]; then
               cp "$img" .
               SELECTED_IMG=$(basename "$img")
