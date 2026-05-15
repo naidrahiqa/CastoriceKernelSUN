@@ -767,16 +767,6 @@ jobs:
           add_cfg "CONFIG_PSTORE_RAM_CONSOLE_SIZE=0x40000"
           add_cfg "CONFIG_PSTORE_RAM_PMSG_SIZE=0x80000"
 
-          add_cfg "CONFIG_PSTORE=y"
-          add_cfg "CONFIG_PSTORE_CONSOLE=y"
-          add_cfg "CONFIG_PSTORE_PMSG=y"
-          add_cfg "CONFIG_PSTORE_RAM=y"
-          add_cfg "CONFIG_PSTORE_RAM_MEM_ADDR=0x4d010000"
-          add_cfg "CONFIG_PSTORE_RAM_SIZE=0xe0000"
-          add_cfg "CONFIG_PSTORE_RAM_CONSOLE_SIZE=0x40000"
-          add_cfg "CONFIG_PSTORE_RAM_PMSG_SIZE=0x80000"
-
-
           git add arch/arm64/configs/gki_defconfig
           echo "✅ Defconfig finalized and added to git"
 
@@ -791,8 +781,9 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
+            sed -i '/module_outs = \[/a \        "net/wireless/cfg80211.ko",\n        "net/mac80211/mac80211.ko",' BUILD.bazel
             git add BUILD.bazel
-            echo "✅ BUILD.bazel patched and added to git"
+            echo "✅ BUILD.bazel patched with WiFi modules"
           fi
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
