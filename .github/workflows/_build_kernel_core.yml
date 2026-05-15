@@ -286,17 +286,11 @@ jobs:
           [ "$SYNC_OK" = "false" ] && echo "❌ repo sync gagal setelah 3 percobaan" && exit 1
           cd common
 
-          # CRITICAL FIX: Match exact KMI version 6.6.58 for Redmi 12 (fire)
-          # Stock boot.img has version '6.6.58-android15-8-g33c1ba9ffede-4k'.
-          # We must use this exact commit so vendor modules (LCM, touch) load correctly!
-          echo "Fetching exact commit for 6.6.58 (33c1ba9ffede)..."
-          git fetch https://android.googlesource.com/kernel/common 33c1ba9ffede --depth=1 || true
-          if git show 33c1ba9ffede >/dev/null 2>&1; then
-            git checkout 33c1ba9ffede
-            echo "✅ Successfully checked out 6.6.58 (33c1ba9ffede)"
-          else
-            echo "⚠️ Failed to fetch exact commit! Build may produce KMI mismatch."
-          fi
+          # NOTE: Tidak lagi lock ke commit 33c1ba9ffede (6.6.58).
+          # Build 30 April (6.6.129) yang BOOTING pakai tip of branch.
+          # Version lock ke 6.6.58 terbukti bootloop di semua build Mei 2026.
+          # Biarkan repo sync ambil HEAD dari branch common-android15-6.6.
+          echo "✅ Using tip of branch ($(git log --oneline -1))"
 
           make kernelversion
 
@@ -733,101 +727,57 @@ jobs:
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
 
-          # CRITICAL: Stock Redmi 12 (fire) uses 4K page size.
-          # Must match exactly or vendor modules fail to load → bootloop.
-          # Stock boot.img version: '6.6.58-android15-8-g33c1ba9ffede-4k'
-          # The '-4k' suffix comes from LOCALVERSION and indicates page size.
-          echo "" >> "$DEFCONFIG"
-          echo "# Page Size (MUST match stock = 4K)" >> "$DEFCONFIG"
-          add_cfg "CONFIG_ARM64_4K_PAGES=y"
-          add_cfg "CONFIG_ARM64_PAGE_SHIFT=12"
-          sed -i '/^CONFIG_ARM64_16K_PAGES/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_ARM64_64K_PAGES/d' "$DEFCONFIG"
-
-          # Force '-4k' suffix to match stock KMI exactly
+          # Branding — keep LOCALVERSION clean (GKI default)
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
-          echo 'CONFIG_LOCALVERSION="-4k"' >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
           # NOTE: Do NOT set CONFIG_MODVERSIONS=n here!
           # Vendor DLKM modules (display, touch, camera) need MODVERSIONS
           # to load. Disabling it = modules fail to load = bootloop.
 
-          # ─── Lightweight Optimization ─────────────────────────────────
-          # Previous builds booted but were TOO HEAVY compared to stock.
-          # These configs strip debug bloat, reduce tracing overhead, and
-          # optimize memory/timer for a lean GKI kernel on Redmi 12 (fire).
-          echo "" >> "$DEFCONFIG"
-          echo "# Lightweight Optimization (strip debug + reduce overhead)" >> "$DEFCONFIG"
+          # ─── OPTIMIZATIONS DISABLED ─────────────────────────────────────
+          # Semua optimisasi di bawah ini DINONAKTIFKAN karena terbukti
+          # menyebabkan bootloop di semua build Mei 2026.
+          # Build 30 April (6.6.129) yang BOOTING tidak punya satupun config ini.
+          #
+          # STRATEGI: Enable satu per satu setelah kernel booting.
+          # Test setiap config dengan flash → boot → confirm.
+          #
+          # === BATCH 1: Kemungkinan aman (coba duluan) ===
+          # add_cfg "CONFIG_TCP_CONG_BBR=y"          # BBR congestion control
+          # add_cfg "CONFIG_NET_SCH_FQ=y"             # Fair Queue scheduler
+          # add_cfg "CONFIG_KERNEL_GZIP=y"            # GZIP compression
+          #
+          # === BATCH 2: Perlu hati-hati ===
+          # add_cfg "CONFIG_DEBUG_INFO_NONE=y"        # Strip debug symbols (size reduction)
+          # add_cfg "CONFIG_SLUB_DEBUG=n"             # Disable SLUB allocator debug
+          # add_cfg "CONFIG_HZ_300=y"                 # Timer frequency 300Hz
+          # add_cfg "CONFIG_LRU_GEN=y"                # Multi-gen LRU
+          # add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=n"   # Disable THP
+          #
+          # === BATCH 3: Paling berisiko (test terakhir) ===
+          # add_cfg "CONFIG_FUNCTION_TRACER=n"        # ⚠️ Bisa ganggu kprobes/KernelSU
+          # add_cfg "CONFIG_DEBUG_KERNEL=n"           # ⚠️ Matikan SEMUA debug subsystem
+          # add_cfg "CONFIG_SCHED_DEBUG=n"
+          # add_cfg "CONFIG_DEBUG_PREEMPT=n"
+          # ─── END DISABLED OPTIMIZATIONS ─────────────────────────────────
 
-          # 1. Strip debug info — BIGGEST impact on kernel size (~30-50% reduction)
-          #    CONFIG_DEBUG_INFO=y embeds DWARF symbols into vmlinux, massively
-          #    inflating the Image. Not needed for production kernels.
-          sed -i '/^CONFIG_DEBUG_INFO=y/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_DEBUG_INFO_DWARF/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_DEBUG_INFO_BTF/d' "$DEFCONFIG"
-          add_cfg "CONFIG_DEBUG_INFO_NONE=y"
-
-          # 2. Disable SLUB debug — removes runtime memory allocator checks
-          #    that add overhead on every kmalloc/kfree call
-          add_cfg "CONFIG_SLUB_DEBUG=n"
-
-          # 3. Disable kernel tracing — ftrace hooks add measurable CPU cost
-          #    even when not actively tracing (function entry/exit overhead)
-          #    NOTE: KPROBES is kept enabled because KernelSU depends on it!
-          add_cfg "CONFIG_FUNCTION_TRACER=n"
-          add_cfg "CONFIG_IRQSOFF_TRACER=n"
-          add_cfg "CONFIG_SCHED_TRACER=n"
-          add_cfg "CONFIG_STACK_TRACER=n"
-
-          # 4. Timer frequency — 300Hz balances responsiveness vs power drain
-          #    Stock Android typically uses 300Hz. 1000Hz wastes battery on
-          #    budget SoCs like Helio G88 with minimal latency benefit.
-          sed -i '/^CONFIG_HZ_1000/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_HZ_250/d' "$DEFCONFIG"
-          sed -i '/^CONFIG_HZ=/d' "$DEFCONFIG"
-          add_cfg "CONFIG_HZ_300=y"
-          add_cfg "CONFIG_HZ=300"
-
-          # 5. Memory management — MGLRU is more efficient than legacy LRU
-          #    for Android workloads (better page reclaim under pressure)
-          add_cfg "CONFIG_LRU_GEN=y"
-          add_cfg "CONFIG_LRU_GEN_ENABLED=y"
-
-          # 6. Disable Transparent Hugepages — saves RAM on Android devices
-          #    THP is designed for server workloads, wastes memory on phones
-          add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=n"
-
-          # 7. Kernel compression — Revert to GZIP (Stock Redmi 12 format)
-          #    Xiaomi bootloaders can be picky. Sticking to GZIP avoids "bad image" errors.
-          add_cfg "CONFIG_KERNEL_GZIP=y"
-          sed -i '/^CONFIG_KERNEL_LZ4=y/d' "$DEFCONFIG"
-
-          # 8. Disable misc debug features that add runtime overhead
-          add_cfg "CONFIG_DEBUG_KERNEL=n"
-          add_cfg "CONFIG_SCHED_DEBUG=n"
-          add_cfg "CONFIG_DEBUG_PREEMPT=n"
-          add_cfg "CONFIG_DEBUG_BUGVERBOSE=n"
-          add_cfg "CONFIG_PRINTK_TIME=n"
-
-          # 9. Enable PStore (RAMoops) for Debugging
-          #    This allows the kernel to save its last logs into a reserved RAM area
-          #    so we can read them after a bootloop.
+          # PStore (RAMoops) — KEEP: ini cuma logging, tidak ubah behavior kernel.
+          # Berguna kalau nanti bootloop lagi buat baca crash log.
           echo "" >> "$DEFCONFIG"
           echo "# PStore / RAMoops Debugging" >> "$DEFCONFIG"
           add_cfg "CONFIG_PSTORE=y"
           add_cfg "CONFIG_PSTORE_CONSOLE=y"
           add_cfg "CONFIG_PSTORE_PMSG=y"
           add_cfg "CONFIG_PSTORE_RAM=y"
-          # Hardcoded parameters for Redmi 12 (fire) from dmesg
           add_cfg "CONFIG_PSTORE_RAM_MEM_ADDR=0x4d010000"
           add_cfg "CONFIG_PSTORE_RAM_SIZE=0xe0000"
           add_cfg "CONFIG_PSTORE_RAM_CONSOLE_SIZE=0x40000"
           add_cfg "CONFIG_PSTORE_RAM_PMSG_SIZE=0x80000"
 
-          echo "✅ Lightweight optimization and PStore debug applied"
-          # ─── End Optimization ──────────────────────────────────────────
+          echo "✅ Minimal config applied (optimizations disabled for stability)"
 
           git add arch/arm64/configs/gki_defconfig
           echo "✅ Defconfig finalized and added to git"
@@ -910,7 +860,9 @@ jobs:
             HOSTLDFLAGS=-fuse-ld=bfd"
 
           make $MAKE_ARGS gki_defconfig
-          make -j$(nproc) $MAKE_ARGS 2>&1 | tee ../build.log
+          # FORCE: Build Image.gz and Image.lz4 explicitly. 
+          # Some trees only build raw 'Image' by default, which causes bootloops on MTK.
+          make -j$(nproc) $MAKE_ARGS Image.gz Image.lz4 2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
@@ -928,11 +880,15 @@ jobs:
               fi
             done
           else
+            # Extraction for Custom Toolchain (from 'out' directory)
+            # We copy all variants to dist/ and let AnyKernel3 step pick the best one.
             for img in \
               kernel/common/out/arch/arm64/boot/Image \
               kernel/common/out/arch/arm64/boot/Image.gz \
               kernel/common/out/arch/arm64/boot/Image.lz4; do
-              [ -f "$img" ] && cp -v "$img" "$GITHUB_WORKSPACE/dist/" || true
+              if [ -f "$img" ]; then
+                cp -v "$img" "$GITHUB_WORKSPACE/dist/"
+              fi
             done
           fi
           echo "📦 dist/ contents:"
