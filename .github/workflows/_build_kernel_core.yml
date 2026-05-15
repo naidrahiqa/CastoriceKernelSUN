@@ -782,35 +782,16 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Add WiFi modules to module_outs.
-            # cfg80211.ko and mac80211.ko are forced =m by GKI Kconfig.
-            # Bazel needs them in module_outs or it errors "built but not copied".
-            # Write Python script to temp file to avoid YAML indentation issues.
-            cat > /tmp/fix_bazel_modules.py << 'FIXEOF'
-            import re, sys
-            with open('BUILD.bazel','r') as f:
-                content = f.read()
-            mods = ['"net/wireless/cfg80211.ko"', '"net/mac80211/mac80211.ko"']
-            m = re.search(r'(module_outs\s*=\s*\[)(.*?)(\])', content, re.DOTALL)
-            if not m:
-                print('module_outs not found, skipping')
-                sys.exit(0)
-            existing = m.group(2)
-            adds = ''
-            for mod in mods:
-                if mod not in existing:
-                    adds += '\n        ' + mod + ','
-                    print('Added ' + mod)
-                else:
-                    print(mod + ' already present')
-            if adds:
-                nb = m.group(1) + existing.rstrip() + adds + '\n    ' + m.group(3)
-                content = content[:m.start()] + nb + content[m.end():]
-                with open('BUILD.bazel','w') as f:
-                    f.write(content)
-                print('BUILD.bazel updated')
-            FIXEOF
-            python3 /tmp/fix_bazel_modules.py
+            # FIX: Add WiFi modules to module_outs using simple sed append.
+            # No Python, no heredocs, no external tools — just grep + sed.
+            if ! grep -q 'cfg80211.ko' BUILD.bazel; then
+              sed -i '/module_outs.*=.*\[/a\        "net/wireless/cfg80211.ko",' BUILD.bazel
+              echo "  → Added cfg80211.ko to module_outs"
+            fi
+            if ! grep -q 'mac80211.ko' BUILD.bazel; then
+              sed -i '/module_outs.*=.*\[/a\        "net/mac80211/mac80211.ko",' BUILD.bazel
+              echo "  → Added mac80211.ko to module_outs"
+            fi
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
