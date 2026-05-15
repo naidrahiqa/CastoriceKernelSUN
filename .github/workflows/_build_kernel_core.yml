@@ -90,8 +90,6 @@ jobs:
             TC_NAME="AOSPClang"
           elif [ "$TC_NAME" = "weebx-latest" ]; then
             TC_NAME="WeebXClang"
-          elif [ "$TC_NAME" = "azure-latest" ]; then
-            TC_NAME="AzureClang"
           elif [ "$TC_NAME" = "neutron-latest" ]; then
             TC_NAME="NeutronClang"
           fi
@@ -232,12 +230,6 @@ jobs:
               CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-weebx"
               echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
               echo "TOOLCHAIN_NAME=WeebXClang" >> $GITHUB_ENV
-              ;;
-            azure-latest)
-              git clone --depth=1 https://gitlab.com/Panchajanya1999/azure-clang.git clang-azure
-              CLANG_PATH="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-azure"
-              echo "CUSTOM_CLANG_PATH=$CLANG_PATH" >> $GITHUB_ENV
-              echo "TOOLCHAIN_NAME=AzureClang" >> $GITHUB_ENV
               ;;
             neutron-latest)
               NEUTRON_ASSET=$(curl -sL https://api.github.com/repos/Neutron-Toolchains/clang-build-catalogue/releases/latest | jq -r '.assets[] | select(.name | contains("neutron-clang")) | .browser_download_url' | head -n1)
@@ -722,8 +714,11 @@ jobs:
           echo "" >> "$DEFCONFIG"
           echo "# Network Optimizations (Safe)" >> "$DEFCONFIG"
           add_cfg "CONFIG_TCP_CONG_ADVANCED=y"
-          add_cfg "CONFIG_TCP_CONG_BBR=y"
-          ad          # Branding — Custom name
+          add_cfg 'CONFIG_DEFAULT_TCP_CONG="bbr"'
+          add_cfg "CONFIG_NET_SCH_FQ=y"
+          add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
+
+          # Branding — Custom name
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
