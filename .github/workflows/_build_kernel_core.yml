@@ -727,11 +727,11 @@ jobs:
           add_cfg "CONFIG_NET_SCH_FQ=y"
           add_cfg 'CONFIG_DEFAULT_NET_SCH="fq"'
 
-          # Branding — keep LOCALVERSION clean (GKI default)
+          # Branding — Custom name
           sed -i '/CONFIG_LOCALVERSION/d' $DEFCONFIG
           echo "" >> $DEFCONFIG
           echo "# Branding" >> $DEFCONFIG
-          echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION="-MyBiniGuwe"' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
           # NOTE: Do NOT set CONFIG_MODVERSIONS=n here!
           # Vendor DLKM modules (display, touch, camera) need MODVERSIONS
