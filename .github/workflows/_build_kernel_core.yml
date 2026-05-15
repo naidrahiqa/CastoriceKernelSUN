@@ -737,35 +737,84 @@ jobs:
           # Vendor DLKM modules (display, touch, camera) need MODVERSIONS
           # to load. Disabling it = modules fail to load = bootloop.
 
-          # ─── OPTIMIZATIONS DISABLED ─────────────────────────────────────
-          # Semua optimisasi di bawah ini DINONAKTIFKAN karena terbukti
-          # menyebabkan bootloop di semua build Mei 2026.
-          # Build 30 April (6.6.129) yang BOOTING tidak punya satupun config ini.
-          #
-          # STRATEGI: Enable satu per satu setelah kernel booting.
-          # Test setiap config dengan flash → boot → confirm.
-          #
-          # === BATCH 1: Kemungkinan aman (coba duluan) ===
-          # add_cfg "CONFIG_TCP_CONG_BBR=y"          # BBR congestion control
-          # add_cfg "CONFIG_NET_SCH_FQ=y"             # Fair Queue scheduler
-          # add_cfg "CONFIG_KERNEL_GZIP=y"            # GZIP compression
-          #
-          # === BATCH 2: Perlu hati-hati ===
-          # add_cfg "CONFIG_DEBUG_INFO_NONE=y"        # Strip debug symbols (size reduction)
+          # ─── FIX 1: RAM — Strip debug symbols ──────────────────────────
+          # Kernel tanpa ini punya full DWARF debug info → kernel image besar
+          # → RAM terpakai lebih banyak. Ini AMAN karena hanya strip symbols,
+          # tidak ubah behavior kernel sama sekali.
+          echo "" >> "$DEFCONFIG"
+          echo "# RAM optimization: strip debug symbols" >> "$DEFCONFIG"
+          sed -i '/^CONFIG_DEBUG_INFO=y/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_DEBUG_INFO_DWARF/d' "$DEFCONFIG"
+          sed -i '/^CONFIG_DEBUG_INFO_BTF/d' "$DEFCONFIG"
+          add_cfg "CONFIG_DEBUG_INFO_NONE=y"
+
+          # ─── FIX 2: WiFi & Hotspot ─────────────────────────────────────
+          # dmesg menunjukkan: "Wi-Fi driver is not ready for 2s"
+          # WMT combo driver (wmt_drv, wmt_chrdev_wifi) loaded tapi WiFi
+          # subsystem belum ready. Pastikan wireless stack lengkap.
+          echo "" >> "$DEFCONFIG"
+          echo "# WiFi & Wireless subsystem (fix MTK combo WiFi)" >> "$DEFCONFIG"
+          add_cfg "CONFIG_WIRELESS=y"
+          add_cfg "CONFIG_CFG80211=y"
+          add_cfg "CONFIG_MAC80211=y"
+          add_cfg "CONFIG_RFKILL=y"
+          add_cfg "CONFIG_NL80211_TESTMODE=y"
+          add_cfg "CONFIG_WLAN=y"
+
+          # ─── FIX 3: Tethering / Hotspot (Netfilter + NAT) ─────────────
+          # Hotspot butuh NAT (Network Address Translation) untuk share
+          # koneksi internet ke device lain. Tanpa ini = hotspot mati.
+          echo "" >> "$DEFCONFIG"
+          echo "# Tethering & Hotspot (NAT + bridge)" >> "$DEFCONFIG"
+          add_cfg "CONFIG_NETFILTER=y"
+          add_cfg "CONFIG_NF_CONNTRACK=y"
+          add_cfg "CONFIG_NF_NAT=y"
+          add_cfg "CONFIG_IP_NF_IPTABLES=y"
+          add_cfg "CONFIG_IP_NF_NAT=y"
+          add_cfg "CONFIG_IP_NF_FILTER=y"
+          add_cfg "CONFIG_IP6_NF_IPTABLES=y"
+          add_cfg "CONFIG_IP6_NF_FILTER=y"
+          add_cfg "CONFIG_IP6_NF_NAT=y"
+          add_cfg "CONFIG_BRIDGE=y"
+          add_cfg "CONFIG_BRIDGE_NETFILTER=y"
+          add_cfg "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y"
+          add_cfg "CONFIG_NETFILTER_XT_MATCH_STATE=y"
+          add_cfg "CONFIG_NETFILTER_XT_MATCH_CONNTRACK=y"
+
+          # ─── FIX 4: GPU frequency scaling ──────────────────────────────
+          # dmesg menunjukkan: "gpuppm_set_limit: invalid limiter: 12"
+          # GPU power management module error spam → lag UI/UX.
+          # Pastikan thermal & GPU framework lengkap.
+          echo "" >> "$DEFCONFIG"
+          echo "# GPU & Thermal (fix frequency scaling errors)" >> "$DEFCONFIG"
+          add_cfg "CONFIG_THERMAL=y"
+          add_cfg "CONFIG_THERMAL_OF=y"
+          add_cfg "CONFIG_CPU_THERMAL=y"
+          add_cfg "CONFIG_THERMAL_GOV_STEP_WISE=y"
+          add_cfg "CONFIG_THERMAL_GOV_POWER_ALLOCATOR=y"
+          add_cfg "CONFIG_DEVFREQ_THERMAL=y"
+          add_cfg "CONFIG_DRM=y"
+          add_cfg "CONFIG_PM_DEVFREQ=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_PERFORMANCE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_POWERSAVE=y"
+          add_cfg "CONFIG_DEVFREQ_GOV_USERSPACE=y"
+
+          # ─── MASIH DISABLED (test belakangan) ──────────────────────────
+          # === Perlu hati-hati ===
           # add_cfg "CONFIG_SLUB_DEBUG=n"             # Disable SLUB allocator debug
           # add_cfg "CONFIG_HZ_300=y"                 # Timer frequency 300Hz
           # add_cfg "CONFIG_LRU_GEN=y"                # Multi-gen LRU
           # add_cfg "CONFIG_TRANSPARENT_HUGEPAGE=n"   # Disable THP
           #
-          # === BATCH 3: Paling berisiko (test terakhir) ===
+          # === Paling berisiko (test terakhir) ===
           # add_cfg "CONFIG_FUNCTION_TRACER=n"        # ⚠️ Bisa ganggu kprobes/KernelSU
           # add_cfg "CONFIG_DEBUG_KERNEL=n"           # ⚠️ Matikan SEMUA debug subsystem
           # add_cfg "CONFIG_SCHED_DEBUG=n"
           # add_cfg "CONFIG_DEBUG_PREEMPT=n"
-          # ─── END DISABLED OPTIMIZATIONS ─────────────────────────────────
+          # ─── END DISABLED ──────────────────────────────────────────────
 
-          # PStore (RAMoops) — KEEP: ini cuma logging, tidak ubah behavior kernel.
-          # Berguna kalau nanti bootloop lagi buat baca crash log.
+          # PStore (RAMoops) — KEEP: cuma logging, tidak ubah behavior kernel.
           echo "" >> "$DEFCONFIG"
           echo "# PStore / RAMoops Debugging" >> "$DEFCONFIG"
           add_cfg "CONFIG_PSTORE=y"
@@ -777,7 +826,7 @@ jobs:
           add_cfg "CONFIG_PSTORE_RAM_CONSOLE_SIZE=0x40000"
           add_cfg "CONFIG_PSTORE_RAM_PMSG_SIZE=0x80000"
 
-          echo "✅ Minimal config applied (optimizations disabled for stability)"
+          echo "✅ Config applied: debug strip + WiFi fix + tethering + GPU fix + PStore"
 
           git add arch/arm64/configs/gki_defconfig
           echo "✅ Defconfig finalized and added to git"
