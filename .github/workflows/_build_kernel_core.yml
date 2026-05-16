@@ -123,9 +123,12 @@ jobs:
 
       - name: Maximize Disk Space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+          df -h
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/share/swift /usr/share/miniconda /opt/hostedtoolcache \
-            /usr/local/share/chromium /usr/local/share/powershell
+            /usr/local/share/chromium /usr/local/share/powershell \
+            /usr/local/bin/aliyun /usr/local/bin/azcopy /usr/local/bin/cmake-gui
           sudo apt-get remove -y '^dotnet-.*' '^llvm-.*' 'php.*' \
             azure-cli google-cloud-cli google-chrome-stable firefox \
             powershell mono-devel || true
@@ -806,17 +809,20 @@ jobs:
             sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' build.config.gki.aarch64
             git add build.config.gki.aarch64
           fi
-          [ -f "../build/kernel/abi/check_buildtime_symbol_protection.py" ] \
-            && perl -i -pe 's/^(\s*)return 1$/$1return 0/g' \
-              "../build/kernel/abi/check_buildtime_symbol_protection.py"
-          [ -f "../build/kernel/kleaf/impl/stamp.bzl" ] \
-            && sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' \
-              ../build/kernel/kleaf/impl/stamp.bzl \
-            && git add ../build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
+          # FIX: Jangan git add ke repo build, itu repo terpisah.
+          # Cukup scmversion dan setlocalversion di repo common.
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           git add scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
           git add .scmversion 2>/dev/null || true
+
+          # CRITICAL: Hapus .git folders yang tidak perlu untuk hemat disk space (Bazel butuh banyak)
+          # Tapi jangan hapus .git di kernel/common karena Bazel/Kleaf butuh git state-nya.
+          cd $GITHUB_WORKSPACE
+          rm -rf kernel/KernelSU-Next/.git 2>/dev/null || true
+          rm -rf kernel/susfs4ksu/.git 2>/dev/null || true
+          rm -rf prebuilts/clang/host/linux-x86/*/.git 2>/dev/null || true
+          echo "✅ Extra disk space freed by removing unused .git folders"
 
       - name: Build Kernel (Bazel)
         if: inputs.clang_toolchain == 'bazel-default' || inputs.clang_toolchain == ''
@@ -824,13 +830,18 @@ jobs:
           set -euo pipefail
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
-          # LTO=none is the safest for debugging bootloops. 
-          # It avoids complex optimizations that might break on custom toolchains.
+          
+          # LTO=none is the safest for debugging bootloops.
+          # Reduced jobs and optimized memory for 7GB runners.
+          # Use --config=fast and --config=lto_none for better Kleaf compatibility.
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --lto=none \
-            --local_resources=memory=6144 \
-            --jobs=3 \
+            --config=fast \
+            --config=lto_none \
+            --local_ram_resources=6144 \
+            --jobs=2 \
+            --noshow_progress \
+            --noshow_loading_progress \
             //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
           echo "TOOLCHAIN_VER=AOSP Clang (Kleaf Default)" >> $GITHUB_ENV
@@ -846,23 +857,22 @@ jobs:
             echo "❌ ERROR: CUSTOM_CLANG_PATH not set!"
             exit 1
           fi
-          if [ ! -f "$CUSTOM_CLANG_PATH/bin/clang" ]; then
-            echo "❌ ERROR: clang binary not found in $CUSTOM_CLANG_PATH/bin/"
-            ls -la "$CUSTOM_CLANG_PATH/bin/" || true
-            exit 1
-          fi
           export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
           which clang || { echo "❌ clang not in PATH!"; exit 1; }
-          clang --version
+          
+          # Detect clang triple for better compatibility
+          CLANG_TRIPLE=$(clang -dumpmachine)
+          echo "✅ Using Clang Triple: $CLANG_TRIPLE"
 
           MAKE_ARGS="O=out ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTLDFLAGS=-fuse-ld=bfd"
+            CLANG_TRIPLE=$CLANG_TRIPLE HOSTLDFLAGS=-fuse-ld=bfd"
 
           make $MAKE_ARGS gki_defconfig
-          # FORCE: Build Image.gz and Image.lz4 explicitly. 
-          # Some trees only build raw 'Image' by default, which causes bootloops on MTK.
-          make -j$(nproc) $MAKE_ARGS Image.gz Image.lz4 2>&1 | tee ../build.log
+          
+          # Build Kernel Image and Modules
+          # FORCE: Image.gz for MTK compatibility
+          make -j$(nproc) $MAKE_ARGS Image.gz Image.lz4 modules 2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
 
@@ -976,35 +986,20 @@ jobs:
 
           # ─── TAMBAHKAN INI: Copy WiFi modules ───────────────────────
           # cfg80211 dan mac80211 harus ikut di-flash bareng kernel.
-          # AnyKernel3 akan push .ko ini ke /vendor/lib/modules/ saat install.
           MODULES_DIR="modules/vendor/lib/modules"
           mkdir -p "$MODULES_DIR"
 
-          MODULES_FOUND=false
-          for mod in \
-            "$GITHUB_WORKSPACE/dist/net/wireless/cfg80211.ko" \
-            "$GITHUB_WORKSPACE/dist/net/mac80211/mac80211.ko"; do
-            if [ -f "$mod" ]; then
-              cp "$mod" "$MODULES_DIR/"
-              echo "✅ Copied $(basename $mod)"
-              MODULES_FOUND=true
-            else
-              echo "⚠️  Module not found: $mod"
-            fi
-          done
-
-          # Kalau modules gak ketemu di subdir, cari flat di dist/
-          if [ "$MODULES_FOUND" = "false" ]; then
-            for mod in cfg80211.ko mac80211.ko; do
-              if [ -f "$GITHUB_WORKSPACE/dist/$mod" ]; then
-                cp "$GITHUB_WORKSPACE/dist/$mod" "$MODULES_DIR/"
-                echo "✅ Copied (flat) $mod"
-                MODULES_FOUND=true
-              fi
-            done
+          echo "🔍 Searching for modules in dist/..."
+          # Cari semua .ko secara rekursif di dist/ dan copy ke modules/
+          find "$GITHUB_WORKSPACE/dist" -name "*.ko" -type f -exec cp -v {} "$MODULES_DIR/" \;
+          
+          if [ "$(ls -A $MODULES_DIR)" ]; then
+            echo "✅ Modules copied to AnyKernel3"
+            MODULES_FOUND=true
+          else
+            echo "❌ WiFi modules tidak ditemukan! WiFi kemungkinan mati."
+            MODULES_FOUND=false
           fi
-
-          [ "$MODULES_FOUND" = "false" ] && echo "❌ WiFi modules tidak ditemukan! Build akan lanjut tapi WiFi kemungkinan tetap mati."
           # ─── END MODULE COPY ────────────────────────────────────────
 
           SELECTED_IMG=""
