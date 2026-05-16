@@ -796,39 +796,16 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Ganti buildozer dengan Python (supply chain risk).
-            # buildozer di-download dari GitHub releases tanpa checksum —
-            # kalo repo buildtools kena kompromi, kita ikut kena.
-            # Python pre-installed di runner, aman.
-            if [ -f "BUILD.bazel" ]; then
-              python3 -c "
-import sys
-mods = ['net/wireless/cfg80211.ko', 'net/mac80211/mac80211.ko']
-with open('BUILD.bazel') as f:
-    text = f.read()
-missing = [m for m in mods if m not in text]
-if not missing:
-    sys.exit(0)
-idx = text.find('kernel_aarch64')
-if idx < 0:
-    print('⚠️ kernel_aarch64 not found')
-    sys.exit(1)
-rest = text[idx:]
-mo_idx = rest.find('module_outs = [')
-if mo_idx < 0:
-    print('⚠️ module_outs not found')
-    sys.exit(1)
-insert_at = idx + mo_idx + len('module_outs = [')
-new_text = text[:insert_at]
-for m in missing:
-    new_text += '\n        \"' + m + '\",'
-new_text += text[insert_at:]
-with open('BUILD.bazel', 'w') as f:
-    f.write(new_text)
-print('✅ Added: ' + ', '.join(missing))
-"
-              echo "✅ BUILD.bazel patched (module_outs)"
-            fi
+            # FIX: Ganti buildozer dengan sed (lebih aman).
+            # buildozer download tanpa checksum = supply chain risk.
+            # Inline Python baris-0-indent rusak di YAML | block.
+            # sed lebih sederhana dan aman di YAML.
+            for mod in "net/wireless/cfg80211.ko" "net/mac80211/mac80211.ko"; do
+              if ! grep -qF "$mod" BUILD.bazel; then
+                sed -i "/module_outs = \[/a\        \"$mod\"," BUILD.bazel
+                echo "  → Added $mod to module_outs"
+              fi
+            done
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
