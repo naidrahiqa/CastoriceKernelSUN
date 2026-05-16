@@ -420,6 +420,7 @@ jobs:
             cd ..
 
             echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+            echo "KSU_METHOD=${KSU_METHOD}" >> $GITHUB_ENV
             echo "✅ KernelSU-Next integrated (version: $KSU_VERSION, tag: $KSU_TAG, commits: $GIT_COUNT)"
           else
             echo "❌ ERROR: Unsupported KSU method: $KSU_METHOD"
@@ -843,13 +844,13 @@ jobs:
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
           
-          # LTO=none is the safest for debugging bootloops.
+          # LTO=thin is recommended.  LTO=full causes OOM on 7GB runners.
+          # LTO=none produces larger binaries and is only for deep debugging.
           # Reduced jobs and optimized memory for 7GB runners.
-          # Use --lto=none (flag) instead of --config=lto_none (config value).
           # Switching back to --local_resources=memory as --local_ram_resources is deprecated.
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --lto=none \
+            --lto=thin \
             --local_resources=memory=6144 \
             --jobs=2 \
             --noshow_progress \

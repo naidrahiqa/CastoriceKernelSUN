@@ -85,12 +85,6 @@ on:
         required: true
         type: boolean
         default: false
-      tc_azure_latest:
-        description: "🛠️ Azure Latest"
-        required: true
-        type: boolean
-        default: false
-
 permissions:
   actions: write
   contents: write
@@ -135,9 +129,7 @@ jobs:
           if "${{ inputs.tc_zyc_latest }}" == "true": toolchains.append("zyc-latest")
           if "${{ inputs.tc_weebx_latest }}" == "true": toolchains.append("weebx-latest")
           if "${{ inputs.tc_neutron_latest }}" == "true": toolchains.append("neutron-latest")
-          if "${{ inputs.tc_azure_latest }}" == "true": toolchains.append("azure-latest")
-
-          if not roots:
+           if not roots:
               raise SystemExit("❌ No root method selected!")
           if not govs:
               raise SystemExit("❌ No governor selected!")
