@@ -23,14 +23,10 @@ on:
         required: true
         type: string
         default: 'schedutil'
-      safety_profile:
+      cpu_governor:
         required: true
         type: string
-        default: 'stable'
-      tuning_profile:
-        required: true
-        type: string
-        default: 'balanced'
+        default: 'schedutil'
       clang_toolchain:
         required: true
         type: string
@@ -57,7 +53,7 @@ env:
 
 jobs:
   build:
-    name: "Build GKI ${{ inputs.with_susfs == 'true' && '+ SUSFS ' || '' }}(${{ inputs.ksu_method }})"
+    name: "Build GKI ${{ inputs.with_susfs == 'true' && '+ SUSFS' || 'No SUSFS' }} (${{ inputs.clang_toolchain }})"
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
@@ -73,8 +69,6 @@ jobs:
           echo "ksu_method:      '${{ inputs.ksu_method }}'"
           echo "cpu_governor:    '${{ inputs.cpu_governor }}'"
           echo "clang_toolchain: '${{ inputs.clang_toolchain }}'"
-          echo "safety_profile:  '${{ inputs.safety_profile }}'"
-          echo "tuning_profile:  '${{ inputs.tuning_profile }}'"
           echo "release_tag:     '${{ inputs.release_tag }}'"
           echo "========================"
 
@@ -429,69 +423,106 @@ jobs:
 
       # FIX 1: Re-enable SUSFS step — was hardcoded `if: false` for testing.
       # Sekarang mengikuti input `with_susfs` dari matrix dispatcher.
+      # SUSFS sering error compile karena patch gagal apply tapi build lanjut.
+      # Fix: patch application sekarang MANDATORY — kalau gagal, exit langsung.
       - name: Setup SUSFS
         if: inputs.with_susfs == 'true'
         run: |
           set -euo pipefail
           cd kernel
+
+          echo "📥 Cloning SUSFS4KSU..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git \
             -b gki-${ANDROID_VERSION}-${KERNEL_VERSION} \
-            || { echo "Error: SUSFS branch not found"; exit 1; }
+            || { echo "❌ ERROR: SUSFS branch gki-${ANDROID_VERSION}-${KERNEL_VERSION} not found!"; exit 1; }
+
           cd common
-          cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
-          cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
-          [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" \
-            && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
 
-          # git add files so Bazel sees them
-          git add fs/susfs.c include/linux/susfs.h fs/Makefile 2>/dev/null || true
+          # ─── Step 1: Apply kernel patch FIRST (before copying files) ─────
+          # Kalau patch gagal, kernel code gak ke-patch → compile error nanti.
+          # Jadi kita apply dulu, baru copy files kalau patch sukses.
+          echo "🔧 Applying SUSFS kernel patch..."
+          SUSFS_PATCH_APPLIED=false
 
-          SUSFS_PATCH_FOUND=false
+          # Try exact version match first
           for patch in \
-            "../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" \
-            "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch"; do
+            "../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" \
+            "../susfs4ksu/kernel_patches/50_add_susfs_in_gki-${ANDROID_VERSION}-${KERNEL_VERSION}.patch" \
+            "../susfs4ksu/kernel_patches/AnyKernel3/patches/${KERNEL_VERSION}/50_add_susfs_in_kernel.patch"; do
             if [ -f "$patch" ]; then
-              echo "  → Applying kernel SUSFS patch: $(basename $patch)"
-              git apply --3way "$patch" \
-                || patch -p1 --forward --fuzz=3 < "$patch" \
-                || true
-              SUSFS_PATCH_FOUND=true
-              break
+              echo "  → Trying: $(basename $patch)"
+              if git apply --check "$patch" 2>/dev/null; then
+                git apply "$patch" && echo "  ✅ git apply success" && SUSFS_PATCH_APPLIED=true && break
+              else
+                echo "  ⚠️ git apply --check failed, trying patch --forward --fuzz=3..."
+                if patch -p1 --forward --fuzz=3 --dry-run < "$patch" >/dev/null 2>&1; then
+                  patch -p1 --forward --fuzz=3 < "$patch" && echo "  ✅ patch success" && SUSFS_PATCH_APPLIED=true && break
+                else
+                  echo "  ❌ Patch does not apply cleanly to this kernel version"
+                fi
+              fi
             fi
           done
-          if [ "$SUSFS_PATCH_FOUND" = "false" ]; then
+
+          # Fallback: try any SUSFS patch
+          if [ "$SUSFS_PATCH_APPLIED" = "false" ]; then
+            echo "  → Trying fallback patches..."
             for patch in \
               ../susfs4ksu/kernel_patches/50_add_susfs_in_kernel-*.patch \
               ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch; do
               if [ -f "$patch" ]; then
-                echo "  → Applying fallback SUSFS patch: $(basename $patch)"
-                git apply --3way "$patch" \
-                  || patch -p1 --forward --fuzz=3 < "$patch" \
-                  || true
-                SUSFS_PATCH_FOUND=true
-                break
+                echo "  → Trying: $(basename $patch)"
+                if git apply --check "$patch" 2>/dev/null; then
+                  git apply "$patch" && echo "  ✅ git apply success" && SUSFS_PATCH_APPLIED=true && break
+                else
+                  echo "  ⚠️ git apply --check failed, trying patch..."
+                  if patch -p1 --forward --fuzz=3 --dry-run < "$patch" >/dev/null 2>&1; then
+                    patch -p1 --forward --fuzz=3 < "$patch" && echo "  ✅ patch success" && SUSFS_PATCH_APPLIED=true && break
+                  else
+                    echo "  ❌ Patch does not apply cleanly"
+                  fi
+                fi
               fi
             done
           fi
-          if [ "$SUSFS_PATCH_FOUND" = "false" ]; then
-            echo "❌ ERROR: No SUSFS kernel patch file found!"
-            echo "   Files in kernel_patches/:"
-            ls ../susfs4ksu/kernel_patches/*.patch 2>/dev/null || echo "  (none)"
+
+          if [ "$SUSFS_PATCH_APPLIED" = "false" ]; then
+            echo "❌ ERROR: No SUSFS kernel patch could be applied!"
+            echo "   This means SUSFS is incompatible with this kernel version."
+            echo "   Available patches:"
+            ls -1 ../susfs4ksu/kernel_patches/*.patch 2>/dev/null || echo "  (none)"
+            echo ""
+            echo "   Kernel version: $(make kernelversion 2>/dev/null || echo 'unknown')"
+            echo "   Branch: $(git branch --show-current 2>/dev/null || echo 'unknown')"
+            exit 1
+          fi
+          echo "✅ SUSFS kernel patch applied successfully"
+
+          # ─── Step 2: Copy SUSFS source files ─────────────────────────────
+          echo "📋 Copying SUSFS source files..."
+          if [ -d "../susfs4ksu/kernel_patches/fs" ]; then
+            cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
+          else
+            echo "❌ ERROR: SUSFS fs/ directory not found!"
+            exit 1
+          fi
+          if [ -d "../susfs4ksu/kernel_patches/include/linux" ]; then
+            cp -rv ../susfs4ksu/kernel_patches/include/linux/* include/linux/
+          else
+            echo "❌ ERROR: SUSFS include/linux/ directory not found!"
             exit 1
           fi
 
-          # Manual patches for 6.6 GKI are often unnecessary or cause crashes 
-          # with modern SUSFS patches. We will let the git apply handle it.
+          [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" \
+            && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
 
-          # FIX: selinux/hooks.c extern conflict dari SUSFS patch
-          # SUSFS patch menambahkan deklarasi extern yang sudah ada di hooks.c
-          # sehingga compiler error "cannot combine with previous 'extern' declaration"
-          # Solusi: hapus baris extern duplikat yang ditambahkan SUSFS
+          git add fs/susfs.c include/linux/susfs.h fs/Makefile 2>/dev/null || true
+
+          # ─── Step 3: Fix selinux/hooks.c extern conflict ─────────────────
           if [ -f "security/selinux/hooks.c" ]; then
-            # Cek apakah ada duplikat extern susfs declarations
-            if grep -c "extern int susfs_" security/selinux/hooks.c 2>/dev/null | grep -q "^[2-9]"; then
-              echo "   Fixing duplicate extern susfs declarations in selinux/hooks.c..."
-              # Hapus semua extern susfs_ lines kecuali yang pertama dari setiap deklarasi
+            EXTERN_COUNT=$(grep -c "extern int susfs_" security/selinux/hooks.c 2>/dev/null || echo "0")
+            if [ "$EXTERN_COUNT" -gt 1 ]; then
+              echo "   Fixing $EXTERN_COUNT duplicate extern susfs declarations in selinux/hooks.c..."
               awk '
                 /extern int susfs_/ {
                   if (seen[$0]++) next
@@ -499,57 +530,34 @@ jobs:
                 { print }
               ' security/selinux/hooks.c > /tmp/hooks_fixed.c \
                 && mv /tmp/hooks_fixed.c security/selinux/hooks.c \
-                && echo "   selinux/hooks.c deduplication done" \
-                || echo "   ⚠️  selinux/hooks.c deduplication failed, continuing anyway"
+                && echo "   ✅ selinux/hooks.c deduplication done"
             fi
           fi
 
+          # ─── Step 4: Inject susfs_init() into KernelSU-Next ──────────────
           KSU_KERNEL="drivers/kernelsu"
           SUSFS_INTEGRATED=false
           if [ -d "$KSU_KERNEL" ]; then
-            # Untuk KernelSU-Next branch dev, patch 10_enable_susfs_for_ksu.patch DARI susfs4ksu
-            # MERUSAK core/init.c karena struktur kodenya udah beda jauh (bikin bootloop/compile error).
-            # Solusi: Kita inject manual `susfs_init()` secara aman khusus untuk KernelSU-Next.
             if [ "$KSU_METHOD" = "kernelsu-next" ]; then
               echo "   KernelSU-Next detected. Manually injecting SUSFS hooks..."
 
-              # FIX 3: Cari init.c secara dinamis — path bisa berubah antar versi KSU-Next.
-              # Sebelumnya hardcoded "drivers/kernelsu/core/init.c" yang bisa tidak ada.
-              INIT_C=$(find common/drivers/kernelsu -name 'init.c' | head -n1)
+              INIT_C=$(find drivers/kernelsu -name 'init.c' | head -n1)
               if [ -z "$INIT_C" ]; then
                 echo "❌ ERROR: init.c tidak ditemukan di drivers/kernelsu/"
-                find common/drivers/kernelsu/ | head -20
+                find drivers/kernelsu/ | head -20
                 exit 1
               fi
               echo "✅ Found init.c at: $INIT_C"
 
               if [ -f "$INIT_C" ]; then
-                # Check if already injected (idempotent)
                 if ! grep -q 'susfs_init' "$INIT_C"; then
-                  # Add include at top
                   sed -i '1i #include <linux/susfs.h>' "$INIT_C"
-                  # Safer injection: find the opening brace of kernelsu_init and add after it
                   perl -0777 -pi -e 's/(int __init kernelsu_init\(void\)\s*\{)/$1\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n/' "$INIT_C"
                   echo "   ✅ susfs_init() injected into $INIT_C"
                 else
                   echo "   ℹ️  susfs_init() already present, skipping"
                 fi
                 git add -f "$INIT_C" 2>/dev/null || true
-              fi
-            else
-              # Untuk root method lain (KSU biasa), baru pakai patch standar
-              KSU_PATCH="../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-              if [ -f "$KSU_PATCH" ]; then
-                echo "Applying KernelSU SUSFS patch..."
-                if grep -q "a/drivers/kernelsu/" "$KSU_PATCH"; then
-                  echo "   Patch already uses drivers/kernelsu/ path, applying as-is"
-                  git apply --3way "$KSU_PATCH" || patch -p1 --forward --fuzz=3 < "$KSU_PATCH" || true
-                else
-                  echo "   Rewriting patch path from kernel/ to drivers/kernelsu/"
-                  sed 's|a/kernel/|a/drivers/kernelsu/|g; s|b/kernel/|b/drivers/kernelsu/|g' \
-                    "$KSU_PATCH" > /tmp/susfs_ksu_fixed.patch
-                  git apply --3way /tmp/susfs_ksu_fixed.patch || patch -p1 --forward --fuzz=3 < /tmp/susfs_ksu_fixed.patch || true
-                fi
               fi
             fi
 
@@ -568,8 +576,6 @@ jobs:
                 'config KSU_SUSFS_SUS_MAP' '  bool "Hide mmapped files from proc maps"' '  depends on KSU_SUSFS' '  default y' \
                 'endmenu' >> "$KSU_KERNEL/Kconfig"
             fi
-            # SUSFS version info (DO NOT add ccflags here - Kconfig handles CONFIG_KSU_SUSFS)
-            # DO NOT inject -DKSU_VERSION here - Kbuild computes it from git (symlink preserves .git)
             if ! grep -q "SUSFS_VERSION" "$KSU_KERNEL/Makefile" 2>/dev/null; then
               printf '%s\n' \
                 '## SUSFS ##' \
@@ -583,6 +589,7 @@ jobs:
             git add "$KSU_KERNEL/Makefile" "$KSU_KERNEL/Kconfig" 2>/dev/null || true
             grep -q "config KSU_SUSFS" "$KSU_KERNEL/Kconfig" 2>/dev/null && SUSFS_INTEGRATED=true
           fi
+
           echo "SUSFS_OK=$SUSFS_INTEGRATED" >> $GITHUB_ENV
           echo "✅ SUSFS_INTEGRATED status: $SUSFS_INTEGRATED"
 
@@ -600,7 +607,7 @@ jobs:
             fi
             NON_CRIT_REJ=$(find . -name "*.rej" -type f 2>/dev/null || true)
             if [ -n "$NON_CRIT_REJ" ]; then
-              echo "⚠️  Non-critical rejected hunks (build will continue):"
+              echo "⚠️  Non-critical rejected hunks:"
               for rej in $NON_CRIT_REJ; do echo "   - $rej"; done
               find . -name "*.rej" -delete 2>/dev/null || true
             fi
@@ -626,8 +633,6 @@ jobs:
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           GOVERNOR="${{ inputs.cpu_governor }}"
-          SAFETY_PROFILE="${{ inputs.safety_profile }}"
-          TUNING_PROFILE="${{ inputs.tuning_profile }}"
 
           add_cfg() {
             local cfg="$1"
@@ -681,13 +686,6 @@ jobs:
           echo "# Module Compatibility" >> "$DEFCONFIG"
           add_cfg "CONFIG_MODULE_SIG_FORCE=n"
           add_cfg "CONFIG_MODULE_SIG_ALL=n"
-
-          # FIX 7: tuning_profile dan safety_profile belum diimplementasi
-          # TODO: tuning_profile (${{ inputs.tuning_profile }}) dan safety_profile (${{ inputs.safety_profile }})
-          # belum diimplementasi. Reserved untuk future optimization presets.
-          # Contoh rencana:
-          #   - tuning_profile=gaming  → CONFIG_HZ=1000, aggressive sched
-          #   - safety_profile=performance → skip debug flags
 
           echo "" >> "$DEFCONFIG"
           echo "# CPU Governor" >> "$DEFCONFIG"
@@ -844,13 +842,14 @@ jobs:
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
           
-          # LTO=thin is recommended.  LTO=full causes OOM on 7GB runners.
-          # LTO=none produces larger binaries and is only for deep debugging.
+          # LTO=none is the safest for GKI 6.6 Kleaf (tested stable).
+          # LTO=full causes OOM on 7GB runners.  LTO=thin not always
+          # supported by older Kleaf versions (exit code 2).
           # Reduced jobs and optimized memory for 7GB runners.
           # Switching back to --local_resources=memory as --local_ram_resources is deprecated.
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --lto=thin \
+            --lto=none \
             --local_resources=memory=6144 \
             --jobs=2 \
             --noshow_progress \

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release Tag (same tag = same release)"
+        description: "Release Tag"
         required: true
         default: "v1.0"
       custom_name:
@@ -26,14 +26,7 @@ on:
         description: "☑️ Build GKI + SUSFS"
         required: true
         type: boolean
-        default: true
-
-      # ───── Root Methods (checkboxes) ─────
-      root_kernelsu_next:
-        description: "🔒 KernelSU-Next"
-        required: true
-        type: boolean
-        default: true
+        default: false
 
       cpu_governors:
         description: "⚙️ CPU Governors (comma-separated, e.g. schedutil,walt)"
@@ -41,24 +34,6 @@ on:
         type: string
         default: "schedutil"
 
-      # ───── Build Settings ─────
-      tuning_profile:
-        description: "Tuning profile"
-        required: true
-        type: choice
-        default: "balanced"
-        options:
-          - balanced
-          - gaming
-          - social_media
-      safety_profile:
-        description: "Boot safety profile"
-        required: true
-        type: choice
-        default: "stable"
-        options:
-          - stable
-          - performance
       # ───── Toolchains (checkboxes) ─────
       tc_bazel_default:
         description: "🛠️ Bazel (Default)"
@@ -85,11 +60,6 @@ on:
         required: true
         type: boolean
         default: false
-      tc_azure_latest:
-        description: "🛠️ Azure Latest"
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   actions: write
@@ -111,9 +81,8 @@ jobs:
           import os
           import sys
 
-          # Collect selected root methods
-          roots = []
-          if "${{ inputs.root_kernelsu_next }}" == "true": roots.append("kernelsu-next")
+          # Root method: hardcoded to KernelSU-Next only
+          roots = ["kernelsu-next"]
 
           # Collect selected governors
           govs = [g.strip() for g in "${{ inputs.cpu_governors }}".split(",") if g.strip()]
@@ -137,11 +106,7 @@ jobs:
           if "${{ inputs.tc_zyc_latest }}" == "true": toolchains.append("zyc-latest")
           if "${{ inputs.tc_weebx_latest }}" == "true": toolchains.append("weebx-latest")
           if "${{ inputs.tc_neutron_latest }}" == "true": toolchains.append("neutron-latest")
-          if "${{ inputs.tc_azure_latest }}" == "true": toolchains.append("azure-latest")
 
-          if not roots:
-              print("::error::No root method selected!")
-              sys.exit(1)
           if not govs:
               print("::error::No governor selected!")
               sys.exit(1)
@@ -165,7 +130,7 @@ jobs:
                           })
 
           matrix_json = json.dumps({"include": include})
-          
+
           # Set output and total count
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'matrix={matrix_json}\n')
@@ -193,10 +158,8 @@ jobs:
       author_name: ${{ inputs.author_name }}
       ksu_method: ${{ matrix.ksu_method }}
       cpu_governor: ${{ matrix.cpu_governor }}
-      safety_profile: ${{ inputs.safety_profile }}
-      tuning_profile: ${{ inputs.tuning_profile }}
       clang_toolchain: ${{ matrix.clang_toolchain }}
-      release_tag: ${{ inputs.release_tag }}
+      release_tag: "${{ inputs.release_tag }}-${{ matrix.clang_toolchain }}-${{ matrix.cpu_governor }}-${{ matrix.susfs }}"
 
   summary:
     name: "📊 Summary"
@@ -213,8 +176,7 @@ jobs:
           echo "| **Release Tag** | \`${{ inputs.release_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Custom Name** | \`${{ inputs.custom_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Author** | \`${{ inputs.author_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Tuning** | \`${{ inputs.tuning_profile }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Safety** | \`${{ inputs.safety_profile }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Root** | \`KernelSU-Next\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Toolchain** | \`Multiple (Matrix)\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Total Builds** | \`${{ needs.prepare.outputs.total }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

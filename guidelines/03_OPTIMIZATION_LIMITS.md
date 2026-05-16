@@ -19,12 +19,17 @@
 
 ## 3. LTO (Link-Time Optimization)
 - **Kenapa?** LTO bikin binary kernel lebih kecil dan cepat. Tapi kalau pakai `full`, GitHub Actions akan **OOM (Out Of Memory)** karena limit RAM cuma 7GB.
-- **Implementasi:** Gunakan `--lto=thin` pada command `tools/bazel run`.
-  **DILARANG** menggunakan `--lto=full` (OOM) atau `--lto=none` (kernel gede, cuma buat deep debugging).
-- **Status Workflow:** ✅ `_build_kernel_core.yml` sudah pakai `--lto=thin`.
+- **Implementasi:** Gunakan `--lto=none` pada command `tools/bazel run`.
+  `--lto=thin` kadang gak didukung Kleaf versi lama (exit code 2). `--lto=full` jelas OOM.
+- **Status Workflow:** ✅ `_build_kernel_core.yml` pakai `--lto=none` (terbukti stabil).
 
 ## 4. Baterai & RAM Android
 - **Implementasi:**
-  - Timer: `CONFIG_HZ=300` (Standar Android. HZ=1000 bikin respon lebih cepat tapi boros baterai di MT6768 — khusus gaming build bisa dicoba, tapi jangan default).
+  - Timer: `CONFIG_HZ=300` (Standar Android).
   - RAM: `CONFIG_LRU_GEN=y` (Wajib, lebih efisien mengatur memori).
   - THP: `CONFIG_TRANSPARENT_HUGEPAGE=n` (Wajib dimatikan, makan terlalu banyak RAM di HP budget).
+
+## 5. Release Tag
+- Release tag unik per varian: `{tag}-{toolchain}-{gov}-{susfs}`
+- Contoh: `v1.0-bazel-default-schedutil-false`
+- Biar gak tabrakan antar matrix build.
