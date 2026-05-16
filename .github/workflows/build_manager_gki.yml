@@ -140,7 +140,7 @@ jobs:
       author_name: ${{ inputs.author_name }}
       ksu_method: ${{ matrix.ksu_method }}
       clang_toolchain: ${{ matrix.clang_toolchain }}
-      release_tag: "${{ inputs.release_tag }}-${{ matrix.clang_toolchain }}-${{ matrix.susfs }}"
+      release_tag: "${{ inputs.release_tag }}"
 
   summary:
     name: "📊 Summary"

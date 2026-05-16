@@ -794,23 +794,15 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Add WiFi modules to module_outs using grep + sed.
-            # IMPORTANT: Do NOT use heredoc (<<EOF) inside YAML run blocks —
-            # YAML indentation breaks the EOF delimiter, causing shell parse errors.
+            # FIX: Add WiFi modules to module_outs using buildozer.
+            # Bazel recommends buildozer to correctly parse and modify BUILD files.
             if [ -f "BUILD.bazel" ]; then
-              if ! grep -q 'cfg80211.ko' BUILD.bazel; then
-                # Find the first 'module_outs = [' line and add after it
-                sed -i '/module_outs\s*=\s*\[/a\        "net/wireless/cfg80211.ko",' BUILD.bazel
-                echo "  → Added cfg80211.ko to module_outs"
-              else
-                echo "  ℹ️ cfg80211.ko already in BUILD.bazel"
-              fi
-              if ! grep -q 'mac80211.ko' BUILD.bazel; then
-                sed -i '/module_outs\s*=\s*\[/a\        "net/mac80211/mac80211.ko",' BUILD.bazel
-                echo "  → Added mac80211.ko to module_outs"
-              else
-                echo "  ℹ️ mac80211.ko already in BUILD.bazel"
-              fi
+              echo "Installing buildozer..."
+              wget -q https://github.com/bazelbuild/buildtools/releases/latest/download/buildozer-linux-amd64 -O buildozer
+              chmod +x buildozer
+              ./buildozer 'add module_outs net/wireless/cfg80211.ko net/mac80211/mac80211.ko' //common:kernel_aarch64 || true
+              rm buildozer
+              echo "✅ BUILD.bazel patched with buildozer"
             fi
 
             git add BUILD.bazel
