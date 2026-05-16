@@ -102,14 +102,14 @@ jobs:
         shell: bash
         run: |
           MATRIX_JSON="$(python3 - <<'PY'
-          import json, sys
+import json, sys
 
           # Collect selected root methods
-          roots = []
-          if "${{ inputs.root_kernelsu_next }}" == "true": roots.append("kernelsu-next")
+roots = []
+if "${{ inputs.root_kernelsu_next }}" == "true": roots.append("kernelsu-next")
 
           # Collect selected governors
-          govs = [g.strip() for g in "${{ inputs.cpu_governors }}".split(",") if g.strip()]
+govs = [g.strip() for g in "${{ inputs.cpu_governors }}".split(",") if g.strip()]
 
           # FIX 5: Validasi governor — tangkap typo sebelum build berjalan 2+ jam
           VALID_GOVS = {'schedutil', 'performance', 'ondemand', 'conservative', 'powersave', 'userspace', 'walt'}
@@ -118,40 +118,41 @@ jobs:
               raise SystemExit(f"❌ Governor tidak valid: {invalid}. Pilih dari: {sorted(VALID_GOVS)}")
 
           # Collect selected SUSFS variants
-          variants = []
-          if "${{ inputs.build_no_susfs }}" == "true": variants.append("false")
-          if "${{ inputs.build_susfs }}" == "true": variants.append("true")
+variants = []
+if "${{ inputs.build_no_susfs }}" == "true": variants.append("false")
+if "${{ inputs.build_susfs }}" == "true": variants.append("true")
 
           # Collect selected toolchains
-          toolchains = []
-          if "${{ inputs.tc_bazel_default }}" == "true": toolchains.append("bazel-default")
-          if "${{ inputs.tc_aosp_latest }}" == "true": toolchains.append("aosp-latest")
-          if "${{ inputs.tc_zyc_latest }}" == "true": toolchains.append("zyc-latest")
-          if "${{ inputs.tc_weebx_latest }}" == "true": toolchains.append("weebx-latest")
-          if "${{ inputs.tc_neutron_latest }}" == "true": toolchains.append("neutron-latest")
-           if not roots:
-              raise SystemExit("❌ No root method selected!")
-          if not govs:
-              raise SystemExit("❌ No governor selected!")
-          if not variants:
-              raise SystemExit("❌ No SUSFS variant selected!")
-          if not toolchains:
-              raise SystemExit("❌ No Toolchain selected!")
+toolchains = []
+if "${{ inputs.tc_bazel_default }}" == "true": toolchains.append("bazel-default")
+if "${{ inputs.tc_aosp_latest }}" == "true": toolchains.append("aosp-latest")
+if "${{ inputs.tc_zyc_latest }}" == "true": toolchains.append("zyc-latest")
+if "${{ inputs.tc_weebx_latest }}" == "true": toolchains.append("weebx-latest")
+if "${{ inputs.tc_neutron_latest }}" == "true": toolchains.append("neutron-latest")
+if "${{ inputs.tc_azure_latest }}" == "true": toolchains.append("azure-latest")
+if not roots:
+    raise SystemExit("❌ No root method selected!")
+if not govs:
+    raise SystemExit("❌ No governor selected!")
+if not variants:
+    raise SystemExit("❌ No SUSFS variant selected!")
+if not toolchains:
+    raise SystemExit("❌ No Toolchain selected!")
 
-          include = []
-          for susfs in variants:
-              for root in roots:
-                  for gov in govs:
-                      for tc in toolchains:
-                          include.append({
-                              "susfs": susfs,
-                              "ksu_method": root,
-                              "cpu_governor": gov,
-                              "clang_toolchain": tc,
-                          })
+include = []
+for susfs in variants:
+    for root in roots:
+        for gov in govs:
+            for tc in toolchains:
+                include.append({
+                    "susfs": susfs,
+                    "ksu_method": root,
+                    "cpu_governor": gov,
+                    "clang_toolchain": tc,
+                })
 
-          print(json.dumps({"include": include}))
-          PY
+print(json.dumps({"include": include}))
+PY
           )"
 
           echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
