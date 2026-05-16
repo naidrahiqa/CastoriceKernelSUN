@@ -833,11 +833,10 @@ jobs:
           
           # LTO=none is the safest for debugging bootloops.
           # Reduced jobs and optimized memory for 7GB runners.
-          # Use --config=fast and --config=lto_none for better Kleaf compatibility.
+          # Use --lto=none (flag) instead of --config=lto_none (config value).
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
-            --config=fast \
-            --config=lto_none \
+            --lto=none \
             --local_ram_resources=6144 \
             --jobs=2 \
             --noshow_progress \
