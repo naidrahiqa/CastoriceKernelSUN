@@ -271,7 +271,9 @@ jobs:
           # Build 30 April (6.6.129) yang BOOTING pakai tip of branch.
           # Version lock ke 6.6.58 terbukti bootloop di semua build Mei 2026.
           # Biarkan repo sync ambil HEAD dari branch common-android15-6.6.
-          echo "✅ Using tip of branch ($(git log --oneline -1))"
+          KERNEL_COMMIT=$(git log --oneline -1)
+          echo "✅ Using tip of branch ($KERNEL_COMMIT)"
+          echo "KERNEL_COMMIT=$KERNEL_COMMIT" >> $GITHUB_ENV
 
           make kernelversion
 
@@ -794,15 +796,38 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Add WiFi modules to module_outs using buildozer.
-            # Bazel recommends buildozer to correctly parse and modify BUILD files.
+            # FIX: Ganti buildozer dengan Python (supply chain risk).
+            # buildozer di-download dari GitHub releases tanpa checksum —
+            # kalo repo buildtools kena kompromi, kita ikut kena.
+            # Python pre-installed di runner, aman.
             if [ -f "BUILD.bazel" ]; then
-              echo "Installing buildozer..."
-              wget -q https://github.com/bazelbuild/buildtools/releases/latest/download/buildozer-linux-amd64 -O buildozer
-              chmod +x buildozer
-              ./buildozer 'add module_outs net/wireless/cfg80211.ko net/mac80211/mac80211.ko' //common:kernel_aarch64 || true
-              rm buildozer
-              echo "✅ BUILD.bazel patched with buildozer"
+              python3 -c "
+import sys
+mods = ['net/wireless/cfg80211.ko', 'net/mac80211/mac80211.ko']
+with open('BUILD.bazel') as f:
+    text = f.read()
+missing = [m for m in mods if m not in text]
+if not missing:
+    sys.exit(0)
+idx = text.find('kernel_aarch64')
+if idx < 0:
+    print('⚠️ kernel_aarch64 not found')
+    sys.exit(1)
+rest = text[idx:]
+mo_idx = rest.find('module_outs = [')
+if mo_idx < 0:
+    print('⚠️ module_outs not found')
+    sys.exit(1)
+insert_at = idx + mo_idx + len('module_outs = [')
+new_text = text[:insert_at]
+for m in missing:
+    new_text += '\n        \"' + m + '\",'
+new_text += text[insert_at:]
+with open('BUILD.bazel', 'w') as f:
+    f.write(new_text)
+print('✅ Added: ' + ', '.join(missing))
+"
+              echo "✅ BUILD.bazel patched (module_outs)"
             fi
 
             git add BUILD.bazel
@@ -849,20 +874,41 @@ jobs:
           set -euo pipefail
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
-          
+
+          # ── FIX: --local_ram_resources (bukan --local_resources) ─────────
+          # --local_resources=memory=... SUDAH DEPRECATED sejak Bazel 6,
+          # di Bazel 7+ malah REMOVED. Ganti ke --local_ram_resources.
+          # Kalau nanti pindah Bazel version, cek dulu flag mana yang valid.
+          #
           # LTO=none is the safest for GKI 6.6 Kleaf (tested stable).
-          # LTO=full causes OOM on 7GB runners.  LTO=thin not always
+          # LTO=full causes OOM on 7GB runners. LTO=thin not always
           # supported by older Kleaf versions (exit code 2).
-          # Reduced jobs and optimized memory for 7GB runners.
-          # Switching back to --local_resources=memory as --local_ram_resources is deprecated.
-          tools/bazel run \
-            --disk_cache=/home/runner/.cache/bazel \
-            --lto=none \
-            --local_resources=memory=6144 \
-            --jobs=2 \
-            --noshow_progress \
-            --noshow_loading_progress \
-            //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log
+          #
+          # ── FIX: Retry loop ──────────────────────────────────────────────
+          # Sama kayak repo sync (3x retry, 30s delay). Build Bazel bisa gagal
+          # karena transient network issues download remote deps/artifacts.
+          # ─────────────────────────────────────────────────────────────────
+          BUILD_OK=false
+          for attempt in 1 2 3; do
+            echo "Bazel build attempt $attempt/3..."
+            if tools/bazel run \
+              --disk_cache=/home/runner/.cache/bazel \
+              --lto=none \
+              --local_ram_resources=6144 \
+              --jobs=2 \
+              --noshow_progress \
+              --noshow_loading_progress \
+              //common:kernel_aarch64_dist -- --dist_dir=$GITHUB_WORKSPACE/dist 2>&1 | tee build.log; then
+              BUILD_OK=true
+              break
+            fi
+            echo "⚠️ Bazel build failed, retrying in 30s..."
+            sleep 30
+          done
+          if [ "$BUILD_OK" != "true" ]; then
+            echo "❌ Bazel build gagal setelah 3 percobaan"
+            exit 1
+          fi
           echo "TOOLCHAIN_NAME=Bazel" >> $GITHUB_ENV
           echo "TOOLCHAIN_VER=AOSP Clang (Kleaf Default)" >> $GITHUB_ENV
         env:

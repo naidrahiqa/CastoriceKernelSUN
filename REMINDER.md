@@ -44,7 +44,18 @@ SUSFS sering error compile karena:
 
 Contoh: `v1.0-bazel-default-schedutil-false`
 
+## 🔧 Bazel Build Fixes (17 Mei 2026)
+
+| Fix | Detail |
+|-----|--------|
+| `--local_resources` → `--local_ram_resources` | Flag `--local_resources=memory=N` **deprecated** sejak Bazel 6, **removed** di Bazel 7+. Kleaf GKI 6.6 pake Bazel 7+. Jangan ganti balik! |
+| Retry loop (3x) | Build Bazel bisa gagal karena transient network issues. Sama kayak repo sync: 3 attempts, 30s delay. |
+| buildozer → Python | Download binary dari GitHub releases tanpa checksum = **supply chain risk**. Ganti pakai Python (pre-installed di runner). |
+| Kernel commit capture | `KERNEL_COMMIT` sekarang di-capture ke `$GITHUB_ENV` setelah repo sync buat debugging & referensi. |
+
+⚠️ **Cache key belum include kernel commit hash** — karena GitHub Actions evaluates cache key di workflow parse time, sebelum repo sync. Stale cache mungkin terjadi pas AOSP update upstream. Setelah repo sync, cache key gak bisa diubah. Solusi: kalau suspect cache, clear manual di GitHub Actions UI.
+
 ## 📋 Workflow Files
 
 - `build_manager_gki.yml` — Dispatcher (171 lines, simplified)
-- `_build_kernel_core.yml` — Core build (1240 lines)
+- `_build_kernel_core.yml` — Core build (~1265 lines)
