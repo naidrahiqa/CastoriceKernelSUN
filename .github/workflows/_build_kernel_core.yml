@@ -796,16 +796,13 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Ganti buildozer dengan sed (lebih aman).
-            # buildozer download tanpa checksum = supply chain risk.
-            # Inline Python baris-0-indent rusak di YAML | block.
-            # sed lebih sederhana dan aman di YAML.
-            for mod in "net/wireless/cfg80211.ko" "net/mac80211/mac80211.ko"; do
-              if ! grep -qF "$mod" BUILD.bazel; then
-                sed -i "/module_outs = \[/a\        \"$mod\"," BUILD.bazel
-                echo "  → Added $mod to module_outs"
-              fi
-            done
+            # FIX: Pakai buildozer pinned (gak pake "latest").
+            # Risk: download binary without checksum. Mitigasi: pin version.
+            # Alternative seperti Python inline/sed gagal karena YAML | indent.
+            wget -q "https://github.com/bazelbuild/buildtools/releases/download/v7.3.0/buildozer-linux-amd64" -O buildozer
+            chmod +x buildozer
+            ./buildozer 'add module_outs net/wireless/cfg80211.ko net/mac80211/mac80211.ko' //common:kernel_aarch64 || true
+            rm -f buildozer
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
@@ -852,10 +849,10 @@ jobs:
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
 
-          # ── FIX: --local_ram_resources (bukan --local_resources) ─────────
-          # --local_resources=memory=... SUDAH DEPRECATED sejak Bazel 6,
-          # di Bazel 7+ malah REMOVED. Ganti ke --local_ram_resources.
-          # Kalau nanti pindah Bazel version, cek dulu flag mana yang valid.
+          # ── FIX: --local_resources=memory (bukan --local_ram_resources) ──
+          # Di Bazel version yang dipakai Kleaf GKI 6.6, --local_ram_resources
+          # justru DEPRECATED. Yang bener: --local_resources=memory=6144.
+          # Jangan ganti-ganti flag tanpa tes di runner dulu.
           #
           # LTO=none is the safest for GKI 6.6 Kleaf (tested stable).
           # LTO=full causes OOM on 7GB runners. LTO=thin not always
@@ -871,7 +868,7 @@ jobs:
             if tools/bazel run \
               --disk_cache=/home/runner/.cache/bazel \
               --lto=none \
-              --local_ram_resources=6144 \
+              --local_resources=memory=6144 \
               --jobs=2 \
               --noshow_progress \
               --noshow_loading_progress \

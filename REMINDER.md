@@ -48,12 +48,12 @@ Contoh: `v1.0-bazel-default-schedutil-false`
 
 | Fix | Detail |
 |-----|--------|
-| `--local_resources` → `--local_ram_resources` | Flag `--local_resources=memory=N` **deprecated** sejak Bazel 6, **removed** di Bazel 7+. Kleaf GKI 6.6 pake Bazel 7+. Jangan ganti balik! |
+| `--local_resources=memory=6144` (BALIK) | Awalnya diganti ke `--local_ram_resources` tapi ternyata **Kleaf GKI 6.6 pake Bazel version yang malah deprecated-in `--local_ram_resources`**. Balikin ke `--local_resources=memory=6144`. **Warning:** jangan ganti flag tanpa tes runner dulu. |
 | Retry loop (3x) | Build Bazel bisa gagal karena transient network issues. Sama kayak repo sync: 3 attempts, 30s delay. |
-| buildozer → Python | Download binary dari GitHub releases tanpa checksum = **supply chain risk**. Ganti pakai Python (pre-installed di runner). |
-| Kernel commit capture | `KERNEL_COMMIT` sekarang di-capture ke `$GITHUB_ENV` setelah repo sync buat debugging & referensi. |
+| buildozer pinned v7.3.0 | Gak pake "latest". Python inline gagal di YAML `|` block (indent). Sed juga gak reliable buat Starlark. |
+| Kernel commit capture | `KERNEL_COMMIT` di-capture ke `$GITHUB_ENV` setelah repo sync. |
 
-⚠️ **Cache key belum include kernel commit hash** — karena GitHub Actions evaluates cache key di workflow parse time, sebelum repo sync. Stale cache mungkin terjadi pas AOSP update upstream. Setelah repo sync, cache key gak bisa diubah. Solusi: kalau suspect cache, clear manual di GitHub Actions UI.
+⚠️ **Cache key belum include kernel commit hash** — karena GitHub Actions evaluates cache key di workflow parse time, sebelum repo sync. Clear manual di UI kalau suspect stale.
 
 ## 📋 Workflow Files
 
