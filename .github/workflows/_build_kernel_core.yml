@@ -23,10 +23,6 @@ on:
         required: true
         type: string
         default: 'schedutil'
-      cpu_governor:
-        required: true
-        type: string
-        default: 'schedutil'
       clang_toolchain:
         required: true
         type: string
