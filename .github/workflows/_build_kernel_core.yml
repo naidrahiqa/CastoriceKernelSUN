@@ -785,37 +785,37 @@ jobs:
               # FIX: Use python for robust BUILD.bazel patching.
               # We need to add modules to the 'module_outs' list of 'kernel_aarch64' target.
               python3 - <<'EOF'
-import re
+              import re
 
-with open('BUILD.bazel', 'r') as f:
-    content = f.read()
+              with open('BUILD.bazel', 'r') as f:
+                  content = f.read()
 
-# Find the kernel_aarch64 target block
-# We look for kernel_build( name = "kernel_aarch64", ... module_outs = [ ... ] )
-target_match = re.search(r'kernel_build\s*\(\s*name\s*=\s*"kernel_aarch64".*?module_outs\s*=\s*\[(.*?)\]', content, re.DOTALL)
-if target_match:
-    module_outs = target_match.group(1)
-    new_modules = []
-    if 'cfg80211.ko' not in module_outs:
-        new_modules.append('        "net/wireless/cfg80211.ko",')
-    if 'mac80211.ko' not in module_outs:
-        new_modules.append('        "net/mac80211/mac80211.ko",')
-    
-    if new_modules:
-        updated_module_outs = module_outs + '\n' + '\n'.join(new_modules)
-        new_content = content.replace(module_outs, updated_module_outs)
-        with open('BUILD.bazel', 'w') as f:
-            f.write(new_content)
-        print(f"✅ Added {len(new_modules)} modules to BUILD.bazel")
-    else:
-        print("ℹ️ WiFi modules already present in BUILD.bazel")
-else:
-    print("⚠️  Target 'kernel_aarch64' or 'module_outs' not found in BUILD.bazel, using fallback sed")
-    # Fallback to simple sed if python fails to find the block
-    sed_cmd = '/module_outs.*=.*\[/a\        "net/wireless/cfg80211.ko",\n        "net/mac80211/mac80211.ko",'
-    import subprocess
-    subprocess.run(['sed', '-i', sed_cmd, 'BUILD.bazel'])
-EOF
+              # Find the kernel_aarch64 target block
+              # We look for kernel_build( name = "kernel_aarch64", ... module_outs = [ ... ] )
+              target_match = re.search(r'kernel_build\s*\(\s*name\s*=\s*"kernel_aarch64".*?module_outs\s*=\s*\[(.*?)\]', content, re.DOTALL)
+              if target_match:
+                  module_outs = target_match.group(1)
+                  new_modules = []
+                  if 'cfg80211.ko' not in module_outs:
+                      new_modules.append('        "net/wireless/cfg80211.ko",')
+                  if 'mac80211.ko' not in module_outs:
+                      new_modules.append('        "net/mac80211/mac80211.ko",')
+                  
+                  if new_modules:
+                      updated_module_outs = module_outs + '\n' + '\n'.join(new_modules)
+                      new_content = content.replace(module_outs, updated_module_outs)
+                      with open('BUILD.bazel', 'w') as f:
+                          f.write(new_content)
+                      print(f"✅ Added {len(new_modules)} modules to BUILD.bazel")
+                  else:
+                      print("ℹ️ WiFi modules already present in BUILD.bazel")
+              else:
+                  print("⚠️  Target 'kernel_aarch64' or 'module_outs' not found in BUILD.bazel, using fallback sed")
+                  # Fallback to simple sed if python fails to find the block
+                  sed_cmd = '/module_outs.*=.*\[/a\        "net/wireless/cfg80211.ko",\n        "net/mac80211/mac80211.ko",'
+                  import subprocess
+                  subprocess.run(['sed', '-i', sed_cmd, 'BUILD.bazel'])
+              EOF
             fi
 
             git add BUILD.bazel
