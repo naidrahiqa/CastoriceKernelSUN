@@ -28,12 +28,6 @@ on:
         type: boolean
         default: false
 
-      cpu_governors:
-        description: "⚙️ CPU Governors (comma-separated, e.g. schedutil,walt)"
-        required: true
-        type: string
-        default: "schedutil"
-
       # ───── Toolchains (checkboxes) ─────
       tc_bazel_default:
         description: "🛠️ Bazel (Default)"
@@ -84,15 +78,8 @@ jobs:
           # Root method: hardcoded to KernelSU-Next only
           roots = ["kernelsu-next"]
 
-          # Collect selected governors
-          govs = [g.strip() for g in "${{ inputs.cpu_governors }}".split(",") if g.strip()]
-
-          # Validasi governor
-          VALID_GOVS = {'schedutil', 'performance', 'ondemand', 'conservative', 'powersave', 'userspace', 'walt'}
-          invalid = [g for g in govs if g not in VALID_GOVS]
-          if invalid:
-              print(f"::error::Governor tidak valid: {invalid}")
-              sys.exit(1)
+          # Governor: hardcoded to schedutil
+          gov = "schedutil"
 
           # Collect selected SUSFS variants
           variants = []
@@ -107,9 +94,6 @@ jobs:
           if "${{ inputs.tc_weebx_latest }}" == "true": toolchains.append("weebx-latest")
           if "${{ inputs.tc_neutron_latest }}" == "true": toolchains.append("neutron-latest")
 
-          if not govs:
-              print("::error::No governor selected!")
-              sys.exit(1)
           if not variants:
               print("::error::No SUSFS variant selected!")
               sys.exit(1)
@@ -120,14 +104,12 @@ jobs:
           include = []
           for susfs in variants:
               for root in roots:
-                  for gov in govs:
-                      for tc in toolchains:
-                          include.append({
-                              "susfs": susfs,
-                              "ksu_method": root,
-                              "cpu_governor": gov,
-                              "clang_toolchain": tc,
-                          })
+                  for tc in toolchains:
+                      include.append({
+                          "susfs": susfs,
+                          "ksu_method": root,
+                          "clang_toolchain": tc,
+                      })
 
           matrix_json = json.dumps({"include": include})
 
@@ -157,9 +139,8 @@ jobs:
       custom_name: ${{ inputs.custom_name }}
       author_name: ${{ inputs.author_name }}
       ksu_method: ${{ matrix.ksu_method }}
-      cpu_governor: ${{ matrix.cpu_governor }}
       clang_toolchain: ${{ matrix.clang_toolchain }}
-      release_tag: "${{ inputs.release_tag }}-${{ matrix.clang_toolchain }}-${{ matrix.cpu_governor }}-${{ matrix.susfs }}"
+      release_tag: "${{ inputs.release_tag }}-${{ matrix.clang_toolchain }}-${{ matrix.susfs }}"
 
   summary:
     name: "📊 Summary"

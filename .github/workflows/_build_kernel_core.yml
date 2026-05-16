@@ -19,10 +19,6 @@ on:
         required: true
         type: string
         default: 'kernelsu-next'
-      cpu_governor:
-        required: true
-        type: string
-        default: 'schedutil'
       clang_toolchain:
         required: true
         type: string
@@ -63,7 +59,7 @@ jobs:
           echo "with_susfs:      '${{ inputs.with_susfs }}'"
           echo "custom_name:     '${{ inputs.custom_name }}'"
           echo "ksu_method:      '${{ inputs.ksu_method }}'"
-          echo "cpu_governor:    '${{ inputs.cpu_governor }}'"
+          echo "cpu_governor:    'schedutil'"
           echo "clang_toolchain: '${{ inputs.clang_toolchain }}'"
           echo "release_tag:     '${{ inputs.release_tag }}'"
           echo "========================"
@@ -94,7 +90,7 @@ jobs:
           echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
           
           # Base Filename: {CustomName}-{Toolchain}-{Root}-{Governor}[-SUSFS]-{Date}
-          BASE_NAME="${{ inputs.custom_name }}-${TC_NAME}-${{ inputs.ksu_method }}-${{ inputs.cpu_governor }}${SUSFS_LABEL}-${BUILD_DATE}"
+          BASE_NAME="${{ inputs.custom_name }}-${TC_NAME}-${{ inputs.ksu_method }}-schedutil${SUSFS_LABEL}-${BUILD_DATE}"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
           echo "✅ Environment initialized: ${BASE_NAME}"
 
@@ -381,14 +377,38 @@ jobs:
               exit 1
             fi
 
-            # CRITICAL FIX: Inject KSU_VERSION and KSU_VERSION_TAG
-            # Use sed to insert at the TOP of the file to ensure it takes precedence.
+            # CRITICAL FIX: Hardcode KSU version + enforce via header override.
+            # Bazel sandbox cannot access .git → falls back to KSU_VERSION=1.
+            # Our ccflags injection conflicts with Bazel's fallback → -Werror kills build.
+            # Solution:
+            #   1. Hardcode $(shell git ...) in Kbuild to silence Kbuild's own warnings
+            #   2. Create ksu_version.h with #undef+#define, included via -include flag
+            #      -include is processed AFTER command line -D flags → our values win
             KBUILD_FILE="common/drivers/kernelsu/Kbuild"
             if [ -f "$KBUILD_FILE" ]; then
-              sed -i "1i # Injected by CI — Bazel sandbox cannot access .git\nccflags-y += -UKSU_VERSION -DKSU_VERSION=${KSU_VERSION}\nccflags-y += -UKSU_VERSION_TAG -DKSU_VERSION_TAG=\"\\\"${KSU_TAG}\\\"\"" "$KBUILD_FILE"
-              echo "✅ KSU_VERSION=${KSU_VERSION} injected into TOP of Kbuild"
+              # Remove old injection if present from previous runs
+              sed -i '/# Injected by CI/d' "$KBUILD_FILE"
+              sed -i '/ccflags-y += -UKSU_VERSION/d' "$KBUILD_FILE"
+
+              # Hardcode git rev-list result (fixes Kbuild's own warnings)
+              sed -i "s#\$(shell git rev-list --count HEAD 2>/dev/null || echo 0)#${GIT_COUNT}#g" "$KBUILD_FILE"
+              sed -i "s#\$(shell git rev-list --count HEAD)#${GIT_COUNT}#g" "$KBUILD_FILE"
+
+              # Hardcode git describe result
+              sed -i "s#\$(shell git describe --abbrev=0 --tags 2>/dev/null || echo \"v\$(KSU_VERSION)\")#\"${KSU_TAG}\"#g" "$KBUILD_FILE"
+              sed -i "s#\$(shell git describe --abbrev=0 --tags)#\"${KSU_TAG}\"#g" "$KBUILD_FILE"
+
+              # Create version header that overrides ALL command line definitions
+              # -include processes this AFTER command line -D flags, so #undef+#define wins
+              printf '#undef KSU_VERSION\n#define KSU_VERSION %s\n#undef KSU_VERSION_TAG\n#define KSU_VERSION_TAG "%s"\n' \
+                "${KSU_VERSION}" "${KSU_TAG}" > common/drivers/kernelsu/ksu_version.h
+
+              # Add -include flag + suppress macro-redefined warnings
+              sed -i "1i ccflags-y += -Wno-macro-redefined -include \$(srctree)/drivers/kernelsu/ksu_version.h" "$KBUILD_FILE"
+
+              echo "✅ KSU_VERSION=${KSU_VERSION} enforced via ksu_version.h (overrides Bazel fallback)"
             else
-              echo "⚠️  Kbuild not found, version injection skipped"
+              echo "⚠️  Kbuild not found, version hardcoding skipped"
             fi
 
             # Daftarkan ke drivers/Makefile
@@ -628,7 +648,7 @@ jobs:
           set -euo pipefail
           cd kernel/common
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          GOVERNOR="${{ inputs.cpu_governor }}"
+          GOVERNOR="schedutil"
 
           add_cfg() {
             local cfg="$1"
@@ -954,7 +974,7 @@ jobs:
           CUSTOM_NAME="${{ inputs.custom_name }}"
           BUILD_VER="${{ github.run_number }}"
           AUTHOR="${{ inputs.author_name }}"
-          GOVERNOR="${{ inputs.cpu_governor }}"
+          GOVERNOR="schedutil"
           TOOLCHAIN_SHORT="${{ env.TOOLCHAIN_NAME }}"
           BASE_NAME="${{ env.ZIP_NAME }}"
 
@@ -1052,7 +1072,7 @@ jobs:
             ### 📦 Castorice-${{ inputs.custom_name }}
             - **Type:** GKI 6.6 ${{ inputs.with_susfs == 'true' && '+ SUSFS' || '(No SUSFS)' }}
             - **Root:** ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
-            - **Governor:** ${{ inputs.cpu_governor }}
+            - **Governor:** schedutil
             - **KMI:** ${{ env.KMI_GENERATION }}
             - **Toolchain:** ${{ inputs.clang_toolchain }}
               - *${{ env.TOOLCHAIN_VER }}*
@@ -1133,7 +1153,7 @@ jobs:
             '<b>Version:</b> v${{ github.run_number }}\n'\
             '<b>Developer:</b> ${{ inputs.author_name }}\n'\
             '<b>Root:</b> ${{ inputs.ksu_method }}\n'\
-            '<b>Governor:</b> ${{ inputs.cpu_governor }}\n'\
+            '<b>Governor:</b> schedutil\n'\
             '<b>SUSFS:</b> %s\n'\
             '<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n'\
             '<b>Triggered by:</b> ${{ github.actor }}\n\n'\
@@ -1157,7 +1177,7 @@ jobs:
             -X POST "${TG_API}/sendDocument" \
             --form-string "chat_id=${TG_CHAT_ID}" \
             -F "document=@/tmp/${LOG_FILENAME};filename=${LOG_FILENAME}" \
-            --form-string "caption=📋 Error log — ${{ inputs.ksu_method }} / ${{ inputs.cpu_governor }} / ${{ inputs.clang_toolchain }}" \
+            --form-string "caption=📋 Error log — ${{ inputs.ksu_method }} / schedutil / ${{ inputs.clang_toolchain }}" \
             --form-string "parse_mode=HTML" || echo "000")
 
           if [ "$HTTP_CODE" = "200" ]; then
@@ -1207,7 +1227,7 @@ jobs:
 
           # Caption pakai HTML parse_mode agar rapi di Telegram
           # Telegram caption max 1024 chars — jaga tetap ringkas
-          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Kernel Name:</b> ${{ inputs.custom_name }}\n<b>Version:</b> v${{ github.run_number }}\n<b>Developer:</b> ${{ inputs.author_name }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> ${{ inputs.cpu_governor }}\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n  └ <i>${{ env.TOOLCHAIN_VER }}</i>\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
+          CAPTION=$(printf '<b>🔧 Castorice Kernel — Build Done</b>\n\n<b>Kernel Name:</b> ${{ inputs.custom_name }}\n<b>Version:</b> v${{ github.run_number }}\n<b>Developer:</b> ${{ inputs.author_name }}\n<b>Type:</b> GKI 6.6\n<b>Root:</b> ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}\n<b>Governor:</b> schedutil\n<b>SUSFS:</b> %s\n<b>KMI:</b> ${{ env.KMI_GENERATION }}\n<b>Toolchain:</b> ${{ inputs.clang_toolchain }}\n  └ <i>${{ env.TOOLCHAIN_VER }}</i>\n<b>Size:</b> %s\n\n<a href="%s">📦 GitHub Release</a>' \
             "$SUSFS_LABEL" "$ZIP_SIZE" "$RELEASE_URL")
 
           TG_API="https://api.telegram.org/bot${TG_BOT_TOKEN}"
