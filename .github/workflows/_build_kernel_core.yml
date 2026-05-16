@@ -392,17 +392,11 @@ jobs:
             fi
 
             # CRITICAL FIX: Inject KSU_VERSION and KSU_VERSION_TAG
-            # directly into Kbuild ccflags. This bypasses git detection which
-            # ALWAYS fails in Bazel sandbox (no .git visible).
-            # Without this → KSU_VERSION=1 → KernelSU Manager rejects kernel.
+            # Use sed to insert at the TOP of the file to ensure it takes precedence.
             KBUILD_FILE="common/drivers/kernelsu/Kbuild"
             if [ -f "$KBUILD_FILE" ]; then
-              # Undefine any previous KSU_VERSION and redefine it
-              echo "" >> "$KBUILD_FILE"
-              echo "# Injected by CI — Bazel sandbox cannot access .git" >> "$KBUILD_FILE"
-              echo "ccflags-y += -UKSU_VERSION -DKSU_VERSION=${KSU_VERSION}" >> "$KBUILD_FILE"
-              echo "ccflags-y += -UKSU_VERSION_TAG -DKSU_VERSION_TAG=\"\\\"${KSU_TAG}\\\"\"" >> "$KBUILD_FILE"
-              echo "✅ KSU_VERSION=${KSU_VERSION} and TAG=${KSU_TAG} injected into Kbuild"
+              sed -i "1i # Injected by CI — Bazel sandbox cannot access .git\nccflags-y += -UKSU_VERSION -DKSU_VERSION=${KSU_VERSION}\nccflags-y += -UKSU_VERSION_TAG -DKSU_VERSION_TAG=\"\\\"${KSU_TAG}\\\"\"" "$KBUILD_FILE"
+              echo "✅ KSU_VERSION=${KSU_VERSION} injected into TOP of Kbuild"
             else
               echo "⚠️  Kbuild not found, version injection skipped"
             fi
@@ -787,13 +781,41 @@ jobs:
 
             # FIX: Add WiFi modules to module_outs using simple sed append.
             # No Python, no heredocs, no external tools — just grep + sed.
-            if ! grep -q 'cfg80211.ko' BUILD.bazel; then
-              sed -i '/module_outs.*=.*\[/a\        "net/wireless/cfg80211.ko",' BUILD.bazel
-              echo "  → Added cfg80211.ko to module_outs"
-            fi
-            if ! grep -q 'mac80211.ko' BUILD.bazel; then
-              sed -i '/module_outs.*=.*\[/a\        "net/mac80211/mac80211.ko",' BUILD.bazel
-              echo "  → Added mac80211.ko to module_outs"
+            if [ -f "BUILD.bazel" ]; then
+              # FIX: Use python for robust BUILD.bazel patching.
+              # We need to add modules to the 'module_outs' list of 'kernel_aarch64' target.
+              python3 - <<'EOF'
+import re
+
+with open('BUILD.bazel', 'r') as f:
+    content = f.read()
+
+# Find the kernel_aarch64 target block
+# We look for kernel_build( name = "kernel_aarch64", ... module_outs = [ ... ] )
+target_match = re.search(r'kernel_build\s*\(\s*name\s*=\s*"kernel_aarch64".*?module_outs\s*=\s*\[(.*?)\]', content, re.DOTALL)
+if target_match:
+    module_outs = target_match.group(1)
+    new_modules = []
+    if 'cfg80211.ko' not in module_outs:
+        new_modules.append('        "net/wireless/cfg80211.ko",')
+    if 'mac80211.ko' not in module_outs:
+        new_modules.append('        "net/mac80211/mac80211.ko",')
+    
+    if new_modules:
+        updated_module_outs = module_outs + '\n' + '\n'.join(new_modules)
+        new_content = content.replace(module_outs, updated_module_outs)
+        with open('BUILD.bazel', 'w') as f:
+            f.write(new_content)
+        print(f"✅ Added {len(new_modules)} modules to BUILD.bazel")
+    else:
+        print("ℹ️ WiFi modules already present in BUILD.bazel")
+else:
+    print("⚠️  Target 'kernel_aarch64' or 'module_outs' not found in BUILD.bazel, using fallback sed")
+    # Fallback to simple sed if python fails to find the block
+    sed_cmd = '/module_outs.*=.*\[/a\        "net/wireless/cfg80211.ko",\n        "net/mac80211/mac80211.ko",'
+    import subprocess
+    subprocess.run(['sed', '-i', sed_cmd, 'BUILD.bazel'])
+EOF
             fi
 
             git add BUILD.bazel
@@ -834,10 +856,11 @@ jobs:
           # LTO=none is the safest for debugging bootloops.
           # Reduced jobs and optimized memory for 7GB runners.
           # Use --lto=none (flag) instead of --config=lto_none (config value).
+          # Switching back to --local_resources=memory as --local_ram_resources is deprecated.
           tools/bazel run \
             --disk_cache=/home/runner/.cache/bazel \
             --lto=none \
-            --local_ram_resources=6144 \
+            --local_resources=memory=6144 \
             --jobs=2 \
             --noshow_progress \
             --noshow_loading_progress \
