@@ -10,11 +10,11 @@ on:
       custom_name:
         description: "Kernel Custom Name"
         required: true
-        default: "Starter"
+        default: "Epitaph"
       author_name:
         description: "Author Name"
         required: true
-        default: "Castorice"
+        default: "Naidrahiqa"
 
       # ───── SUSFS Variant (checkboxes) ─────
       build_no_susfs:

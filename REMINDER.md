@@ -17,7 +17,7 @@
 |-------|---------|------------|
 | `release_tag` | v1.0 | Tag release GitHub |
 | `custom_name` | Starter | Nama kernel |
-| `author_name` | Castorice | Nama developer |
+| `author_name` | Naidrahiqa | Nama developer |
 | `build_no_susfs` | true (checked) | Build tanpa SUSFS |
 | `build_susfs` | false (unchecked) | Build dengan SUSFS |
 | `cpu_governors` | schedutil | Governor CPU |

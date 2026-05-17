@@ -1,213 +1,144 @@
 <div align="center">
 
-# ⚡ Castorice Kernel
-### Gaming-Optimized GKI 6.6 Kernel for Redmi 12 (fire)
+# 🌌 Epitaph Kernel
+### A High-Performance, Gaming-Optimized GKI 6.6 Kernel for Redmi 12 (fire)
 
-[![GitHub Release](https://img.shields.io/github/v/release/naidrahiqa/CastoriceKernelSUN?style=for-the-badge&logo=github&color=success)](https://github.com/naidrahiqa/CastoriceKernelSUN/releases/latest)
-[![GitHub Downloads](https://img.shields.io/github/downloads/naidrahiqa/CastoriceKernelSUN/total?style=for-the-badge&logo=github&color=blue)](https://github.com/naidrahiqa/CastoriceKernelSUN/releases)
-[![GitHub Stars](https://img.shields.io/github/stars/naidrahiqa/CastoriceKernelSUN?style=for-the-badge&logo=github&color=yellow)](https://github.com/naidrahiqa/CastoriceKernelSUN/stargazers)
+[![GitHub Release](https://img.shields.io/github/v/release/naidrahiqa/epitaph_kernel?style=for-the-badge&logo=github&color=6a0dad)](https://github.com/naidrahiqa/epitaph_kernel/releases/latest)
+[![GitHub Downloads](https://img.shields.io/github/downloads/naidrahiqa/epitaph_kernel/total?style=for-the-badge&logo=github&color=3a0066)](https://github.com/naidrahiqa/epitaph_kernel/releases)
+[![GitHub Stars](https://img.shields.io/github/stars/naidrahiqa/epitaph_kernel?style=for-the-badge&logo=github&color=ffd700)](https://github.com/naidrahiqa/epitaph_kernel/stargazers)
 
-![Android](https://img.shields.io/badge/Android-15-3DDC84?style=flat-square&logo=android)
-![Xiaomi](https://img.shields.io/badge/Device-Redmi%2012%20(fire)-FF6900?style=flat-square&logo=xiaomi)
-![Chipset](https://img.shields.io/badge/Chipset-MT6768-orange?style=flat-square)
+![Android Version](https://img.shields.io/badge/OS-Android%2015%20(HyperOS%202)-3DDC84?style=flat-square&logo=android&logoColor=white)
+![Target Device](https://img.shields.io/badge/Device-Redmi%2012%20(fire)-FF6900?style=flat-square&logo=xiaomi&logoColor=white)
+![Soc Chipset](https://img.shields.io/badge/Chipset-MediaTek%20MT6768%20(G88)-009688?style=flat-square&logo=cpu)
+![Build Engine](https://img.shields.io/badge/Compiler-Kleaf%20/%20Bazel-blue?style=flat-square&logo=google)
 
 </div>
 
 ---
 
-## 👋 Halo!
+## ⚡ Overview
 
-Ini adalah **Castorice Kernel** - kernel custom GKI 6.6 yang gw bikin khusus buat Redmi 12 (fire) dengan fokus ke **gaming performance**, **stabilitas**, dan **root flexibility**. 
+Welcome to **Epitaph Kernel**, a meticulously engineered Generic Kernel Image (GKI 6.6) designed exclusively for the **Redmi 12 (fire)** running **HyperOS 2 (Android 15)**. 
 
-Kenapa bikin ini? Karena gw pengen kernel yang:
-- ⚡ **Cepet** buat gaming (HZ_1000, full preempt)
-- 🎮 **Smooth** tanpa lag (optimized scheduler & TCP BBR)
-- 🛡️ **Flexible** root options (4 KernelSU variants!)
-- 🔒 **Aman** dari deteksi (SUSFS optional)
-- 🔧 **Customizable** (ganti governor on-the-fly)
+Epitaph represents the pinnacle of MediaTek MT6768 performance tuning, striking a perfect equilibrium between extreme gaming capabilities, lightning-fast scheduling latency, modern memory architecture, and robust root/anti-detection features.
 
-> ⚠️ **PERHATIAN:** Kernel ini **HANYA MENDUKUNG HyperOS 2 (Android 15)** dengan arsitektur GKI 6.6. Jangan di-flash di MIUI 14 atau HyperOS 1 (Android 13/14) karena akan menyebabkan Bootloop!
+> [!WARNING]
+> **COMPATIBILITY REQUIREMENT:** This kernel is built strictly for **HyperOS 2 based on Android 15 (GKI 6.6 architecture)**. Flashing this kernel on MIUI 14 or HyperOS 1 (Android 13/14) will result in an immediate bootloop!
 
 ---
 
-## 🎯 Pilih Kernel yang Cocok Buat Lo
+## 🚀 Key Features
 
-### 🛡️ Step 1: Butuh SUSFS Ga?
+### 🎮 Gaming & Low-Latency Optimizations
+*   **HZ_1000 Timer:** Minimal latency and maximum input accuracy with a 1000Hz tick rate.
+*   **Full PREEMPT (Real-time Preemption):** Higher frame consistency and reduced micro-stutters by allowing execution preemption anywhere in the kernel.
+*   **HRTIMER:** Precision high-resolution timing for smooth frame intervals.
 
-**SUSFS** itu buat nge-hide root dari app yang detect root (banking apps, game anti-cheat, dll).
+### 🧠 Modern Memory Architecture
+*   **LRU-Gen (MGLRU):** Highly optimized Multi-Generational Least Recently Used memory reclamation policy.
+*   **LZ4 / ZSTD ZRAM:** Ultra-fast RAM compression engine providing instant decompression speeds.
+*   **Kernel Samepage Merging (KSM):** Intelligently merges redundant memory pages to maximize free RAM.
 
-- ✅ **Pake SUSFS** kalo lo main game competitive atau pake banking apps
-- ❌ **Skip SUSFS** kalo cuma buat daily driver biasa
-
-### 🔑 Step 2: Pilih Root Method
-
-Gw support 4 root method, pilih sesuai kebutuhan:
-
-| Root Method | Cocok Buat | Status |
-|:------------|:-----------|:-------|
-| **KernelSU-Next** | Pengguna umum (paling stabil) | ⭐ Recommended |
-
-### ⚙️ Step 3: Pilih CPU Governor
-
-Governor itu ngatur gimana CPU lo kerja:
-
-| Governor | Kapan Pake | Battery | Performance |
-|:---------|:-----------|:--------|:------------|
-| **schedutil** | Daily driver | ⚡⚡⚡ | 🎮🎮🎮 |
-| **performance** | Gaming hardcore | ⚡ | 🎮🎮🎮🎮🎮 |
-| **ondemand** | Balanced | ⚡⚡⚡⚡ | 🎮🎮 |
-| **conservative** | Battery saver | ⚡⚡⚡⚡⚡ | 🎮 |
-
-> 💡 **Pro Tip:** Lo bisa ganti governor kapan aja pake kernel tuner app!
+### 🌐 Network & I/O Optimizations
+*   **TCP BBR Congestion Control:** Developed by Google, ensuring minimal network ping fluctuations and ultra-smooth packet handling.
+*   **FQ (Fair Queueing) Packet Scheduler:** Drastically reduces bufferbloat during intensive multiplayer gaming sessions.
+*   **BFQ I/O Scheduler:** Tailored scheduler optimizations to improve read/write latency on eMMC/UFS storage.
 
 ---
 
-## 📥 Cara Install (Gampang Kok!)
+## 🎯 Variant Matrix (Pilih Sesuai Kebutuhan)
 
-### 🔽 Download Dulu
+### 🛡️ 1. Anti-Detection (SUSFS)
+*   **With SUSFS:** Integrated kernel-level hooks to completely hide root, custom mounts, and system modifications from banking apps and aggressive anti-cheats (e.g. Google Play Integrity, major competitive games).
+*   **No SUSFS:** Pure standard kernel layout for everyday tasks.
 
-1. Ke [**Releases Page**](../../releases/latest)
-2. Download file zip AnyKernel3 yang sesuai, contoh nama file:
-   ```
-   Castorice-Gaming-v45-GKI66-KSUNext-SUSFS-Performance-balanced-stable-Bazel-Redmi12.zip
-   ```
-   
-### 📲 Flash Kernel (Wajib Unlock Bootloader)
+### 🔑 2. Advanced Root Solutions
+*   **KernelSU-Next:** Next-generation kernel-integrated root solution with premium modules mounting, extreme stability, and active updates.
 
-**Persiapan VBMeta (Hanya dilakukan sekali untuk bypass proteksi):**
-Boot ke mode Fastboot, lalu jalankan:
+### ⚙️ 3. CPU Governors
+*   **schedutil:** Power-aware default governor tailored for general daily usage with dynamic performance scaling.
+*   **performance:** Hardcore gaming profile forcing CPU cores to remain at maximum frequencies.
+*   **ondemand / conservative:** Balanced and battery-saving alternatives.
+
+---
+
+## 📥 Clean Installation Guide
+
+### 1. Bypass Verification (Fastboot Mode)
+Before flashing the custom kernel for the first time, you must unlock and disable verity checks on your partition layouts. 
+Boot into **Fastboot Mode** and execute:
 ```bash
 fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img
 fastboot --disable-verity --disable-verification flash vbmeta_system vbmeta_system.img
 fastboot --disable-verity --disable-verification flash vbmeta_vendor vbmeta_vendor.img
 ```
-*(File img di atas diekstrak dari ROM HyperOS 2 Fastboot).*
+> [!NOTE]
+> You must extract the corresponding `.img` files from your device's exact stock HyperOS 2 Fastboot ROM.
 
-**Cara Flash (Pake Kernel Flasher App):**
-1. Install [Kernel Flasher](https://github.com/capntrips/KernelFlasher/releases) dari GitHub.
-2. Buka app, pilih file zip kernel yang udah lo download.
-3. Flash → Reboot.
-4. Done! ✅
+### 2. Flashing the Kernel
+> [!IMPORTANT]
+> Because custom recovery (TWRP/OrangeFox) has hardware rendering limitations on Redmi 12 (fire) under Android 15, we strictly recommend using **Kernel Flasher**.
 
-> ⚠️ **Note:** Redmi 12 (fire) saat ini sulit menggunakan custom recovery untuk HyperOS 2 karena masalah kompatibilitas layar. Gunakan Kernel Flasher!
-
-### 📱 Install Manager App
-
-Setelah flash kernel, install manager app sesuai root method lo:
-
-- **KernelSU-Next:** [Download Manager](https://github.com/KernelSU-Next/KernelSU-Next/releases)
+1.  Download the desired zip from our [**Releases Page**](../../releases/latest) (e.g., `Epitaph-Epitaph-v45-GKI66-KSUNext-SUSFS-Performance-balanced-stable-Bazel-Redmi12.zip`).
+2.  Install [Kernel Flasher Manager](https://github.com/capntrips/KernelFlasher/releases) on your phone.
+3.  Open the application, select the downloaded AnyKernel3 zip file.
+4.  Tap **Flash**, wait for the success screen, and reboot.
+5.  Install the [KernelSU-Next Manager App](https://github.com/KernelSU-Next/KernelSU-Next/releases) to manage root permissions.
 
 ---
 
-## 🎮 Fitur Gaming
+## 🛠️ Build Custom Variants (GKI Control Center)
 
-### ⚡ Low Latency
-- **HZ_1000:** Timer 1000Hz buat input lag minimal.
-- **Full PREEMPT:** Kernel bisa di-interrupt kapan aja = smoother.
-- **HRTIMER:** High-resolution timer buat frame timing presisi.
+Epitaph Kernel features an automated compile pipeline called **🎛️ GKI Control Center**. You don't need to configure compile trees manually. You can trigger a multi-architecture matrix build directly from GitHub!
 
-### 🧠 Memory Management
-- **LRU-Gen:** Multi-generational LRU (Native GKI).
-- **LZ4/ZSTD ZRAM:** Kompresi RAM super cepat.
-- **KSM:** Merge memory yang sama buat hemat RAM.
+1.  **Fork** this repository.
+2.  Navigate to your fork's **Actions** tab and select **🎛️ GKI Control Center**.
+3.  Click **Run workflow** and choose your custom combinations:
+    *   **Root Methods:** Select `KernelSU-Next`.
+    *   **SUSFS Integration:** Choose whether to patch `SUSFS` or build vanilla GKI.
+    *   **Toolchain Compilation:** Build with Bazel, ZyClang, WeebX, Neutron, Azure, or AOSP Clang.
+    *   **Custom Name & Author:** Define your own branding tags (Defaults to `Epitaph` by `Naidrahiqa`).
 
-### 🌐 Network & I/O
-- **TCP BBR:** Congestion control modern dari Google untuk ping stabil.
-- **BFQ I/O Scheduler:** Optimized I/O untuk memori eMMC/UFS.
-
----
-
-## 🛠️ Build Sendiri (Advanced)
-
-Kini jauh lebih gampang dengan **🎛️ GKI Control Center**! Lo ga perlu lagi jalanin workflow satu-satu. Cukup pake satu "Manager" buat bikin semua varian sekaligus.
-
-1. **Fork** repo ini.
-2. Masuk ke tab **Actions**.
-3. Pilih workflow: **🎛️ GKI Control Center**.
-4. Klik **Run workflow**.
-5. Pilih kombinasi yang lo mau (Matrix Build):
-   - **Root Methods:** Checkbox KernelSU-Next.
-   - **SUSFS Variant:** Pilih mau yang murni atau +SUSFS.
-   - **Toolchains:** Pilih satu atau **semua sekaligus** (Bazel, ZyClang, WeebX, Neutron, Azure, AOSP).
-   - **Governors:** Masukin list (e.g. `schedutil,performance`).
-
-### 🔨 Toolchain Options
-
-Sekarang mendukung lebih banyak toolchain dengan sistem **Smart Extraction** (Otomatis deteksi struktur archive):
-
-| Toolchain | Keterangan | Status |
-|:----------|:-----------|:-------|
-| **Bazel** | Google's official GKI toolchain | 💎 Ultra Stable |
-| **ZyClang** | Balanced gaming performance | 🚀 Fast |
-| **WeebX Clang**| Aggressive optimization | 🔥 Hot |
-| **Neutron Clang**| Stability & LLVM focus | 🛡️ Modern |
-| **Azure Clang** | Extreme compatibility (RELR fix) | 🛠️ Updated |
-| **AOSP Latest** | Cleanest build environment | 📎 Stock |
+### 🔨 Supported Toolchains
+*   **Bazel (Kleaf):** Official Google GKI compilation standard. Extremely robust and reliable.
+*   **ZyClang / WeebX:** Custom Clang setups optimized with aggressive performance flags for high-end CPU workloads.
+*   **Neutron / Azure:** Modern LLVM compilers focusing on binary reduction, RELR relocations, and execution efficiency.
 
 ---
 
-## 🚀 Technical Improvements (Terbaru!)
+## 🦾 Technical Development & Bug Fixes
 
-Gw udah benerin beberapa isu krusial biar build-nya makin solid:
-- 🧠 **Smart Toolchain Extract:** Build script sekarang pinter, bisa bedain archive "flat" (ZyClang) vs "nested" otomatis. No more "Clang not found" error!
-- 🔗 **RELR / .relr.dyn Fix:** Host tools sekarang dipaksa pake system linker (`/usr/bin/ld`) biar ga bentrok sama glibc Ubuntu terbaru.
-- 🧱 **Bazel Symlink Fix:** Driver KernelSU sekarang di-copy (bukan symlink) saat build Bazel biar semua symbol (`ksu_handle_*`) ke-compile sempurna.
-- 🛡️ **Hunk Detection:** Verifikasi otomatis buat SUSFS patch, kalo ada yang gagal (hunk rejected) langsung ketauan di logs.
-
----
-
-## 📊 Build Status
-
-| Workflow | Status |
-|:---------|:-------|
-| **🎛️ GKI Control Center** | [![GKI Control Center](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_manager_gki.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/build_manager_gki.yml) |
-| **⚙️ Core Build Engine** | [![Core Build](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/_build_kernel_core.yml/badge.svg)](https://github.com/naidrahiqa/CastoriceKernelSUN/actions/workflows/_build_kernel_core.yml) |
+We have solved critical GKI constraints to guarantee full compatibility on Android 15 HyperOS 2:
+*   **SELinux / LSM Signature Bypass:** Compiled with `CONFIG_MODULE_SIG_PROTECT=n` to allow successful manual and boot-time `insmod` execution of GKI modules (like `cfg80211.ko` and `mac80211.ko`) from system folders.
+*   **Resolved Module Dependency Chains:** The startup sequence automatically handles the loading dependencies (`rfkill` $\rightarrow$ `libarc4` $\rightarrow$ `cfg80211` $\rightarrow$ `mac80211`) to prevent missing symbols.
+*   **Smart Archive Extractor:** The build pipeline automatically detects and processes both "flat" and "nested" toolchain archives, avoiding "Clang not found" interruptions.
+*   **Host Linker Fix:** Enforces system-level GNU linkers on dynamic hosts to avoid relocation blocks (`.relr.dyn`) on modern Glibc runtimes.
 
 ---
 
-## 📋 Compatibility & Features
+## 📊 Pipeline Status
 
-| Feature | GKI 6.6 | Notes |
-|:--------|:-------:|:------|
-| **OS Support** |
-| HyperOS 2 (A15) | ✅ | Mendukung Penuh |
-| HyperOS 1 (A14) | ❌ | Tidak Didukung |
-| MIUI 14 (A13) | ❌ | Tidak Didukung |
-| **Root Methods** |
-| KernelSU-Next | ✅ | Recommended |
-| **Tech Specs** |
-| Bypass KMI Strict | ✅ | Kompatibel dengan modul vendor bawaan |
-| OEM Hash Locked | ✅ | Anti bootloop karena mismatch base version |
-| SUSFS | ✅ | Optional Toggle |
+| Automated Pipeline | Compilation Status |
+|:-------------------|:------------------:|
+| **🎛️ GKI Control Center** | [![GKI Control Center](https://github.com/naidrahiqa/epitaph_kernel/actions/workflows/build_manager_gki.yml/badge.svg)](https://github.com/naidrahiqa/epitaph_kernel/actions/workflows/build_manager_gki.yml) |
+| **⚙️ Core Build Engine** | [![Core Build](https://github.com/naidrahiqa/epitaph_kernel/actions/workflows/_build_kernel_core.yml/badge.svg)](https://github.com/naidrahiqa/epitaph_kernel/actions/workflows/_build_kernel_core.yml) |
 
 ---
 
-## 🐛 Known Issues & Solutions
+## 💖 Acknowledgements
 
-### ❌ Bootloop setelah flash
-**Penyebab:** Belum unlock vbmeta atau beda versi Android.
-**Solusi:** Pastikan kamu di HyperOS 2 dan sudah flash vbmeta ori dengan perintah `--disable-verity`.
-
-### ❌ Banking app detect root
-**Penyebab:** SUSFS belum dikonfigurasi.
-**Solusi:** 
-1. Flash varian kernel yang ada SUSFS-nya.
-2. Gunakan Manager App untuk mengaktifkan hide root.
+Epitaph Kernel is built on top of the incredible open-source work by:
+*   **[KernelSU-Next Team](https://github.com/KernelSU-Next/KernelSU-Next):** Next-gen kernel root.
+*   **[simonpunk](https://gitlab.com/simonpunk/susfs4ksu):** SUSFS security and anti-detection.
+*   **[osm0sis](https://github.com/osm0sis/AnyKernel3):** Premium Android ramdisk installer.
+*   **[Google: Android Common Kernels](https://android.googlesource.com/kernel/manifest):** Base GKI platform code.
 
 ---
-
-## 💖 Credits
-
-Kernel ini ga mungkin ada tanpa bantuan dari:
-- **[KernelSU-Next Team](https://github.com/KernelSU-Next/KernelSU-Next)** - Next-gen kernel root
-- **[simonpunk](https://gitlab.com/simonpunk/susfs4ksu)** - SUSFS magic
-- **[osm0sis](https://github.com/osm0sis/AnyKernel3)** - AnyKernel3 flasher
-- **[Google](https://android.googlesource.com/kernel/manifest)** - Android Common Kernel Source
 
 <div align="center">
 
-### 🎮 Built for Gamers, by Gamers
-**Kalo lo suka kernel ini, kasih ⭐ dong!**
-Made with ❤️ and ☕ for Redmi 12 (fire) Community
+### 🎮 Engineered for Performance. Tailored for Gamers.
+**If you enjoy this kernel, show some love by leaving a ⭐ on this repository!**  
+Developed with ❤️ by **Naidrahiqa** for the Redmi 12 (fire) Community.
 
 </div>
