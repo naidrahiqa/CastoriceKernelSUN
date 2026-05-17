@@ -797,43 +797,45 @@ jobs:
 
           if [ -f "BUILD.bazel" ]; then
             python3 -c '
-import os, re
-if os.path.exists("BUILD.bazel"):
-    with open("BUILD.bazel") as f:
-        content = f.read()
+          import textwrap
+          exec(textwrap.dedent(r"""
+              import os, re
+              if os.path.exists("BUILD.bazel"):
+                  with open("BUILD.bazel") as f:
+                      content = f.read()
 
-    content = re.sub(r".*check_defconfig.*", "", content)
+                  content = re.sub(r".*check_defconfig.*", "", content)
 
-    m = re.search(r"name\s*=\s*[\"\']kernel_aarch64[\"\']", content)
-    if m:
-        name_idx = m.start()
-        start_idx = content.rfind("kernel_build", 0, name_idx)
-        if start_idx != -1:
-            d = 0
-            end_idx = -1
-            for i in range(start_idx, len(content)):
-                if content[i] == "(":
-                    d += 1
-                elif content[i] == ")":
-                    d -= 1
-                    if d == 0:
-                        end_idx = i
-                        break
-            if end_idx != -1:
-                target_block = content[start_idx:end_idx]
-                target_block = re.sub(r"\s*kmi_symbol_list_strict_mode\s*=\s*(True|False|[^,\n]*),?", "", target_block)
-                target_block = re.sub(r"\s*trim_nonlisted_kmi\s*=\s*(True|False|[^,\n]*),?", "", target_block)
-                target_block = re.sub(r"\s*kmi_symbol_list\s*=\s*[\"\'][^\"\']*[\"\'],?", "", target_block)
-                
-                inject_str = "\n    kmi_symbol_list_strict_mode = False,\n    trim_nonlisted_kmi = False,"
-                target_block = re.sub(r"(name\s*=\s*[\"\']kernel_aarch64[\"\'],?)", r"\1" + inject_str, target_block)
-                
-                content = content[:start_idx] + target_block + content[end_idx:]
-                print("✅ BUILD.bazel kernel_aarch64 target patched successfully via Python!")
+                  m = re.search(r"name\s*=\s*[\"\']kernel_aarch64[\"\']", content)
+                  if m:
+                      name_idx = m.start()
+                      start_idx = content.rfind("kernel_build", 0, name_idx)
+                      if start_idx != -1:
+                          d = 0
+                          end_idx = -1
+                          for i in range(start_idx, len(content)):
+                              if content[i] == "(":
+                                  d += 1
+                              elif content[i] == ")":
+                                  d -= 1
+                                  if d == 0:
+                                      end_idx = i
+                                      break
+                          if end_idx != -1:
+                              target_block = content[start_idx:end_idx]
+                              target_block = re.sub(r"\s*kmi_symbol_list_strict_mode\s*=\s*(True|False|[^,\n]*),?", "", target_block)
+                              target_block = re.sub(r"\s*trim_nonlisted_kmi\s*=\s*(True|False|[^,\n]*),?", "", target_block)
+                              target_block = re.sub(r"\s*kmi_symbol_list\s*=\s*[\"\'][^\"\']*[\"\'],?", "", target_block)
+                              
+                              inject_str = "\n    kmi_symbol_list_strict_mode = False,\n    trim_nonlisted_kmi = False,"
+                              target_block = re.sub(r"(name\s*=\s*[\"\']kernel_aarch64[\"\'],?)", r"\1" + inject_str, target_block)
+                              
+                              content = content[:start_idx] + target_block + content[end_idx:]
+                              print("✅ BUILD.bazel kernel_aarch64 target patched successfully via Python!")
 
-    with open("BUILD.bazel", "w") as f:
-        f.write(content)
-'
+                  with open("BUILD.bazel", "w") as f:
+                      f.write(content)
+          """))'
             git add BUILD.bazel 2>/dev/null || true
             echo "✅ Build system patched and added to git"
           fi
