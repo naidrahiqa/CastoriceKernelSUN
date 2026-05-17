@@ -1116,29 +1116,27 @@ jobs:
           # ─── PERSISTENT WIFI FALLBACK LOADER ────────────────────────
           # If systemless mount fails under HyperOS 2.0/Android 15, we write
           # a persistent post-boot service.d script via KernelSU/Magisk to insmod them.
-          cat << 'EOF' >> anykernel.sh
-
-# Fallback persistent WiFi module loader via KernelSU/Magisk
-if [ -d /data/adb/service.d ]; then
-  ui_print "  • Setting up persistent KernelSU/Magisk WiFi fallback...";
-  mkdir -p /data/adb/wifi_fix;
-  cp -f modules/vendor/lib/modules/*.ko /data/adb/wifi_fix/;
-  chmod 644 /data/adb/wifi_fix/*.ko;
-  
-  cat << 'INNER_EOF' > /data/adb/service.d/load_wifi.sh
-#!/system/bin/sh
-# Wait for driver initialization subsystems
-sleep 2
-if ! lsmod | grep -q cfg80211; then
-  insmod /data/adb/wifi_fix/cfg80211.ko
-  insmod /data/adb/wifi_fix/mac80211.ko
-fi
-INNER_EOF
-  
-  chmod 755 /data/adb/service.d/load_wifi.sh;
-  ui_print "  • Persistent WiFi fallback configured successfully!";
-fi
-EOF
+          echo "" >> anykernel.sh
+          echo "# Fallback persistent WiFi module loader via KernelSU/Magisk" >> anykernel.sh
+          echo "if [ -d /data/adb/service.d ]; then" >> anykernel.sh
+          echo "  ui_print \"  • Setting up persistent KernelSU/Magisk WiFi fallback...\";" >> anykernel.sh
+          echo "  mkdir -p /data/adb/wifi_fix;" >> anykernel.sh
+          echo "  cp -f modules/vendor/lib/modules/*.ko /data/adb/wifi_fix/;" >> anykernel.sh
+          echo "  chmod 644 /data/adb/wifi_fix/*.ko;" >> anykernel.sh
+          echo "  " >> anykernel.sh
+          echo "  cat << 'INNER_EOF' > /data/adb/service.d/load_wifi.sh" >> anykernel.sh
+          echo "#!/system/bin/sh" >> anykernel.sh
+          echo "# Wait for driver initialization subsystems" >> anykernel.sh
+          echo "sleep 2" >> anykernel.sh
+          echo "if ! lsmod | grep -q cfg80211; then" >> anykernel.sh
+          echo "  insmod /data/adb/wifi_fix/cfg80211.ko" >> anykernel.sh
+          echo "  insmod /data/adb/wifi_fix/mac80211.ko" >> anykernel.sh
+          echo "fi" >> anykernel.sh
+          echo "INNER_EOF" >> anykernel.sh
+          echo "  " >> anykernel.sh
+          echo "  chmod 755 /data/adb/service.d/load_wifi.sh;" >> anykernel.sh
+          echo "  ui_print \"  • Persistent WiFi fallback configured successfully!\";" >> anykernel.sh
+          echo "fi" >> anykernel.sh
           # ─── END PERSISTENT WIFI FALLBACK LOADER ────────────────────
 
           SELECTED_IMG=""
