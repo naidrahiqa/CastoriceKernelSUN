@@ -1,8 +1,18 @@
+<div align="center">
+
 # Epitaph Kernel
 
 Epitaph Kernel adalah proyek pengembangan kernel kustom berbasis Generic Kernel Image (GKI 6.6) yang dirancang khusus untuk perangkat **Redmi 12 (fire)** yang menjalankan **HyperOS 2.0 (Android 15)**.
 
+[![GitHub Stars](https://img.shields.io/github/stars/naidrahiqa/epitaph_kernel?style=for-the-badge&logo=github&color=yellow)](https://github.com/naidrahiqa/epitaph_kernel/stargazers)
+
+![Android](https://img.shields.io/badge/Android-15-3DDC84?style=flat-square&logo=android)
+![Xiaomi](https://img.shields.io/badge/Device-Redmi%2012%20(fire)-FF6900?style=flat-square&logo=xiaomi)
+![Chipset](https://img.shields.io/badge/Chipset-MT6768-orange?style=flat-square)
+
 Proyek ini bertujuan untuk menyediakan build kernel yang stabil dengan integrasi solusi root modern dan fitur keamanan tingkat kernel, dengan tetap mempertahankan kompatibilitas penuh terhadap modul vendor bawaan.
+
+</div>
 
 ---
 
