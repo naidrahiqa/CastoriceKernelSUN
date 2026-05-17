@@ -804,39 +804,82 @@ jobs:
             # yang butuh download binary + rentan silent failure).
             # Python3 pre-installed di GitHub runner, gak perlu download apa-apa.
             python3 -c 'if 1:
-                import os
-                p = "BUILD.bazel"
-                if not os.path.exists(p):
-                    exit()
-                with open(p) as f:
-                    t = f.read()
-                m = ["net/wireless/cfg80211.ko", "net/mac80211/mac80211.ko"]
-                if any(x in t for x in m):
-                    exit()
-                need = "".join(f"    \"{x}\",\n" for x in m)
+                import os, re
                 
-                # Cari blok kernel_aarch64 agar tidak salah modify target lain
-                target_str = "name = \"kernel_aarch64\","
-                idx = t.find(target_str)
-                if idx == -1:
-                    # Coba cari dengan single quote
-                    idx = t.find("name = '\''kernel_aarch64'\'',")
-                
-                if idx != -1:
-                    idx_mod = t.find("module_outs = [", idx)
-                    if idx_mod != -1:
-                        t = t[:idx_mod] + "module_outs = [\n" + need + t[idx_mod+15:]
-                        with open(p, "w") as f:
-                            f.write(t)
-                        print("Added module_outs to kernel_aarch64")
+                # Step 1: Patch modules.bzl (standard for GKI 6.6 and lower)
+                bzl = "modules.bzl"
+                patched_bzl = False
+                if os.path.exists(bzl):
+                    with open(bzl, "r") as f:
+                        content = f.read()
+                    
+                    # Search for _COMMON_GKI_MODULES_LIST = [ ... ]
+                    match = re.search(r"(_COMMON_GKI_MODULES_LIST\s*=\s*\[)(.*?)(\])", content, re.DOTALL)
+                    if match:
+                        header = match.group(1)
+                        items_str = match.group(2)
+                        footer = match.group(3)
+                        
+                        items = []
+                        for line in items_str.split("\n"):
+                            line = line.strip()
+                            if not line:
+                                continue
+                            m_str = re.search(r"[\"\'](.*?)[\"\']", line)
+                            if m_str:
+                                items.append(m_str.group(1))
+                        
+                        new_items = ["net/wireless/cfg80211.ko", "net/mac80211/mac80211.ko"]
+                        added = False
+                        for item in new_items:
+                            if item not in items:
+                                items.append(item)
+                                added = True
+                        
+                        if added:
+                            items.sort()
+                            formatted_items = "\n" + "\n".join(f"    \"{x}\"," for x in items) + "\n"
+                            new_list_str = header + formatted_items + footer
+                            content = content.replace(match.group(0), new_list_str)
+                            with open(bzl, "w") as f:
+                                f.write(content)
+                            print("✅ Successfully patched modules.bzl with sorted WiFi modules!")
+                            patched_bzl = True
+                        else:
+                            print("ℹ️ WiFi modules already present in modules.bzl")
+                            patched_bzl = True
                     else:
-                        print("WARNING: module_outs not found after kernel_aarch64!")
-                else:
-                    print("WARNING: kernel_aarch64 target not found!")
+                        print("⚠️ Could not find _COMMON_GKI_MODULES_LIST in modules.bzl")
+                
+                # Step 2: Fallback to BUILD.bazel if modules.bzl patch was not successful
+                if not patched_bzl:
+                    p = "BUILD.bazel"
+                    if os.path.exists(p):
+                        with open(p) as f:
+                            t = f.read()
+                        m = ["net/wireless/cfg80211.ko", "net/mac80211/mac80211.ko"]
+                        if not any(x in t for x in m):
+                            need = "".join(f"    \"{x}\",\n" for x in m)
+                            target_str = "name = \"kernel_aarch64\","
+                            idx = t.find(target_str)
+                            if idx == -1:
+                                idx = t.find("name = '\''kernel_aarch64'\'',")
+                            
+                            if idx != -1:
+                                idx_mod = t.find("module_outs = [", idx)
+                                if idx_mod != -1:
+                                    t = t[:idx_mod] + "module_outs = [\n" + need + t[idx_mod+15:]
+                                    with open(p, "w") as f:
+                                        f.write(t)
+                                    print("✅ Patched BUILD.bazel as fallback!")
+                                else:
+                                    print("⚠️ module_outs not found in BUILD.bazel")
+                            else:
+                                print("⚠️ kernel_aarch64 target not found in BUILD.bazel")
             '
 
-            git add BUILD.bazel
-            echo "✅ BUILD.bazel patched and added to git"
+            git add BUILD.bazel modules.bzl 2>/dev/null || true
+            echo "✅ Build system patched and added to git"
           fi
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
