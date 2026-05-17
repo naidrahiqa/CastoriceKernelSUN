@@ -37,6 +37,8 @@
 
 ## 🛠️ Perbaikan Aktif (Build v72+)
 * **Pendaftaran Modul WiFi Bazel (cfg80211/mac80211)**: Menerapkan skrip parser Python 3 inline terintegrasi yang tangguh untuk memodifikasi `modules.bzl` (mendukung tanda kutip tunggal/ganda secara aman) serta membedah blok `kernel_build` untuk target `kernel_aarch64` pada `BUILD.bazel` guna menyuntikkan/menggabungkan berkas `.ko` ke dalam atribut `module_outs` secara absolut.
+* **Perbaikan Versi KernelSU-Next (Kbuild Fallback)**: Mengganti skrip sed lawas dengan parser Python 3 di dalam alur kerja CI/CD untuk menulis ulang variabel `KSU_GIT_VERSION`, `KSU_VERSION`, dan `KSU_VERSION_TAG` langsung di dalam berkas `Kbuild` secara absolut. Hal ini melompati peringatan Git dan mencegah versi KernelSU-Next turun ke nilai fallback `1` saat dikompilasi di dalam *sandbox* Bazel yang hermetis.
+* **Penguncian Nama Kernel & Author**: Menghapus opsi input dinamis pada menu pembuat alur kerja (`build_manager_gki.yml`) dan menguncinya secara mutlak ke `"Epitaph"` dan `"Naidrahiqa"` untuk menghindari modifikasi identitas kernel oleh pengguna luar.
 * **Subsistem Hotspot**: Penambahan konfigurasi Netfilter NAT (`CONFIG_NF_NAT`, `CONFIG_IP_NF_NAT`, dan `CONFIG_NETFILTER_XT_TARGET_MASQUERADE`).
 * **Branding Identitas**: Penulisan stempel versi lokal secara terpusat pada defconfig.
 * **Kebersihan Alur Kerja**: Penghapusan dukungan server kompilasi Azure yang tidak terpakai dari berkas workflow guna mereduksi waktu eksekusi CI/CD.
@@ -60,4 +62,4 @@ Jika HP berhasil booting namun ada komponen yang tidak berjalan, tarik log aktif
 * **Analisis Modul KernelSU**: `adb shell "su -c dmesg" | grep -i "KSU"`
 
 ---
-*Terakhir Diperbarui: 2026-05-17 18:27 (WIB)*
+*Terakhir Diperbarui: 2026-05-17 19:00 (WIB)*

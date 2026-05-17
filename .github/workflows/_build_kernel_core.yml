@@ -379,28 +379,49 @@ jobs:
             # kita buat file header ksu_version.h untuk memaksa nilai versi KSU riil yang telah dihitung sebelumnya.
             KBUILD_FILE="common/drivers/kernelsu/Kbuild"
             if [ -f "$KBUILD_FILE" ]; then
-              # Hapus sisa injeksi dari eksekusi build sebelumnya jika ada
+              # Hapus sisa injeksi lama jika ada
               sed -i '/# Injected by CI/d' "$KBUILD_FILE"
               sed -i '/ccflags-y += -UKSU_VERSION/d' "$KBUILD_FILE"
 
-              # Ganti nilai git rev-list dengan hasil hitungan manual kita (menghindari error Kbuild)
-              sed -i "s#\$(shell git rev-list --count HEAD 2>/dev/null || echo 0)#${GIT_COUNT}#g" "$KBUILD_FILE"
-              sed -i "s#\$(shell git rev-list --count HEAD)#${GIT_COUNT}#g" "$KBUILD_FILE"
+              # Gunakan Python untuk memodifikasi variabel versi di dalam Kbuild secara absolut
+              python3 -c '
+              import os, re
+              kbuild = "'"${KBUILD_FILE}"'"
+              git_count = "'"${GIT_COUNT}"'"
+              ksu_version = "'"${KSU_VERSION}"'"
+              ksu_tag = "'"${KSU_TAG}"'"
 
-              # Ganti pula hasil pembacaan git tag
-              sed -i "s#\$(shell git describe --abbrev=0 --tags 2>/dev/null || echo \"v\$(KSU_VERSION)\")#\"${KSU_TAG}\"#g" "$KBUILD_FILE"
-              sed -i "s#\$(shell git describe --abbrev=0 --tags)#\"${KSU_TAG}\"#g" "$KBUILD_FILE"
+              if os.path.exists(kbuild):
+                  with open(kbuild, "r") as f:
+                      content = f.read()
 
-              # Tulis header ksu_version.h yang akan menimpa seluruh parameter kompilasi
+                  # Ganti pemanggilan shell git untuk git rev-list dengan nilai numerik statis hasil hitungan CI
+                  content = re.sub(r"KSU_GIT_VERSION\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_GIT_VERSION := {git_count}", content)
+                  content = re.sub(r"KSU_VERSION\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_VERSION := {ksu_version}", content)
+                  
+                  # Ganti pula pemanggilan shell git untuk pembacaan tag ksu
+                  content = re.sub(r"KSU_(VERSION_|GIT_)?TAG\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_VERSION_TAG := \"{ksu_tag}\"", content)
+                  content = re.sub(r"KSU_GIT_TAG\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_GIT_TAG := \"{ksu_tag}\"", content)
+
+                  # Hapus pesan peringatan (warnings) tentang repositori git non-standar agar log bersih
+                  content = re.sub(r"\$\(warning\s+KSU_GIT_VERSION\s+not\s+defined[^\n]+\)", "", content)
+                  content = re.sub(r"\$\(warning\s+KSU_VERSION_TAG\s+not\s+defined[^\n]+\)", "", content)
+
+                  with open(kbuild, "w") as f:
+                      f.write(content)
+                  print("✅ Berhasil memodifikasi versi dan tag di dalam berkas Kbuild secara absolut!")
+              '
+
+              # Tulis header ksu_version.h yang akan menimpa seluruh parameter kompilasi (Double-layer protection)
               printf '#undef KSU_VERSION\n#define KSU_VERSION %s\n#undef KSU_VERSION_TAG\n#define KSU_VERSION_TAG "%s"\n' \
                 "${KSU_VERSION}" "${KSU_TAG}" > common/drivers/kernelsu/ksu_version.h
 
               # Sertakan file header versi di baris teratas Kbuild
               sed -i "1i ccflags-y += -Wno-macro-redefined -include \$(srctree)/drivers/kernelsu/ksu_version.h" "$KBUILD_FILE"
 
-              echo "✅ KSU_VERSION=${KSU_VERSION} enforced via ksu_version.h (overrides Bazel fallback)"
+              echo "✅ KSU_VERSION=${KSU_VERSION} dipaksakan via ksu_version.h dan Kbuild secara absolut!"
             else
-              echo "⚠️  Kbuild not found, version hardcoding skipped"
+              echo "⚠️  Berkas Kbuild tidak ditemukan, modifikasi versi dilewati."
             fi
 
             # Hubungkan driver KernelSU ke sistem kompilasi kernel utama (Makefile & Kconfig)

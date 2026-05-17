@@ -5,15 +5,17 @@
 
 ---
 
-## 🗑️ Komponen Input yang Dihapus dari Workflow
-Untuk mencegah kebingungan pengembang serta menjaga kerapian konfigurasi build, beberapa opsi masukan (inputs) yang bersifat redundan atau tidak stabil telah dihapus dari sistem dispatcher CI/CD:
+### 🗑️ Komponen Input yang Dihapus/Dikunci dari Workflow
+Untuk mencegah kebingungan pengembang, menjaga keaslian identitas kernel, serta menjaga kerapian konfigurasi build, beberapa opsi masukan (inputs) yang bersifat dinamis atau tidak stabil telah dihapus/dikunci dari sistem dispatcher CI/CD:
 
-| Nama Input | Alasan Penghapusan |
-| :--- | :--- |
-| `tuning_profile` | Profil performa kustom tidak diperlukan; manajemen penjadwalan CPU bawaan GKI (Schedutil) sudah sangat memadai. |
-| `safety_profile` | Pembatasan profil keamanan tidak relevan; konfigurasi bawaan kernel sudah dirancang aman secara default. |
-| `root_kernelsu_next` | Dihapus karena repositori ini kini secara penuh didedikasikan untuk menggunakan metode root **KernelSU-Next** demi stabilitas optimal. |
-| `tc_azure_latest` | Toolchain Azure Clang telah dihapus karena ketidakcocokan arsitektur pada Android 15. |
+| Nama Input | Status Akhir | Alasan Penguncian / Penghapusan |
+| :--- | :--- | :--- |
+| `custom_name` | **Dikunci Terhardcode** (`"Epitaph"`) | Dihapus dari UI input dan dikunci secara mutlak untuk menghindari pemalsuan atau pengubahan nama identitas kernel. |
+| `author_name` | **Dikunci Terhardcode** (`"Naidrahiqa"`) | Dihapus dari UI input dan dikunci secara mutlak guna menjamin hak kekayaan intelektual (copyright) pengembang. |
+| `tuning_profile` | Dihapus sepenuhnya | Profil performa kustom tidak diperlukan; manajemen penjadwalan CPU bawaan GKI (Schedutil) sudah sangat memadai. |
+| `safety_profile` | Dihapus sepenuhnya | Pembatasan profil keamanan tidak relevan; konfigurasi bawaan kernel sudah dirancang aman secara default. |
+| `root_kernelsu_next` | Dihapus sepenuhnya | Dihapus karena repositori ini kini secara penuh didedikasikan untuk menggunakan metode root **KernelSU-Next** demi stabilitas optimal. |
+| `tc_azure_latest` | Dihapus sepenuhnya | Toolchain Azure Clang telah dihapus karena ketidakcocokan arsitektur pada Android 15. |
 
 ---
 
@@ -23,8 +25,6 @@ Beberapa parameter konfigurasi penting tetap dipertahankan guna memberikan fleks
 | Nama Parameter | Nilai Default | Deskripsi Fungsional |
 | :--- | :--- | :--- |
 | `release_tag` | `v1.0` | Penanda versi rilis unik untuk arsip GitHub Release. |
-| `custom_name` | `Starter` | Label penamaan kustom kernel saat terdeteksi oleh Kernel Manager. |
-| `author_name` | `Naidrahiqa` | Nama identitas pengembang/pembuat kernel. |
 | `build_no_susfs` | `true` (Aktif) | Kompilasi kernel murni tanpa modul pelindung SUSFS. |
 | `build_susfs` | `false` (Nonaktif) | Kompilasi kernel lengkap dengan integrasi patch SUSFS. |
 | `cpu_governors` | `schedutil` | Governor manajemen frekuensi prosesor (sangat disarankan tetap menggunakan Schedutil). |
@@ -52,6 +52,7 @@ Berikut adalah ringkasan perbaikan teknis yang diterapkan pada subsistem kompila
 | **Pengurangan Loop Percobaan Build** | Batas percobaan kompilasi Bazel diturunkan menjadi **3 kali** dengan pengulangan dinamis. Kegagalan akibat jaringan saat mengunduh remote dependencies kini diatasi tanpa membuang waktu eksekusi runner secara berlebihan. |
 | **Transisi ke Skrip Python Inline** | Menghapus dependensi eksternal `buildozer` yang rawan gagal saat pemasangan. Pendaftaran modul WiFi kustom ke berkas `BUILD.bazel` kini diproses secara tangguh menggunakan skrip **Python 3 inline** bawaan runner. |
 | **Integrasi WiFi Bazel Absolut** | Menggunakan skrip Python 3 inline terintegrasi yang membedah berkas `modules.bzl` (mendukung tanda kutip tunggal/ganda) serta mengisolasi blok target `kernel_build` (`kernel_aarch64`) di dalam `BUILD.bazel` secara presisi. Skrip ini menjamin penyuntikan/penggabungan modul `cfg80211.ko` dan `mac80211.ko` ke dalam `module_outs` baik berupa list literal, ekspresi, atau belum ada sama sekali, sepenuhnya menuntaskan bug kompilasi nirkabel. |
+| **Perbaikan Kbuild KernelSU-Next** | Menerapkan parser Python 3 inline untuk menulis ulang variabel `KSU_GIT_VERSION`, `KSU_VERSION`, dan `KSU_VERSION_TAG`/`KSU_GIT_TAG` di dalam berkas `Kbuild` secara langsung. Ini mencegah pesan kesalahan Git dan menghindarkan versi KernelSU-Next terpaksa turun ke nilai fallback `1` di lingkungan sandbox Bazel yang terisolasi. |
 | **Pencatatan Riwayat Commit Kernel** | Hash identitas commit terakhir (`KERNEL_COMMIT`) kini secara otomatis direkam ke dalam `$GITHUB_ENV` tepat setelah proses sinkronisasi repositori selesai dilakukan. |
 
 > [!WARNING]
