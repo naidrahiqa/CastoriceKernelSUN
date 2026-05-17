@@ -796,12 +796,44 @@ jobs:
           cd kernel/common
 
           if [ -f "BUILD.bazel" ]; then
-            sed -i \
-              -e '/check_defconfig/d' \
-              -e 's/kmi_symbol_list_strict_mode = .*/kmi_symbol_list_strict_mode = False,/g' \
-              -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
-              BUILD.bazel
+            python3 -c '
+import os, re
+if os.path.exists("BUILD.bazel"):
+    with open("BUILD.bazel") as f:
+        content = f.read()
 
+    content = re.sub(r".*check_defconfig.*", "", content)
+
+    m = re.search(r"name\s*=\s*[\"\']kernel_aarch64[\"\']", content)
+    if m:
+        name_idx = m.start()
+        start_idx = content.rfind("kernel_build", 0, name_idx)
+        if start_idx != -1:
+            d = 0
+            end_idx = -1
+            for i in range(start_idx, len(content)):
+                if content[i] == "(":
+                    d += 1
+                elif content[i] == ")":
+                    d -= 1
+                    if d == 0:
+                        end_idx = i
+                        break
+            if end_idx != -1:
+                target_block = content[start_idx:end_idx]
+                target_block = re.sub(r"\s*kmi_symbol_list_strict_mode\s*=\s*(True|False|[^,\n]*),?", "", target_block)
+                target_block = re.sub(r"\s*trim_nonlisted_kmi\s*=\s*(True|False|[^,\n]*),?", "", target_block)
+                target_block = re.sub(r"\s*kmi_symbol_list\s*=\s*[\"\'][^\"\']*[\"\'],?", "", target_block)
+                
+                inject_str = "\n    kmi_symbol_list_strict_mode = False,\n    trim_nonlisted_kmi = False,"
+                target_block = re.sub(r"(name\s*=\s*[\"\']kernel_aarch64[\"\'],?)", r"\1" + inject_str, target_block)
+                
+                content = content[:start_idx] + target_block + content[end_idx:]
+                print("✅ BUILD.bazel kernel_aarch64 target patched successfully via Python!")
+
+    with open("BUILD.bazel", "w") as f:
+        f.write(content)
+'
             git add BUILD.bazel 2>/dev/null || true
             echo "✅ Build system patched and added to git"
           fi
@@ -889,13 +921,14 @@ jobs:
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
               sed -i '/check_defconfig/d' "$f"
+              sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' "$f"
+              sed -i '/TRIM_NONLISTED_KMI/d' "$f"
+              sed -i '/KMI_SYMBOL_LIST/d' "$f"
+              echo "KMI_SYMBOL_LIST_STRICT_MODE=false" >> "$f"
+              echo "TRIM_NONLISTED_KMI=false" >> "$f"
               git add "$f"
             fi
           done
-          if [ -f "build.config.gki.aarch64" ]; then
-            sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' build.config.gki.aarch64
-            git add build.config.gki.aarch64
-          fi
           # FIX: Bypass ABI symbol protection check (fails with custom patches)
           [ -f "../build/kernel/abi/check_buildtime_symbol_protection.py" ] \
             && perl -i -pe 's/^(\s*)return 1$/$1return 0/g' \
