@@ -839,7 +839,7 @@ jobs:
 
           # CRITICAL: Hapus .git folders yang tidak perlu untuk hemat disk space (Bazel butuh banyak)
           # Tapi jangan hapus .git di kernel/common karena Bazel/Kleaf butuh git state-nya.
-          cd $GITHUB_WORKSPACE
+          cd "$GITHUB_WORKSPACE"
           rm -rf kernel/KernelSU-Next/.git 2>/dev/null || true
           rm -rf kernel/susfs4ksu/.git 2>/dev/null || true
           rm -rf prebuilts/clang/host/linux-x86/*/.git 2>/dev/null || true
