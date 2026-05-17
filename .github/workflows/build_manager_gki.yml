@@ -8,44 +8,30 @@ on:
         required: true
         default: "v1.0"
 
-      # Pilihan varian SUSFS (apakah mau pakai bypass deteksi atau tidak)
-      build_no_susfs:
-        description: "☑️ Build GKI (No SUSFS)"
+      # Pilihan varian SUSFS
+      susfs_variant:
+        description: "🛡️ SUSFS Variant"
         required: true
-        type: boolean
-        default: true
-      build_susfs:
-        description: "☑️ Build GKI + SUSFS"
-        required: true
-        type: boolean
-        default: false
+        type: choice
+        default: "no-susfs"
+        options:
+          - "no-susfs"
+          - "susfs"
+          - "both"
 
       # Pilihan compiler (toolchain) yang didukung untuk kompilasi
-      tc_bazel_default:
-        description: "🛠️ Bazel (Default)"
+      toolchain:
+        description: "🛠️ Toolchain"
         required: true
-        type: boolean
-        default: true
-      tc_aosp_latest:
-        description: "🛠️ AOSP Latest"
-        required: true
-        type: boolean
-        default: false
-      tc_zyc_latest:
-        description: "🛠️ ZyCromerZ Latest"
-        required: true
-        type: boolean
-        default: false
-      tc_weebx_latest:
-        description: "🛠️ WeebX Latest"
-        required: true
-        type: boolean
-        default: false
-      tc_neutron_latest:
-        description: "🛠️ Neutron Latest"
-        required: true
-        type: boolean
-        default: false
+        type: choice
+        default: "bazel-default"
+        options:
+          - "bazel-default"
+          - "aosp-latest"
+          - "zyc-latest"
+          - "weebx-latest"
+          - "neutron-latest"
+          - "all"
 
 permissions:
   actions: write
@@ -73,18 +59,22 @@ jobs:
           # Governor CPU default kita kunci di schedutil karena paling stabil untuk penggunaan harian
           gov = "schedutil"
 
-          # Kumpulkan varian SUSFS berdasarkan checkbox yang dipilih oleh user
+          # Kumpulkan varian SUSFS berdasarkan choice dropdown yang dipilih oleh user
+          selected_susfs = "${{ inputs.susfs_variant }}"
           variants = []
-          if "${{ inputs.build_no_susfs }}" == "true": variants.append("false")
-          if "${{ inputs.build_susfs }}" == "true": variants.append("true")
+          if selected_susfs == "both":
+              variants = ["false", "true"]
+          elif selected_susfs == "susfs":
+              variants = ["true"]
+          else:
+              variants = ["false"]
 
-          # Kumpulkan semua compiler (toolchain) yang diaktifkan oleh user
-          toolchains = []
-          if "${{ inputs.tc_bazel_default }}" == "true": toolchains.append("bazel-default")
-          if "${{ inputs.tc_aosp_latest }}" == "true": toolchains.append("aosp-latest")
-          if "${{ inputs.tc_zyc_latest }}" == "true": toolchains.append("zyc-latest")
-          if "${{ inputs.tc_weebx_latest }}" == "true": toolchains.append("weebx-latest")
-          if "${{ inputs.tc_neutron_latest }}" == "true": toolchains.append("neutron-latest")
+          # Kumpulkan compiler (toolchain) berdasarkan choice dropdown yang dipilih oleh user
+          selected_tc = "${{ inputs.toolchain }}"
+          if selected_tc == "all":
+              toolchains = ["bazel-default", "aosp-latest", "zyc-latest", "weebx-latest", "neutron-latest"]
+          else:
+              toolchains = [selected_tc]
 
           if not variants:
               print("::error::No SUSFS variant selected!")
@@ -150,7 +140,8 @@ jobs:
           echo "| **Custom Name** | \`Epitaph\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Author** | \`Naidrahiqa\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Root** | \`KernelSU-Next\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Toolchain** | \`Multiple (Matrix)\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **SUSFS Variant** | \`${{ inputs.susfs_variant }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Toolchain** | \`${{ inputs.toolchain }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Total Builds** | \`${{ needs.prepare.outputs.total }}\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ All builds triggered. Check the **Actions** tab for individual progress." >> "$GITHUB_STEP_SUMMARY"

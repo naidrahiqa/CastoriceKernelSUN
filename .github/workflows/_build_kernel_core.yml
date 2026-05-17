@@ -384,34 +384,8 @@ jobs:
               sed -i '/ccflags-y += -UKSU_VERSION/d' "$KBUILD_FILE"
 
               # Gunakan Python untuk memodifikasi variabel versi di dalam Kbuild secara absolut
-              python3 -c '
-              import os, re, textwrap
-              exec(textwrap.dedent(r"""
-                  kbuild = "'"${KBUILD_FILE}"'"
-                  git_count = "'"${GIT_COUNT}"'"
-                  ksu_version = "'"${KSU_VERSION}"'"
-                  ksu_tag = "'"${KSU_TAG}"'"
-
-                  if os.path.exists(kbuild):
-                      with open(kbuild, "r") as f:
-                          content = f.read()
-
-                      # Ganti pemanggilan shell git untuk git rev-list dengan nilai numerik statis hasil hitungan CI
-                      content = re.sub(r"KSU_GIT_VERSION\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_GIT_VERSION := {git_count}", content)
-                      content = re.sub(r"KSU_VERSION\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_VERSION := {ksu_version}", content)
-                      
-                      # Ganti pula pemanggilan shell git untuk pembacaan tag ksu
-                      content = re.sub(r"KSU_(VERSION_|GIT_)?TAG\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_VERSION_TAG := \"{ksu_tag}\"", content)
-                      content = re.sub(r"KSU_GIT_TAG\s*[:?]?=\s*\$\(shell[^\n]+\)", f"KSU_GIT_TAG := \"{ksu_tag}\"", content)
-
-                      # Hapus pesan peringatan (warnings) tentang repositori git non-standar agar log bersih
-                      content = re.sub(r"\$\(warning\s+KSU_GIT_VERSION\s+not\s+defined[^\n]+\)", "", content)
-                      content = re.sub(r"\$\(warning\s+KSU_VERSION_TAG\s+not\s+defined[^\n]+\)", "", content)
-
-                      with open(kbuild, "w") as f:
-                          f.write(content)
-                      print("✅ Berhasil memodifikasi versi dan tag di dalam berkas Kbuild secara absolut!")
-              """))'
+              python3 "$GITHUB_WORKSPACE/workflow_scripts/patch_kbuild.py" \
+                "$KBUILD_FILE" "$GIT_COUNT" "$KSU_VERSION" "$KSU_TAG"
 
               # Tulis header ksu_version.h yang akan menimpa seluruh parameter kompilasi (Double-layer protection)
               printf '#undef KSU_VERSION\n#define KSU_VERSION %s\n#undef KSU_VERSION_TAG\n#define KSU_VERSION_TAG "%s"\n' \

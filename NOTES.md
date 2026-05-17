@@ -11,7 +11,7 @@
 | :--- | :--- | :--- | :--- |
 | **v70** | Bazel (Kleaf) | **BOOTING** ✅ | Berhasil masuk ke sistem Android 15. Ditemukan kendala pada matinya fungsi WiFi/Hotspot, adanya lag pada subsistem GPU (kesalahan limiter), serta konsumsi memori RAM yang tinggi (~3.9GB). |
 | **v71** | ZyClang | **BOOTLOOP** ❌ | Perangkat gagal melewati fase inisialisasi bootloader. Diduga kuat akibat ketidakcocokan compiler ZyClang pada fase ini atau akibat dinonaktifkannya informasi debug (`CONFIG_DEBUG_INFO_NONE=y`) yang merusak subsistem jaringan Android 15. |
-| **v72** | Bazel (Kleaf) | **PENGEMBANGAN** 🛠️ | Fokus utama pada perbaikan fungsi Hotspot (penerapan Netfilter NAT), inisialisasi modul WiFi secara aman, serta penyesuaian branding. **Bug kompilasi modul WiFi (cfg80211/mac80211) pada Bazel telah diperbaiki secara absolut** lewat skrip Python inline terintegrasi yang menjamin pendaftaran pada `module_outs` di `BUILD.bazel` dan `modules.bzl`. |
+| **v72** | Bazel (Kleaf) | **PENGEMBANGAN** 🛠️ | Mengatasi kegagalan build/injeksi KSU dengan migrasi parser ke file skrip Python mandiri (`workflow_scripts/`). UI Alur Kerja (GKI Control Center) sepenuhnya direvolusi dari checkbox rumit menjadi menu dropdown (`choice`) premium dan rapi. |
 
 ---
 
@@ -36,8 +36,9 @@
 ---
 
 ## 🛠️ Perbaikan Aktif (Build v72+)
-* **Pendaftaran Modul WiFi Bazel (cfg80211/mac80211)**: Menerapkan skrip parser Python 3 inline terintegrasi yang tangguh untuk memodifikasi `modules.bzl` (mendukung tanda kutip tunggal/ganda secara aman) serta membedah blok `kernel_build` untuk target `kernel_aarch64` pada `BUILD.bazel` guna menyuntikkan/menggabungkan berkas `.ko` ke dalam atribut `module_outs` secara absolut.
-* **Perbaikan Versi KernelSU-Next (Kbuild Fallback & IndentationError)**: Mengganti skrip sed lawas dengan parser Python 3 di dalam alur kerja CI/CD untuk menulis ulang variabel `KSU_GIT_VERSION`, `KSU_VERSION`, dan `KSU_VERSION_TAG` langsung di dalam berkas `Kbuild` secara absolut. Skrip ini kini dibungkus menggunakan `textwrap.dedent` untuk mencegah kesalahan indentasi (`IndentationError: unexpected indent`) akibat format YAML, menjamin alur kerja CI/CD berjalan mulus tanpa kegagalan pre-build.
+* **Pendaftaran Modul WiFi Bazel (cfg80211/mac80211)**: Bermigrasi sepenuhnya ke skrip Python mandiri [patch_build_system.py](file:///d:/Project%20Coding/2026/4%20April/kernel%20redmi%2012/workflow_scripts/patch_build_system.py) untuk mendaftarkan modul WiFi kustom ke `module_outs` di `BUILD.bazel` dan `modules.bzl` secara dinamis dan aman.
+* **Perbaikan Versi KernelSU-Next (Kbuild Fallback & IndentationError)**: Menyelesaikan bug `IndentationError: unexpected indent` pada workflow runner secara tuntas dengan memindahkan skrip injeksi versi KSU ke berkas Python mandiri [patch_kbuild.py](file:///d:/Project%20Coding/2026/4%20April/kernel%20redmi%2012/workflow_scripts/patch_kbuild.py).
+* **Revolusi UI Alur Kerja GKI Control Center**: Mengubah alur input alur kerja manual dari tumpukan checkbox (checkboxes) yang tidak sedap dipandang menjadi pilihan dropdown menu (`choice`) yang sangat rapi, premium, dan intuitif untuk varian SUSFS dan opsi Toolchain.
 * **Penguncian Nama Kernel & Author**: Menghapus opsi input dinamis pada menu pembuat alur kerja (`build_manager_gki.yml`) dan menguncinya secara mutlak ke `"Epitaph"` dan `"Naidrahiqa"` untuk menghindari modifikasi identitas kernel oleh pengguna luar.
 * **Subsistem Hotspot**: Penambahan konfigurasi Netfilter NAT (`CONFIG_NF_NAT`, `CONFIG_IP_NF_NAT`, dan `CONFIG_NETFILTER_XT_TARGET_MASQUERADE`).
 * **Branding Identitas**: Penulisan stempel versi lokal secara terpusat pada defconfig.
@@ -62,4 +63,4 @@ Jika HP berhasil booting namun ada komponen yang tidak berjalan, tarik log aktif
 * **Analisis Modul KernelSU**: `adb shell "su -c dmesg" | grep -i "KSU"`
 
 ---
-*Terakhir Diperbarui: 2026-05-17 19:00 (WIB)*
+*Terakhir Diperbarui: 2026-05-17 19:38 (WIB)*
