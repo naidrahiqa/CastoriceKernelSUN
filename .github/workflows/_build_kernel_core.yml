@@ -740,13 +740,12 @@ jobs:
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
           # ─── WIFI & CONNECTIVITY FIX ──────────────────────────────────
-          # Compile CFG80211 & MAC80211 directly built-in (=y) so they are
-          # embedded in Image.gz. This resolves stock MTK WiFi driver loading
-          # failures under HyperOS 2.0/Android 15 (no systemless mount needed).
-          add_cfg "CONFIG_CFG80211=y"
+          # Compile CFG80211 & MAC80211 as modules (=m) since GKI forces them
+          # to be modules. We patch the build system to register them.
+          add_cfg "CONFIG_CFG80211=m"
           add_cfg "CONFIG_NL80211_TESTMODE=y"
           add_cfg "CONFIG_CFG80211_WEXT=y"
-          add_cfg "CONFIG_MAC80211=y"
+          add_cfg "CONFIG_MAC80211=m"
           
           # MediaTek Specific (Connectivity)
           add_cfg "CONFIG_MTK_COMBO_WIFI=y"
@@ -800,6 +799,87 @@ jobs:
             git add BUILD.bazel 2>/dev/null || true
             echo "✅ Build system patched and added to git"
           fi
+
+          # ─── WIFI MODULE REGISTRATION (FOR BAZEL MODULE COMPILATION) ─────
+          python3 -c 'if 1:
+              import os, re, sys
+              WIFI = ["net/mac80211/mac80211.ko", "net/wireless/cfg80211.ko"]
+              ok = False
+              print("CWD:", os.getcwd())
+              for f in ["modules.bzl", "BUILD.bazel"]:
+                print(f"  {chr(9989) if os.path.exists(f) else chr(10060)} {f}")
+              if os.path.exists("modules.bzl"):
+                with open("modules.bzl") as fh:
+                  bzl = fh.read()
+                for vn in ["_COMMON_GKI_MODULES_LIST", "COMMON_GKI_MODULES_LIST"]:
+                  m = re.search(vn + r"\s*=\s*\[", bzl)
+                  if not m: continue
+                  sb = m.end() - 1; d = 1; p = sb + 1
+                  while p < len(bzl) and d > 0:
+                    if bzl[p] == "[": d += 1
+                    elif bzl[p] == "]": d -= 1
+                    p += 1
+                  eb = p - 1; lc = bzl[sb+1:eb]
+                  if all(x in lc for x in WIFI):
+                    print(f"Already in {vn}"); ok = True; break
+                  items = re.findall(r"\"([^\"]+\.ko)\"", lc)
+                  print(f"Found {len(items)} modules in {vn}")
+                  for mod in WIFI:
+                    if mod not in items: items.append(mod); print(f"  + {mod}")
+                  items.sort()
+                  nl = "[\n" + "".join(f"    \"{x}\",\n" for x in items) + "]"
+                  with open("modules.bzl", "w") as fh:
+                    fh.write(bzl[:sb] + nl + bzl[eb+1:])
+                  print(f"Patched {vn} in modules.bzl ({len(items)} modules)")
+                  ok = True; break
+              if not ok:
+                if not os.path.exists("BUILD.bazel"):
+                  print("ERROR: no modules.bzl or BUILD.bazel"); sys.exit(1)
+                with open("BUILD.bazel") as fh:
+                  bz = fh.read()
+                if all(x in bz for x in WIFI):
+                  print("Already in BUILD.bazel"); ok = True
+                else:
+                  ki = bz.find("name = \"kernel_aarch64\"")
+                  if ki == -1: ki = bz.find("name = " + chr(39) + "kernel_aarch64" + chr(39))
+                  if ki == -1:
+                    print("ERROR: kernel_aarch64 not found"); sys.exit(1)
+                  sr = bz[ki:]
+                  for an in ["module_implicit_outs", "module_outs"]:
+                    am = re.search(an + r"\s*=\s*", sr)
+                    if not am: continue
+                    ap = ki + am.end(); rest = bz[ap:].lstrip()
+                    if rest.startswith("["):
+                      bp2 = bz.index("[", ap); d = 1; p = bp2 + 1
+                      while p < len(bz) and d > 0:
+                        if bz[p] == "[": d += 1
+                        elif bz[p] == "]": d -= 1
+                        p += 1
+                      ep = p - 1; lc = bz[bp2+1:ep]
+                      items = re.findall(r"\"([^\"]+\.ko)\"", lc)
+                      for mod in WIFI:
+                        if mod not in items: items.append(mod)
+                      items.sort()
+                      nl = "[\n" + "".join(f"        \"{x}\",\n" for x in items) + "    ]"
+                      bz = bz[:bp2] + nl + bz[ep+1:]
+                      with open("BUILD.bazel", "w") as fh:
+                        fh.write(bz)
+                      print(f"Patched inline {an}"); ok = True; break
+                    else:
+                      ws = " + [\n" + "".join(f"        \"{x}\",\n" for x in WIFI) + "    ]"
+                      le = bz.find(",\n", ap)
+                      if le != -1:
+                        bz = bz[:le] + ws + bz[le:]
+                        with open("BUILD.bazel", "w") as fh:
+                          fh.write(bz)
+                        print(f"Appended to {an}"); ok = True; break
+                  if not ok:
+                    print("ERROR: no module_outs attr found"); print(sr[:500]); sys.exit(1)
+              if ok: print("WiFi module registration done!")
+              else: print("FATAL: could not patch"); sys.exit(1)
+          '
+
+          git add BUILD.bazel modules.bzl 2>/dev/null || true
           for f in build.config.gki build.config.gki.aarch64; do
             if [ -f "$f" ]; then
               sed -i '/check_defconfig/d' "$f"
@@ -1017,23 +1097,49 @@ jobs:
             'dump_boot;' \
             'write_boot;' > anykernel.sh
 
-          # ─── TAMBAHKAN INI: Copy WiFi modules ───────────────────────
-          # Karena cfg80211 dan mac80211 sudah built-in (=y), tidak ada file .ko eksternal.
+          # ─── COPY WIFI MODULES ──────────────────────────────────────
           MODULES_DIR="modules/vendor/lib/modules"
           mkdir -p "$MODULES_DIR"
 
           echo "🔍 Searching for modules in dist/..."
-          # Cari semua .ko secara rekursif di dist/ dan copy ke modules/
           find "$GITHUB_WORKSPACE/dist" -name "*.ko" -type f -exec cp -v {} "$MODULES_DIR/" \;
           
           if [ "$(ls -A $MODULES_DIR)" ]; then
-            echo "✅ Modules copied to AnyKernel3"
+            echo "✅ Modules successfully copied to AnyKernel3"
             MODULES_FOUND=true
           else
-            echo "ℹ️ No external modules copied (using built-in CFG80211/MAC80211 kernel modules)"
-            MODULES_FOUND=true
+            echo "❌ ERROR: No modules found in dist/! WiFi will fail to load."
+            exit 1
           fi
           # ─── END MODULE COPY ────────────────────────────────────────
+
+          # ─── PERSISTENT WIFI FALLBACK LOADER ────────────────────────
+          # If systemless mount fails under HyperOS 2.0/Android 15, we write
+          # a persistent post-boot service.d script via KernelSU/Magisk to insmod them.
+          cat << 'EOF' >> anykernel.sh
+
+# Fallback persistent WiFi module loader via KernelSU/Magisk
+if [ -d /data/adb/service.d ]; then
+  ui_print "  • Setting up persistent KernelSU/Magisk WiFi fallback...";
+  mkdir -p /data/adb/wifi_fix;
+  cp -f modules/vendor/lib/modules/*.ko /data/adb/wifi_fix/;
+  chmod 644 /data/adb/wifi_fix/*.ko;
+  
+  cat << 'INNER_EOF' > /data/adb/service.d/load_wifi.sh
+#!/system/bin/sh
+# Wait for driver initialization subsystems
+sleep 2
+if ! lsmod | grep -q cfg80211; then
+  insmod /data/adb/wifi_fix/cfg80211.ko
+  insmod /data/adb/wifi_fix/mac80211.ko
+fi
+INNER_EOF
+  
+  chmod 755 /data/adb/service.d/load_wifi.sh;
+  ui_print "  • Persistent WiFi fallback configured successfully!";
+fi
+EOF
+          # ─── END PERSISTENT WIFI FALLBACK LOADER ────────────────────
 
           SELECTED_IMG=""
           # CRITICAL: Prioritaskan Image.gz untuk Redmi 12 (Helio G88).
