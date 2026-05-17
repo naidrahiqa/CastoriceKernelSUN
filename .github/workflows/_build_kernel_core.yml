@@ -405,10 +405,11 @@ jobs:
               echo "   Added KSU to drivers/Makefile"
             fi
 
-            if ! grep -q 'kernelsu/Kconfig' common/drivers/Kconfig; then
-              sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig
-              echo "   Added KSU Kconfig to drivers/Kconfig"
-            fi
+            # Selalu bersihkan integrasi Kconfig lama untuk menghindari redundansi atau kegagalan parsing
+            sed -i '/drivers\/kernelsu\/Kconfig/d' common/drivers/Kconfig
+            # Suntikkan Kconfig secara aman dengan menambahkannya di akhir file secara absolut
+            echo 'source "drivers/kernelsu/Kconfig"' >> common/drivers/Kconfig
+            echo "   ✅ Safely appended KSU Kconfig at the end of drivers/Kconfig"
 
             # Lacak perubahan file agar Bazel menyertakannya dalam pohon build
             cd common

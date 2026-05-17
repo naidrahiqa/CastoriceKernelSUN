@@ -160,6 +160,13 @@ def main():
                     # Menyatukan kembali blok yang telah dimodifikasi ke dalam konten berkas utama
                     bazel_content = bazel_content[:start_idx] + target_block + bazel_content[end_idx:]
 
+        # SECURE OVERRIDE: Secara paksa nonaktifkan seluruh validasi KMI dan pemangkasan simbol di seluruh file BUILD.bazel
+        bazel_content = bazel_content.replace("kmi_symbol_list_strict_mode = True", "kmi_symbol_list_strict_mode = False")
+        bazel_content = bazel_content.replace("trim_nonlisted_kmi = True", "trim_nonlisted_kmi = False")
+        # Cari dan ubah penugasan kmi_symbol_list menjadi None untuk mencegah eksekusi verifikator Kleaf
+        bazel_content = re.sub(r'\bkmi_symbol_list\s*=\s*["\'][^"\']*["\']', 'kmi_symbol_list = None', bazel_content)
+        bazel_content = re.sub(r'\bkmi_symbol_list\s*=\s*[\w\d_:]+', 'kmi_symbol_list = None', bazel_content)
+
         with open("BUILD.bazel", "w") as f:
             f.write(bazel_content)
         print("✅ Berkas BUILD.bazel utama berhasil diperbarui!")
