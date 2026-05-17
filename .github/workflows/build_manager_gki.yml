@@ -7,14 +7,6 @@ on:
         description: "Release Tag"
         required: true
         default: "v1.0"
-      custom_name:
-        description: "Kernel Custom Name"
-        required: true
-        default: "Epitaph"
-      author_name:
-        description: "Author Name"
-        required: true
-        default: "Naidrahiqa"
 
       # Pilihan varian SUSFS (apakah mau pakai bypass deteksi atau tidak)
       build_no_susfs:
@@ -136,8 +128,8 @@ jobs:
     secrets: inherit
     with:
       with_susfs: ${{ matrix.susfs }}
-      custom_name: ${{ inputs.custom_name }}
-      author_name: ${{ inputs.author_name }}
+      custom_name: "Epitaph"
+      author_name: "Naidrahiqa"
       ksu_method: ${{ matrix.ksu_method }}
       clang_toolchain: ${{ matrix.clang_toolchain }}
       release_tag: "${{ inputs.release_tag }}"
@@ -155,8 +147,8 @@ jobs:
           echo "| Setting | Value |" >> "$GITHUB_STEP_SUMMARY"
           echo "|---------|-------|" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Release Tag** | \`${{ inputs.release_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Custom Name** | \`${{ inputs.custom_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **Author** | \`${{ inputs.author_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Custom Name** | \`Epitaph\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Author** | \`Naidrahiqa\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Root** | \`KernelSU-Next\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Toolchain** | \`Multiple (Matrix)\` |" >> "$GITHUB_STEP_SUMMARY"
           echo "| **Total Builds** | \`${{ needs.prepare.outputs.total }}\` |" >> "$GITHUB_STEP_SUMMARY"
