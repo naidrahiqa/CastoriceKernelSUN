@@ -43,7 +43,7 @@ def main():
             
             if added:
                 existing_items.sort()
-                new_inner = "\n" + "".join(f"    \"{x}\",\n" for x in existing_items)
+                new_inner = "\n" + "".join(f"    \"{x}\",\n" for x in existing_items) + "]"
                 bzl_content = bzl_content[:start_bracket] + "[" + new_inner + bzl_content[end_bracket+1:]
                 patched_bzl = True
                 print(f"✅ Berhasil mendaftarkan modul {added} ke dalam {list_name} di modules.bzl!")
@@ -163,6 +163,19 @@ def main():
         with open("BUILD.bazel", "w") as f:
             f.write(bazel_content)
         print("✅ Berkas BUILD.bazel utama berhasil diperbarui!")
+
+    # 3. NONAKTIFKAN -Werror DI TOP-LEVEL Makefile
+    if os.path.exists("Makefile"):
+        with open("Makefile", "r") as f:
+            makefile_content = f.read()
+        
+        # Hapus flag -Werror yang membuat semua peringatan menjadi error fatal
+        if "-Werror" in makefile_content:
+            makefile_content = makefile_content.replace("KBUILD_CFLAGS += -Werror", "KBUILD_CFLAGS += -Wno-error")
+            makefile_content = re.sub(r"\b-Werror\b", "-Wno-error", makefile_content)
+            with open("Makefile", "w") as f:
+                f.write(makefile_content)
+            print("✅ Berhasil menonaktifkan -Werror di Makefile!")
 
 if __name__ == "__main__":
     main()

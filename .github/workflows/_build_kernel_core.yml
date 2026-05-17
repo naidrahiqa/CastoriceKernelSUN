@@ -516,6 +516,16 @@ jobs:
             exit 1
           fi
 
+          # FIX: Menambahkan include <linux/cred.h> ke susfs_def.h dan susfs.h untuk mendefinisikan current_uid()
+          if [ -f "include/linux/susfs_def.h" ]; then
+            sed -i '1i #include <linux/cred.h>' include/linux/susfs_def.h
+            echo "   ✅ Added #include <linux/cred.h> to include/linux/susfs_def.h"
+          fi
+          if [ -f "include/linux/susfs.h" ]; then
+            sed -i '1i #include <linux/cred.h>' include/linux/susfs.h
+            echo "   ✅ Added #include <linux/cred.h> to include/linux/susfs.h"
+          fi
+
           [ -f "fs/Makefile" ] && ! grep -q "susfs.o" "fs/Makefile" \
             && echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "fs/Makefile"
 
