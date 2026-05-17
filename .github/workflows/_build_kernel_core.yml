@@ -747,6 +747,9 @@ jobs:
           add_cfg "CONFIG_CFG80211_WEXT=y"
           add_cfg "CONFIG_MAC80211=m"
           
+          # Disable GKI module signature protection to allow out-of-tree / custom modules loading
+          add_cfg "CONFIG_MODULE_SIG_PROTECT=n"
+          
           # MediaTek Specific (Connectivity)
           add_cfg "CONFIG_MTK_COMBO_WIFI=y"
           add_cfg "CONFIG_MTK_COMBO_BT=y"
@@ -1127,8 +1130,10 @@ jobs:
           echo "  cat << 'INNER_EOF' > /data/adb/service.d/load_wifi.sh" >> anykernel.sh
           echo "#!/system/bin/sh" >> anykernel.sh
           echo "# Wait for driver initialization subsystems" >> anykernel.sh
-          echo "sleep 2" >> anykernel.sh
+          echo "sleep 3" >> anykernel.sh
           echo "if ! lsmod | grep -q cfg80211; then" >> anykernel.sh
+          echo "  insmod /data/adb/wifi_fix/rfkill.ko" >> anykernel.sh
+          echo "  insmod /data/adb/wifi_fix/libarc4.ko" >> anykernel.sh
           echo "  insmod /data/adb/wifi_fix/cfg80211.ko" >> anykernel.sh
           echo "  insmod /data/adb/wifi_fix/mac80211.ko" >> anykernel.sh
           echo "fi" >> anykernel.sh
