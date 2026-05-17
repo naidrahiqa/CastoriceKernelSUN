@@ -89,8 +89,8 @@ jobs:
           BUILD_DATE=$(date -u '+%d%m%Y')
           echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
           
-          # Susun nama dasar file zip kernel: {NamaKustom}-{Toolchain}-{MetodeRoot}-{Governor}[-SUSFS]-{Tanggal}
-          BASE_NAME="${{ inputs.custom_name }}-${TC_NAME}-${{ inputs.ksu_method }}-schedutil${SUSFS_LABEL}-${BUILD_DATE}"
+          # Susun nama dasar file zip kernel: {NamaKustom}-{Toolchain}-{MetodeRoot}[-SUSFS]-{Tanggal}
+          BASE_NAME="${{ inputs.custom_name }}-${TC_NAME}-${{ inputs.ksu_method }}${SUSFS_LABEL}-${BUILD_DATE}"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
           echo "✅ Environment initialized: ${BASE_NAME}"
 
