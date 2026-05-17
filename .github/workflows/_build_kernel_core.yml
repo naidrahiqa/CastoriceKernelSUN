@@ -1178,12 +1178,12 @@ jobs:
       # FIX: Hapus "append_body: false" — bukan key valid di softprops/action-gh-release@v2.
       # Gunakan "make_latest: false" untuk kontrol release ordering saja jika diperlukan.
       - name: Create Release
-          uses: softprops/action-gh-release@v2
-          with:
-            tag_name: "${{ inputs.release_tag }}"
-            name: "Epitaph Kernel ${{ inputs.release_tag }}"
-            body: |
-              ### 📦 Epitaph-${{ inputs.custom_name }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ inputs.release_tag }}"
+          name: "Epitaph Kernel ${{ inputs.release_tag }}"
+          body: |
+            ### 📦 Epitaph-${{ inputs.custom_name }}
             - **Type:** GKI 6.6 ${{ inputs.with_susfs == 'true' && '+ SUSFS' || '(No SUSFS)' }}
             - **Root:** ${{ inputs.ksu_method }} v${{ env.KSU_VERSION }}
             - **Governor:** schedutil
