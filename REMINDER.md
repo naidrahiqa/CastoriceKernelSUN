@@ -49,8 +49,8 @@ Contoh: `v1.0-bazel-default-schedutil-false`
 | Fix | Detail |
 |-----|--------|
 | `--local_resources=memory=6144` (BALIK) | Awalnya diganti ke `--local_ram_resources` tapi ternyata **Kleaf GKI 6.6 pake Bazel version yang malah deprecated-in `--local_ram_resources`**. Balikin ke `--local_resources=memory=6144`. **Warning:** jangan ganti flag tanpa tes runner dulu. |
-| Retry loop (3x) | Build Bazel bisa gagal karena transient network issues. Sama kayak repo sync: 3 attempts, 30s delay. |
-| buildozer pinned v7.3.0 | Gak pake "latest". Python inline gagal di YAML `|` block (indent). Sed juga gak reliable buat Starlark. |
+| Retry loop (3→2x) | Turun ke 2x karena 3x terlalu lama (~1 jam). Error deterministic (module_outs) gak butuh retry. |
+| buildozer → Python inline | buildozer download (& installer) rawan silent failure. Ganti pake `python3 -c "..."` — zero dependency, pre-installed di runner. |
 | Kernel commit capture | `KERNEL_COMMIT` di-capture ke `$GITHUB_ENV` setelah repo sync. |
 
 ⚠️ **Cache key belum include kernel commit hash** — karena GitHub Actions evaluates cache key di workflow parse time, sebelum repo sync. Clear manual di UI kalau suspect stale.

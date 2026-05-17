@@ -799,14 +799,41 @@ jobs:
             # FIX: Pakai buildozer pinned v8.5.1, jalankan dari WORKSPACE root.
             # Kalo dijalankan dari kernel/common/, //common:kernel_aarch64
             # resolve ke common/common/ (salah) → exit code 8.
-            # Pake /tmp biar gak perlu cd bolak-balik.
-            wget -q "https://github.com/bazelbuild/buildtools/releases/download/v8.5.1/buildozer-linux-amd64" -O /tmp/buildozer 2>/dev/null && {
-                chmod +x /tmp/buildozer
-                cd "$GITHUB_WORKSPACE/kernel"
-                /tmp/buildozer 'add module_outs net/wireless/cfg80211.ko net/mac80211/mac80211.ko' //common:kernel_aarch64 || true
-                cd "$GITHUB_WORKSPACE/kernel/common"
-                rm -f /tmp/buildozer
-            } || echo "⚠️ buildozer setup failed (non-fatal)"
+
+            # FIX: Tambah module_outs via Python (lebih reliable dari buildozer
+            # yang butuh download binary + rentan silent failure).
+            # Python3 pre-installed di GitHub runner, gak perlu download apa-apa.
+            python3 -c 'if 1:
+                import os
+                p = "BUILD.bazel"
+                if not os.path.exists(p):
+                    exit()
+                with open(p) as f:
+                    t = f.read()
+                m = ["net/wireless/cfg80211.ko", "net/mac80211/mac80211.ko"]
+                if any(x in t for x in m):
+                    exit()
+                need = "".join(f"    \"{x}\",\n" for x in m)
+                
+                # Cari blok kernel_aarch64 agar tidak salah modify target lain
+                target_str = "name = \"kernel_aarch64\","
+                idx = t.find(target_str)
+                if idx == -1:
+                    # Coba cari dengan single quote
+                    idx = t.find("name = '\''kernel_aarch64'\'',")
+                
+                if idx != -1:
+                    idx_mod = t.find("module_outs = [", idx)
+                    if idx_mod != -1:
+                        t = t[:idx_mod] + "module_outs = [\n" + need + t[idx_mod+15:]
+                        with open(p, "w") as f:
+                            f.write(t)
+                        print("Added module_outs to kernel_aarch64")
+                    else:
+                        print("WARNING: module_outs not found after kernel_aarch64!")
+                else:
+                    print("WARNING: kernel_aarch64 target not found!")
+            '
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
