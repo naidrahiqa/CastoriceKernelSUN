@@ -366,6 +366,11 @@ jobs:
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
             cp -r KernelSU-Next/uapi common/drivers/kernelsu/uapi 2>/dev/null || true
 
+            # Hapus file BUILD.bazel dan BUILD di drivers/kernelsu agar tidak memutus package boundary Bazel
+            find common/drivers/kernelsu -name "BUILD.bazel" -delete
+            find common/drivers/kernelsu -name "BUILD" -delete
+            echo "   ✅ Removed local BUILD/BUILD.bazel files from drivers/kernelsu to merge Bazel package boundary"
+
             # Pastikan proses penyalinan berhasil
             if [ ! -f "common/drivers/kernelsu/Kconfig" ]; then
               echo "❌ ERROR: KernelSU driver files not found after copy!"
