@@ -16,7 +16,7 @@ on:
         required: true
         default: "Naidrahiqa"
 
-      # ───── SUSFS Variant (checkboxes) ─────
+      # Pilihan varian SUSFS (apakah mau pakai bypass deteksi atau tidak)
       build_no_susfs:
         description: "☑️ Build GKI (No SUSFS)"
         required: true
@@ -28,7 +28,7 @@ on:
         type: boolean
         default: false
 
-      # ───── Toolchains (checkboxes) ─────
+      # Pilihan compiler (toolchain) yang didukung untuk kompilasi
       tc_bazel_default:
         description: "🛠️ Bazel (Default)"
         required: true
@@ -75,18 +75,18 @@ jobs:
           import os
           import sys
 
-          # Root method: hardcoded to KernelSU-Next only
+          # Saat ini metode root kita batasi secara ketat hanya ke KernelSU-Next demi stabilitas
           roots = ["kernelsu-next"]
 
-          # Governor: hardcoded to schedutil
+          # Governor CPU default kita kunci di schedutil karena paling stabil untuk penggunaan harian
           gov = "schedutil"
 
-          # Collect selected SUSFS variants
+          # Kumpulkan varian SUSFS berdasarkan checkbox yang dipilih oleh user
           variants = []
           if "${{ inputs.build_no_susfs }}" == "true": variants.append("false")
           if "${{ inputs.build_susfs }}" == "true": variants.append("true")
 
-          # Collect selected toolchains
+          # Kumpulkan semua compiler (toolchain) yang diaktifkan oleh user
           toolchains = []
           if "${{ inputs.tc_bazel_default }}" == "true": toolchains.append("bazel-default")
           if "${{ inputs.tc_aosp_latest }}" == "true": toolchains.append("aosp-latest")
@@ -113,7 +113,7 @@ jobs:
 
           matrix_json = json.dumps({"include": include})
 
-          # Set output and total count
+          # Kirim hasil matrix dan jumlah total build ke variabel output GitHub Actions
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f'matrix={matrix_json}\n')
               f.write(f'total={len(include)}\n')

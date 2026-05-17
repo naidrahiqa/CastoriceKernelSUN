@@ -1,35 +1,53 @@
-# Aturan 3: Optimasi & Pengurangan Beban (Lightweight)
+# Pedoman 3: Optimasi & Batasan Modifikasi (Lightweight)
 
-> **⚠️ ATURAN INI DIBUAT AGAR KERNEL TIDAK BERAT / LAG / RAM HABIS SEPERTI SEBELUMNYA**
+> [!NOTE]
+> Pedoman ini dirancang untuk menjaga efisiensi penggunaan memori RAM, memperpanjang daya tahan baterai, serta memastikan kernel kustom tidak memicu panas berlebih (lagging) pada perangkat berspesifikasi menengah seperti Redmi 12.
 
-## 1. Hapus Debugging — Hati-hati dengan A15 BTF!
-- **Kenapa?** Ukuran kernel membengkak 30-50% dan CPU terkuras untuk logging yang tidak dipakai user biasa.
-- **⚠️ PERINGATAN:** Untuk Android 15, **JANGAN set `CONFIG_DEBUG_INFO_NONE=y`** dulu! A15 butuh **BTF info** untuk networking (WiFi/Data). Kalau dipaksa, WiFi dan data seluler mati. Biarkan default GKI.
-- **Implementasi (aman untuk A15):**
+---
+
+## 1. Penanganan Debugging & Batasan Android 15 (BTF Info)
+* **Aturan Utama**: Jangan pernah menonaktifkan informasi debug secara total menggunakan flag `CONFIG_DEBUG_INFO_NONE=y` pada Android 15.
+* **Rasionalisasi**: Sistem operasi Android 15 mengandalkan subsistem BPF (Berkeley Packet Filter) secara mendalam untuk mengatur manajemen lalu lintas jaringan (WiFi, Tethering, dan data seluler). Subsistem ini membutuhkan metadata BTF (BPF Type Format) yang dihasilkan dari simbol debugging kernel. Menonaktifkan informasi debug akan memutus pembuatan metadata BTF, yang berujung pada **matinya seluruh fungsi konektivitas jaringan** pada perangkat.
+* **Implementasi yang Aman untuk Android 15**:
   ```ini
-  # CONFIG_DEBUG_INFO_NONE=y    ← JANGAN di A15! Bikin BTF error → WiFi mati
+  # JANGAN AKTIFKAN opsi ini di Android 15:
+  # CONFIG_DEBUG_INFO_NONE=y  ← Menyebabkan kegagalan BTF dan WiFi mati total
+
+  # Opsi pembersihan log debug yang aman:
   CONFIG_SLUB_DEBUG=n
   CONFIG_FUNCTION_TRACER=n
   ```
 
-## 2. Pertahankan KPROBES (Jangan Dihapus!)
-- **Kenapa?** KernelSU-Next bergantung penuh pada fungsi Kprobes untuk melakukan intercept system calls.
-- **Apa yang terjadi kalau dihapus?** KernelSU tidak akan berfungsi / modul root gagal berjalan.
-- **Implementasi:** Biarkan `CONFIG_KPROBES=y` (bawaan GKI).
+---
 
-## 3. LTO (Link-Time Optimization)
-- **Kenapa?** LTO bikin binary kernel lebih kecil dan cepat. Tapi kalau pakai `full`, GitHub Actions akan **OOM (Out Of Memory)** karena limit RAM cuma 7GB.
-- **Implementasi:** Gunakan `--lto=none` pada command `tools/bazel run`.
-  `--lto=thin` kadang gak didukung Kleaf versi lama (exit code 2). `--lto=full` jelas OOM.
-- **Status Workflow:** ✅ `_build_kernel_core.yml` pakai `--lto=none` (terbukti stabil).
+## 2. Pemeliharaan KPROBES untuk Subsistem Root
+* **Aturan Utama**: Pastikan konfigurasi KPROBES tetap aktif secara mutlak (`CONFIG_KPROBES=y`).
+* **Rasionalisasi**: KernelSU-Next membutuhkan mekanisme Kprobes secara utuh untuk melakukan penyadapan (intercept) sistem panggilan inti (syscalls) pada ruang kernel. Jika fitur ini dinonaktifkan, subsistem KernelSU-Next tidak akan terkompilasi dengan sempurna atau gagal memberikan hak akses root ke perangkat.
+* **Implementasi**: Jangan pernah menghapus atau menonaktifkan konfigurasi pelacakan kernel berikut:
+  ```ini
+  CONFIG_KPROBES=y
+  CONFIG_HAVE_KPROBES=y
+  CONFIG_KPROBE_EVENTS=y
+  ```
 
-## 4. Baterai & RAM Android
-- **Implementasi:**
-  - Timer: `CONFIG_HZ=300` (Standar Android).
-  - RAM: `CONFIG_LRU_GEN=y` (Wajib, lebih efisien mengatur memori).
-  - THP: `CONFIG_TRANSPARENT_HUGEPAGE=n` (Wajib dimatikan, makan terlalu banyak RAM di HP budget).
+---
 
-## 5. Release Tag
-- Release tag unik per varian: `{tag}-{toolchain}-{gov}-{susfs}`
-- Contoh: `v1.0-bazel-default-schedutil-false`
-- Biar gak tabrakan antar matrix build.
+## 3. Kebijakan Link-Time Optimization (LTO)
+* **Aturan Utama**: Gunakan opsi `--lto=none` saat menjalankan kompilasi melalui sistem Bazel.
+* **Rasionalisasi**: Meskipun pengoptimalan LTO tingkat lanjut (`--lto=full`) mampu menghasilkan kompresi biner kernel yang lebih efisien, kompilasi tersebut membutuhkan konsumsi RAM yang sangat besar. Mesin virtual runner pada GitHub Actions dibatasi hanya memiliki memori sebesar **7GB RAM**, yang dipastikan akan mengalami kegagalan **OOM (Out Of Memory)** apabila memproses LTO secara penuh. Sementara itu, opsi `--lto=thin` memiliki riwayat ketidakcocokan pada beberapa versi Kleaf lama.
+* **Implementasi**: Opsi kompilasi terbaik yang terbukti aman dan stabil adalah menerapkan bendera `--lto=none` dalam workflow kompilasi Bazel Anda.
+
+---
+
+## 4. Efisiensi Baterai & Manajemen Memori
+* **Implementasi Konfigurasi**:
+  * **Frekuensi Detak Jam (HZ)**: Gunakan `CONFIG_HZ=300` sebagai standar optimal perangkat Android guna menyeimbangkan performa responsif dan efisiensi baterai.
+  * **Manajemen Memori (MGLRU)**: Aktifkan generator LRU multi-generasi (`CONFIG_LRU_GEN=y`) yang terbukti jauh lebih cerdas dan hemat daya dalam mengelola proses pembersihan RAM di latar belakang.
+  * **Halaman Memori Besar (THP)**: Nonaktifkan dukungan Transparent Hugepages (`CONFIG_TRANSPARENT_HUGEPAGE=n`). Fitur ini sangat boros RAM dan seringkali memicu degradasi performa (micro-stuttering) pada ponsel kelas menengah yang memiliki kapasitas memori terbatas.
+
+---
+
+## 5. Standarisasi Format Tag Rilis
+* **Aturan Utama**: Penulisan tag rilis pada repositori GitHub harus unik dan mencerminkan konfigurasi build guna menghindari bentrokan artefak.
+* **Format Standar**: `{tag}-{toolchain}-{governor}-{susfs}`
+* **Contoh Implementasi**: `v1.0-bazel-default-schedutil-false`

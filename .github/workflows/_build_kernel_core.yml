@@ -66,7 +66,7 @@ jobs:
 
       - name: Initialize Environment
         run: |
-          # Toolchain Short Name
+          # Tentukan nama singkat toolchain untuk penamaan file zip output
           TC_NAME="${{ inputs.clang_toolchain }}"
           if [ "$TC_NAME" = "bazel-default" ] || [ -z "$TC_NAME" ]; then
             TC_NAME="Bazel"
@@ -81,22 +81,22 @@ jobs:
           fi
           echo "TOOLCHAIN_NAME=${TC_NAME}" >> $GITHUB_ENV
           
-          # SUSFS Suffix
+          # Tambahkan label '-SUSFS' pada nama file jika build ini menggunakan patch SUSFS
           SUSFS_LABEL=""
           [ "${{ inputs.with_susfs }}" = "true" ] && SUSFS_LABEL="-SUSFS"
           
-          # Build Date
+          # Ambil tanggal build saat ini (format: HariBulanTahun)
           BUILD_DATE=$(date -u '+%d%m%Y')
           echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
           
-          # Base Filename: {CustomName}-{Toolchain}-{Root}-{Governor}[-SUSFS]-{Date}
+          # Susun nama dasar file zip kernel: {NamaKustom}-{Toolchain}-{MetodeRoot}-{Governor}[-SUSFS]-{Tanggal}
           BASE_NAME="${{ inputs.custom_name }}-${TC_NAME}-${{ inputs.ksu_method }}-schedutil${SUSFS_LABEL}-${BUILD_DATE}"
           echo "ZIP_NAME=${BASE_NAME}" >> $GITHUB_ENV
           echo "✅ Environment initialized: ${BASE_NAME}"
 
-      # FIX 4: Cache key pakai hashFiles bukan github.sha
-      # github.sha berubah setiap commit → cache NEVER HIT.
-      # hashFiles patches + workflow = cache invalidate hanya saat config berubah.
+      # Gunakan hashFiles untuk cache key, bukan github.sha.
+      # github.sha berubah di setiap commit baru sehingga cache tidak akan pernah hit.
+      # Dengan hashFiles, cache hanya akan dibuat ulang jika file di folder patches atau file workflow berubah.
       - name: Restore Bazel Cache
         uses: actions/cache@v4
         with:
@@ -251,9 +251,8 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest \
             -b common-${ANDROID_VERSION}-${KERNEL_VERSION} --depth=1
 
-          # FIX 6: Retry loop untuk repo sync
-          # Network flakes di GitHub Actions runner sering bikin sync gagal.
-          # 3x retry dengan 30s delay = lebih reliable.
+          # Lakukan percobaan repo sync sampai 3 kali untuk mengantisipasi kegagalan koneksi di runner GitHub Actions.
+          # Jeda waktu 30 detik diberikan antar percobaan agar koneksi kembali stabil.
           SYNC_OK=false
           for attempt in 1 2 3; do
             echo "repo sync attempt $attempt/3..."
@@ -267,10 +266,9 @@ jobs:
           [ "$SYNC_OK" = "false" ] && echo "❌ repo sync gagal setelah 3 percobaan" && exit 1
           cd common
 
-          # NOTE: Tidak lagi lock ke commit 33c1ba9ffede (6.6.58).
-          # Build 30 April (6.6.129) yang BOOTING pakai tip of branch.
-          # Version lock ke 6.6.58 terbukti bootloop di semua build Mei 2026.
-          # Biarkan repo sync ambil HEAD dari branch common-android15-6.6.
+          # Kita tidak lagi mengunci versi kernel ke commit 6.6.58 (33c1ba9ffede).
+          # Hasil pengujian menunjukkan penguncian ke versi lama tersebut selalu memicu bootloop pada build bulan Mei 2026.
+          # Jadi, kita biarkan repo sync mengambil posisi HEAD terbaru langsung dari branch common-android15-6.6.
           KERNEL_COMMIT=$(git log --oneline -1)
           echo "✅ Using tip of branch ($KERNEL_COMMIT)"
           echo "KERNEL_COMMIT=$KERNEL_COMMIT" >> $GITHUB_ENV
@@ -324,11 +322,9 @@ jobs:
           fi
           echo "✅ KMI_GENERATION=$DETECTED_KMI applied to all config files"
 
-      # FIX UTAMA: Clone KernelSU-Next menggunakan default branch.
-      # Solusi terbaik: jangan hardcode branch karena rawan perubahan (main/stable/next).
-      # Struktur repo: folder driver ada di KernelSU-Next/kernel/ (bukan root).
-      # KSU_VERSION diambil dari Makefile kernel driver, bukan rev-list seluruh repo
-      # (rev-list seluruh repo menghitung commit manager+userspace juga → angka salah).
+      # Unduh repositori KernelSU-Next secara utuh tanpa membatasi depth kompilasi.
+      # Kita perlu riwayat commit lengkap agar perhitungan versi KSU_VERSION (berdasarkan git rev-list) akurat,
+      # karena jika menggunakan depth=1 nilainya akan kacau dan memicu kegagalan build.
       - name: Setup KernelSU (${{ inputs.ksu_method }})
         run: |
           set -euo pipefail
@@ -338,8 +334,7 @@ jobs:
           echo "Installing KSU variant: $KSU_METHOD"
 
           if [ "$KSU_METHOD" = "kernelsu-next" ]; then
-            # CRITICAL: Clone full repo (NOT --depth=1) so we can compute
-            # KSU_VERSION via git rev-list before copying.
+            # Ambil history commit lengkap agar git rev-list dapat berjalan sukses
             echo "Cloning KernelSU-Next (full history for version calc)..."
             git clone \
               https://github.com/KernelSU-Next/KernelSU-Next.git \
@@ -352,7 +347,7 @@ jobs:
               exit 1
             fi
 
-            # Calculate KSU_VERSION BEFORE copying (we need .git access)
+            # Hitung KSU_VERSION sebelum melakukan penyalinan (proses ini membutuhkan akses ke .git)
             GIT_COUNT=$(cd KernelSU-Next && git rev-list --count HEAD 2>/dev/null || echo "0")
             if [ "$GIT_COUNT" -gt 1 ]; then
               KSU_VERSION=$((30000 + GIT_COUNT))
@@ -361,51 +356,46 @@ jobs:
             fi
             KSU_TAG=$(cd KernelSU-Next && git describe --abbrev=0 --tags 2>/dev/null || echo "v${KSU_VERSION}")
 
-            # CRITICAL FIX: Use COPY, not symlink!
-            # Bazel sandbox isolates the build — symlinks to paths outside the
-            # sandbox tree are NOT followed. This caused:
-            #   - KSU_GIT_VERSION not defined (git not visible → version=1 → bootloop)
-            #   - Source files invisible to sandbox in some cases
-            # Since copy loses .git, we inject version via ccflags below.
+            # PENTING: Gunakan perintah COPY (salin), jangan gunakan symlink (tautan).
+            # Sistem sandbox pada Bazel mengisolasi proses build sepenuhnya. Symlink yang mengarah
+            # ke luar pohon sandbox tidak akan dibaca oleh Bazel, yang menyebabkan file sumber KSU tidak terbaca,
+            # versinya turun ke default (1), dan memicu bootloop pada kernel.
+            # Karena proses penyalinan ini menghilangkan folder .git, informasi versi kita injeksikan manual di bawah.
             echo "Copying KernelSU-Next/kernel to common/drivers/kernelsu..."
             rm -rf common/drivers/kernelsu
             cp -r KernelSU-Next/kernel common/drivers/kernelsu
             cp -r KernelSU-Next/uapi common/drivers/kernelsu/uapi 2>/dev/null || true
 
-            # Verify copy succeeded
+            # Pastikan proses penyalinan berhasil
             if [ ! -f "common/drivers/kernelsu/Kconfig" ]; then
               echo "❌ ERROR: KernelSU driver files not found after copy!"
               ls -la common/drivers/kernelsu/ || true
               exit 1
             fi
 
-            # CRITICAL FIX: Hardcode KSU version + enforce via header override.
-            # Bazel sandbox cannot access .git → falls back to KSU_VERSION=1.
-            # Our ccflags injection conflicts with Bazel's fallback → -Werror kills build.
-            # Solution:
-            #   1. Hardcode $(shell git ...) in Kbuild to silence Kbuild's own warnings
-            #   2. Create ksu_version.h with #undef+#define, included via -include flag
-            #      -include is processed AFTER command line -D flags → our values win
+            # KONTROL VERSI KSU: Tulis paksa nomor versi KSU dan terapkan lewat ksu_version.h.
+            # Karena lingkungan sandbox Bazel tidak memiliki akses ke data git, versi KSU otomatis turun ke 1.
+            # Untuk menghindari konflik pendefinisian macro versi yang dapat menggagalkan build (-Werror),
+            # kita buat file header ksu_version.h untuk memaksa nilai versi KSU riil yang telah dihitung sebelumnya.
             KBUILD_FILE="common/drivers/kernelsu/Kbuild"
             if [ -f "$KBUILD_FILE" ]; then
-              # Remove old injection if present from previous runs
+              # Hapus sisa injeksi dari eksekusi build sebelumnya jika ada
               sed -i '/# Injected by CI/d' "$KBUILD_FILE"
               sed -i '/ccflags-y += -UKSU_VERSION/d' "$KBUILD_FILE"
 
-              # Hardcode git rev-list result (fixes Kbuild's own warnings)
+              # Ganti nilai git rev-list dengan hasil hitungan manual kita (menghindari error Kbuild)
               sed -i "s#\$(shell git rev-list --count HEAD 2>/dev/null || echo 0)#${GIT_COUNT}#g" "$KBUILD_FILE"
               sed -i "s#\$(shell git rev-list --count HEAD)#${GIT_COUNT}#g" "$KBUILD_FILE"
 
-              # Hardcode git describe result
+              # Ganti pula hasil pembacaan git tag
               sed -i "s#\$(shell git describe --abbrev=0 --tags 2>/dev/null || echo \"v\$(KSU_VERSION)\")#\"${KSU_TAG}\"#g" "$KBUILD_FILE"
               sed -i "s#\$(shell git describe --abbrev=0 --tags)#\"${KSU_TAG}\"#g" "$KBUILD_FILE"
 
-              # Create version header that overrides ALL command line definitions
-              # -include processes this AFTER command line -D flags, so #undef+#define wins
+              # Tulis header ksu_version.h yang akan menimpa seluruh parameter kompilasi
               printf '#undef KSU_VERSION\n#define KSU_VERSION %s\n#undef KSU_VERSION_TAG\n#define KSU_VERSION_TAG "%s"\n' \
                 "${KSU_VERSION}" "${KSU_TAG}" > common/drivers/kernelsu/ksu_version.h
 
-              # Add -include flag + suppress macro-redefined warnings
+              # Sertakan file header versi di baris teratas Kbuild
               sed -i "1i ccflags-y += -Wno-macro-redefined -include \$(srctree)/drivers/kernelsu/ksu_version.h" "$KBUILD_FILE"
 
               echo "✅ KSU_VERSION=${KSU_VERSION} enforced via ksu_version.h (overrides Bazel fallback)"
@@ -413,19 +403,18 @@ jobs:
               echo "⚠️  Kbuild not found, version hardcoding skipped"
             fi
 
-            # Daftarkan ke drivers/Makefile
+            # Hubungkan driver KernelSU ke sistem kompilasi kernel utama (Makefile & Kconfig)
             if ! grep -q 'CONFIG_KSU' common/drivers/Makefile; then
               echo 'obj-$(CONFIG_KSU) += kernelsu/' >> common/drivers/Makefile
               echo "   Added KSU to drivers/Makefile"
             fi
 
-            # Daftarkan ke drivers/Kconfig
             if ! grep -q 'kernelsu/Kconfig' common/drivers/Kconfig; then
               sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' common/drivers/Kconfig
               echo "   Added KSU Kconfig to drivers/Kconfig"
             fi
 
-            # git add for Bazel — all files must be tracked
+            # Lacak perubahan file agar Bazel menyertakannya dalam pohon build
             cd common
             git add -f drivers/Makefile drivers/Kconfig
             git add -f drivers/kernelsu/ 2>/dev/null || true
@@ -456,9 +445,9 @@ jobs:
 
           cd common
 
-          # ─── Step 1: Apply kernel patch FIRST (before copying files) ─────
-          # Kalau patch gagal, kernel code gak ke-patch → compile error nanti.
-          # Jadi kita apply dulu, baru copy files kalau patch sukses.
+          # LANGKAH 1: Terapkan patch kernel SUSFS terlebih dahulu.
+          # Kita harus memastikan kode dasar kernel telah ter-patch dengan benar sebelum menyalin file driver utama.
+          # Jika proses patch ini gagal, compile dipastikan akan error.
           echo "🔧 Applying SUSFS kernel patch..."
           SUSFS_PATCH_APPLIED=false
 
@@ -516,7 +505,7 @@ jobs:
           fi
           echo "✅ SUSFS kernel patch applied successfully"
 
-          # ─── Step 2: Copy SUSFS source files ─────────────────────────────
+          # LANGKAH 2: Salin file sumber utama SUSFS ke dalam direktori kernel
           echo "📋 Copying SUSFS source files..."
           if [ -d "../susfs4ksu/kernel_patches/fs" ]; then
             cp -rv ../susfs4ksu/kernel_patches/fs/* fs/
@@ -536,7 +525,7 @@ jobs:
 
           git add fs/susfs.c include/linux/susfs.h fs/Makefile 2>/dev/null || true
 
-          # ─── Step 3: Fix selinux/hooks.c extern conflict ─────────────────
+          # LANGKAH 3: Tangani konflik deklarasi extern susfs pada selinux/hooks.c
           if [ -f "security/selinux/hooks.c" ]; then
             EXTERN_COUNT=$(grep -c "extern int susfs_" security/selinux/hooks.c 2>/dev/null || echo "0")
             if [ "$EXTERN_COUNT" -gt 1 ]; then
@@ -552,7 +541,7 @@ jobs:
             fi
           fi
 
-          # ─── Step 4: Inject susfs_init() into KernelSU-Next ──────────────
+          # LANGKAH 4: Integrasikan inisialisasi susfs_init() ke dalam inisialisasi KernelSU-Next
           KSU_KERNEL="drivers/kernelsu"
           SUSFS_INTEGRATED=false
           if [ -d "$KSU_KERNEL" ]; then
@@ -661,8 +650,8 @@ jobs:
           echo "" >> "$DEFCONFIG"
           echo "# KernelSU + Dependencies" >> "$DEFCONFIG"
           add_cfg "CONFIG_KSU=y"
-          # CRITICAL: KSU Kconfig has 'depends on KPROBES && EXT4_FS'
-          # Without these, CONFIG_KSU silently becomes =n → no root → bootloop-like behavior
+          # PENTING: Kconfig milik KernelSU bergantung pada CONFIG_KPROBES dan CONFIG_EXT4_FS.
+          # Jika salah satu dari fitur ini tidak aktif, kompilasi KernelSU akan diabaikan (CONFIG_KSU=n) yang memicu bootloop.
           add_cfg "CONFIG_KPROBES=y"
           add_cfg "CONFIG_HAVE_KPROBES=y"
           add_cfg "CONFIG_KPROBE_EVENTS=y"
@@ -715,9 +704,8 @@ jobs:
           sed -i '/^CONFIG_CPU_FREQ_DEFAULT_GOV_/d' "$DEFCONFIG"
           add_cfg "CONFIG_CPU_FREQ_DEFAULT_GOV_${GOV_UPPER}=y"
 
-          # NOTE: ZRAM/ZSMALLOC bazel fix
-          # Bazel complains about missing zram.ko/zsmalloc.ko. We force them
-          # to be built as modules (=m) so Bazel finds them in module_outs.
+          # TANGANI BAZEL ZRAM: Bazel memerlukan file zram.ko dan zsmalloc.ko berada di daftar module_outs.
+          # Kita paksa kompilasi keduanya sebagai modul (=m) agar sistem build dapat melacaknya dengan benar.
           echo "" >> "$DEFCONFIG"
           echo "# ZRAM Fix" >> "$DEFCONFIG"
           add_cfg "CONFIG_ZSMALLOC=m"
@@ -739,18 +727,17 @@ jobs:
           echo 'CONFIG_LOCALVERSION="-Epitaph"' >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
 
-          # ─── WIFI & CONNECTIVITY FIX ──────────────────────────────────
-          # Compile CFG80211 & MAC80211 as modules (=m) since GKI forces them
-          # to be modules. We patch the build system to register them.
+          # PERBAIKAN WIFI & KONEKTIVITAS:
+          # CFG80211 dan MAC80211 harus dikompilasi sebagai modul (=m) agar sesuai standar arsitektur GKI.
           add_cfg "CONFIG_CFG80211=m"
           add_cfg "CONFIG_NL80211_TESTMODE=y"
           add_cfg "CONFIG_CFG80211_WEXT=y"
           add_cfg "CONFIG_MAC80211=m"
           
-          # Disable GKI module signature protection to allow out-of-tree / custom modules loading
+          # Nonaktifkan proteksi tanda tangan modul GKI agar modul pihak ketiga dapat dimuat dengan aman
           add_cfg "CONFIG_MODULE_SIG_PROTECT=n"
 
-          # Disable MODVERSIONS to bypass symbol CRC version mismatch on vendor drivers (like wlan_drv_gen4m_6768.ko)
+          # Nonaktifkan pemeriksaan MODVERSIONS untuk mencegah kegagalan pencocokan versi simbol (CRC Mismatch) pada driver vendor (misalnya wlan_drv_gen4m_6768.ko)
           add_cfg "CONFIG_MODVERSIONS=n"
           
           # MediaTek Specific (Connectivity)
@@ -758,7 +745,8 @@ jobs:
           add_cfg "CONFIG_MTK_COMBO_BT=y"
           add_cfg "CONFIG_MTK_COMBO_GPS=y"
           
-          # ─── HOTSPOT FIX (Netfilter NAT) ──────────────────────────────
+          # PERBAIKAN HOTSPOT & TETHERING:
+          # Aktifkan subsystem Netfilter NAT agar proses berbagi koneksi internet dari perangkat berjalan normal.
           echo "" >> "$DEFCONFIG"
           echo "# Netfilter for Hotspot/Tethering" >> "$DEFCONFIG"
           add_cfg "CONFIG_NETFILTER=y"
@@ -769,11 +757,11 @@ jobs:
           add_cfg "CONFIG_IP_NF_TARGET_MASQUERADE=y"
           add_cfg "CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y"
 
-          # ─── OPTIMIZATIONS (KEEPS DISABLED FOR NOW) ────────────────────
-          # Kita simpan di sini buat referensi, tapi jangan di-enable 
-          # sampai kernel stabil booting dengan hotspot nyala.
-          # add_cfg "CONFIG_DEBUG_INFO_NONE=y"        # ⚠️ Bikin BTF Error di A15
-          # add_cfg "CONFIG_THERMAL=y"                # ⚠️ Bentrok sama MTK Thermal
+          # CATATAN OPTIMASI (SEMENTARA DINONAKTIFKAN):
+          # Konfigurasi di bawah disimpan sebagai referensi, namun tidak boleh diaktifkan dahulu
+          # demi menjamin kestabilan booting dan fungsi hotspot di Android 15.
+          # add_cfg "CONFIG_DEBUG_INFO_NONE=y"        # Memicu BTF Error pada Android 15
+          # add_cfg "CONFIG_THERMAL=y"                # Berisiko bentrok dengan subsystem Thermal MTK
           # ─── END DISABLED ──────────────────────────────────────────────
 
           # PStore (RAMoops) — KEEP
@@ -795,129 +783,174 @@ jobs:
         run: |
           cd kernel/common
 
-          if [ -f "BUILD.bazel" ]; then
-            python3 -c '
-          import textwrap
+          # Kita menggunakan skrip Python 3 inline tanpa dependensi tambahan untuk melakukan modifikasi sistem build.
+          # Skrip ini memodifikasi BUILD.bazel dan modules.bzl secara aman dan konsisten.
+          python3 -c '
+          import os, re, textwrap
+
           exec(textwrap.dedent(r"""
-              import os, re
+              # Daftar modul nirkabel (WiFi) kustom yang wajib terdaftar agar disalin ke artefak akhir
+              WIFI_MODULES = ["net/mac80211/mac80211.ko", "net/wireless/cfg80211.ko"]
+
+              # 1. MODIFIKASI BERKAS modules.bzl (JIKA ADA)
+              if os.path.exists("modules.bzl"):
+                  with open("modules.bzl", "r") as f:
+                      bzl_content = f.read()
+
+                  patched_bzl = False
+                  for list_name in ["_COMMON_GKI_MODULES_LIST", "COMMON_GKI_MODULES_LIST"]:
+                      # Mencari posisi deklarasi list
+                      m = re.search(list_name + r"\s*=\s*\[", bzl_content)
+                      if not m:
+                          continue
+
+                      start_bracket = m.end() - 1
+                      d = 1
+                      p = start_bracket + 1
+                      while p < len(bzl_content) and d > 0:
+                          if bzl_content[p] == "[":
+                              d += 1
+                          elif bzl_content[p] == "]":
+                              d -= 1
+                          p += 1
+                      end_bracket = p - 1
+
+                      # Mengekstraksi isi list lama
+                      list_inner = bzl_content[start_bracket+1:end_bracket]
+                      
+                      # Mengurai modul lama dengan mendukung tanda petik tunggal dan ganda
+                      existing_items = re.findall(r"[\"\']([^\'\"]+\.ko)[\"\']", list_inner)
+                      
+                      # Menambahkan modul WiFi jika belum terdaftar
+                      added = []
+                      for mod in WIFI_MODULES:
+                          if mod not in existing_items:
+                              existing_items.append(mod)
+                              added.append(mod)
+                      
+                      if added:
+                          existing_items.sort()
+                          new_inner = "\n" + "".join(f"    \"{x}\",\n" for x in existing_items)
+                          bzl_content = bzl_content[:start_bracket] + "[" + new_inner + bzl_content[end_bracket+1:]
+                          patched_bzl = True
+                          print(f"✅ Berhasil mendaftarkan modul {added} ke dalam {list_name} di modules.bzl!")
+                      else:
+                          patched_bzl = True
+                          print(f"ℹ️ Modul WiFi sudah terdaftar di dalam {list_name} di modules.bzl.")
+                      break
+
+                  if patched_bzl:
+                      with open("modules.bzl", "w") as f:
+                          f.write(bzl_content)
+
+              # 2. MODIFIKASI BERKAS BUILD.bazel (WAJIB)
               if os.path.exists("BUILD.bazel"):
-                  with open("BUILD.bazel") as f:
-                      content = f.read()
+                  with open("BUILD.bazel", "r") as f:
+                      bazel_content = f.read()
 
-                  content = re.sub(r".*check_defconfig.*", "", content)
+                  # Pembersihan pemeriksaan defconfig agar tidak memicu kegagalan kompilasi non-standar
+                  bazel_content = re.sub(r".*check_defconfig.*", "", bazel_content)
 
-                  m = re.search(r"name\s*=\s*[\"\']kernel_aarch64[\"\']", content)
+                  # Mencari target utama kernel_aarch64
+                  m = re.search(r"name\s*=\s*[\"\']kernel_aarch64[\"\']", bazel_content)
                   if m:
                       name_idx = m.start()
-                      start_idx = content.rfind("kernel_build", 0, name_idx)
+                      # Mencari posisi pembuka blok kernel_build
+                      start_idx = bazel_content.rfind("kernel_build", 0, name_idx)
                       if start_idx != -1:
                           d = 0
                           end_idx = -1
-                          for i in range(start_idx, len(content)):
-                              if content[i] == "(":
+                          for i in range(start_idx, len(bazel_content)):
+                              if bazel_content[i] == "(":
                                   d += 1
-                              elif content[i] == ")":
+                              elif bazel_content[i] == ")":
                                   d -= 1
                                   if d == 0:
                                       end_idx = i
                                       break
+
                           if end_idx != -1:
-                              target_block = content[start_idx:end_idx]
+                              # Memotong blok kernel_build untuk target kernel_aarch64
+                              target_block = bazel_content[start_idx:end_idx]
+
+                              # Menghapus pelacakan ketat KMI yang dapat memicu kegagalan pemuatan modul vendor
                               target_block = re.sub(r"\s*kmi_symbol_list_strict_mode\s*=\s*(True|False|[^,\n]*),?", "", target_block)
                               target_block = re.sub(r"\s*trim_nonlisted_kmi\s*=\s*(True|False|[^,\n]*),?", "", target_block)
                               target_block = re.sub(r"\s*kmi_symbol_list\s*=\s*[\"\'][^\"\']*[\"\'],?", "", target_block)
-                              
-                              inject_str = "\n    kmi_symbol_list_strict_mode = False,\n    trim_nonlisted_kmi = False,"
-                              target_block = re.sub(r"(name\s*=\s*[\"\']kernel_aarch64[\"\'],?)", r"\1" + inject_str, target_block)
-                              
-                              content = content[:start_idx] + target_block + content[end_idx:]
-                              print("✅ BUILD.bazel kernel_aarch64 target patched successfully via Python!")
+
+                              # Menyuntikkan pelonggaran aturan KMI secara default
+                              inject_kmi = "\n    kmi_symbol_list_strict_mode = False,\n    trim_nonlisted_kmi = False,"
+                              target_block = re.sub(r"(name\s*=\s*[\"\']kernel_aarch64[\"\'],?)", r"\1" + inject_kmi, target_block)
+
+                              # ─── PENDAFTARAN MODUL WIFI DI DALAM KERNEL_BUILD BLOCK ───
+                              patched_attr = False
+                              for attr in ["module_outs", "module_implicit_outs"]:
+                                  attr_match = re.search(attr + r"\s*=\s*", target_block)
+                                  if attr_match:
+                                      start_pos = attr_match.end()
+                                      rest = target_block[start_pos:].lstrip()
+                                      
+                                      if rest.startswith("["):
+                                          # Kasus A: Atribut berupa list literal [...]
+                                          bp = target_block.find("[", start_pos)
+                                          inner_d = 1
+                                          p_idx = bp + 1
+                                          while p_idx < len(target_block) and inner_d > 0:
+                                              if target_block[p_idx] == "[":
+                                                  inner_d += 1
+                                              elif target_block[p_idx] == "]":
+                                                  inner_d -= 1
+                                              p_idx += 1
+                                          ep = p_idx - 1
+                                          
+                                          list_inner = target_block[bp+1:ep]
+                                          existing_items = re.findall(r"[\"\']([^\'\"]+\.ko)[\"\']", list_inner)
+                                          
+                                          added = []
+                                          for mod in WIFI_MODULES:
+                                              if mod not in existing_items:
+                                                  existing_items.append(mod)
+                                                  added.append(mod)
+                                          
+                                          if added:
+                                              existing_items.sort()
+                                              new_inner = "\n" + "".join(f"        \"{x}\",\n" for x in existing_items) + "    "
+                                              target_block = target_block[:bp] + "[" + new_inner + "]" + target_block[ep+1:]
+                                              print(f"✅ Berhasil mendaftarkan modul WiFi kustom ke {attr} (list literal)!")
+                                          else:
+                                              print(f"ℹ️ Modul WiFi sudah ada di {attr} (list literal).")
+                                          patched_attr = True
+                                          break
+                                      else:
+                                          # Kasus B: Atribut merujuk pada variabel atau ekspresi lain.
+                                          # Kita bisa menambahkan penyambungan list dinamis (+ WIFI_MODULES) pada ekspresi tersebut.
+                                          comma_pos = target_block.find(",", start_pos)
+                                          if comma_pos != -1:
+                                              expr = target_block[start_pos:comma_pos].strip()
+                                              # Pastikan kita tidak menambahkannya berulang kali
+                                              if "net/wireless/cfg80211.ko" not in expr:
+                                                  wifi_append = " + [\n        \"net/mac80211/mac80211.ko\",\n        \"net/wireless/cfg80211.ko\",\n    ]"
+                                                  target_block = target_block[:comma_pos] + wifi_append + target_block[comma_pos:]
+                                                  print(f"✅ Berhasil menyambungkan modul WiFi kustom ke ekspresi {attr}!")
+                                              else:
+                                                  print(f"ℹ️ Modul WiFi sudah disambungkan pada ekspresi {attr}.")
+                                              patched_attr = True
+                                              break
+
+                              if not patched_attr:
+                                  # Kasus C: Atribut module_outs tidak ditemukan sama sekali di dalam blok kernel_build.
+                                  # Kita akan menyuntikkan atribut module_outs baru tepat setelah nama target.
+                                  wifi_inject = "\n    module_outs = [\n        \"net/mac80211/mac80211.ko\",\n        \"net/wireless/cfg80211.ko\",\n    ],"
+                                  target_block = re.sub(r"(name\s*=\s*[\"\']kernel_aarch64[\"\'],?)", r"\1" + wifi_inject, target_block)
+                                  print("✅ Atribut module_outs baru disuntikkan secara dinamis dengan modul WiFi!")
+
+                              # Menyatukan kembali blok yang telah dimodifikasi ke dalam konten berkas utama
+                              bazel_content = bazel_content[:start_idx] + target_block + bazel_content[end_idx:]
 
                   with open("BUILD.bazel", "w") as f:
-                      f.write(content)
+                      f.write(bazel_content)
+                  print("✅ Berkas BUILD.bazel utama berhasil diperbarui!")
           """))'
-            git add BUILD.bazel 2>/dev/null || true
-            echo "✅ Build system patched and added to git"
-          fi
-
-          # ─── WIFI MODULE REGISTRATION (FOR BAZEL MODULE COMPILATION) ─────
-          python3 -c 'if 1:
-              import os, re, sys
-              WIFI = ["net/mac80211/mac80211.ko", "net/wireless/cfg80211.ko"]
-              ok = False
-              print("CWD:", os.getcwd())
-              for f in ["modules.bzl", "BUILD.bazel"]:
-                print(f"  {chr(9989) if os.path.exists(f) else chr(10060)} {f}")
-              if os.path.exists("modules.bzl"):
-                with open("modules.bzl") as fh:
-                  bzl = fh.read()
-                for vn in ["_COMMON_GKI_MODULES_LIST", "COMMON_GKI_MODULES_LIST"]:
-                  m = re.search(vn + r"\s*=\s*\[", bzl)
-                  if not m: continue
-                  sb = m.end() - 1; d = 1; p = sb + 1
-                  while p < len(bzl) and d > 0:
-                    if bzl[p] == "[": d += 1
-                    elif bzl[p] == "]": d -= 1
-                    p += 1
-                  eb = p - 1; lc = bzl[sb+1:eb]
-                  if all(x in lc for x in WIFI):
-                    print(f"Already in {vn}"); ok = True; break
-                  items = re.findall(r"\"([^\"]+\.ko)\"", lc)
-                  print(f"Found {len(items)} modules in {vn}")
-                  for mod in WIFI:
-                    if mod not in items: items.append(mod); print(f"  + {mod}")
-                  items.sort()
-                  nl = "[\n" + "".join(f"    \"{x}\",\n" for x in items) + "]"
-                  with open("modules.bzl", "w") as fh:
-                    fh.write(bzl[:sb] + nl + bzl[eb+1:])
-                  print(f"Patched {vn} in modules.bzl ({len(items)} modules)")
-                  ok = True; break
-              if not ok:
-                if not os.path.exists("BUILD.bazel"):
-                  print("ERROR: no modules.bzl or BUILD.bazel"); sys.exit(1)
-                with open("BUILD.bazel") as fh:
-                  bz = fh.read()
-                if all(x in bz for x in WIFI):
-                  print("Already in BUILD.bazel"); ok = True
-                else:
-                  ki = bz.find("name = \"kernel_aarch64\"")
-                  if ki == -1: ki = bz.find("name = " + chr(39) + "kernel_aarch64" + chr(39))
-                  if ki == -1:
-                    print("ERROR: kernel_aarch64 not found"); sys.exit(1)
-                  sr = bz[ki:]
-                  for an in ["module_implicit_outs", "module_outs"]:
-                    am = re.search(an + r"\s*=\s*", sr)
-                    if not am: continue
-                    ap = ki + am.end(); rest = bz[ap:].lstrip()
-                    if rest.startswith("["):
-                      bp2 = bz.index("[", ap); d = 1; p = bp2 + 1
-                      while p < len(bz) and d > 0:
-                        if bz[p] == "[": d += 1
-                        elif bz[p] == "]": d -= 1
-                        p += 1
-                      ep = p - 1; lc = bz[bp2+1:ep]
-                      items = re.findall(r"\"([^\"]+\.ko)\"", lc)
-                      for mod in WIFI:
-                        if mod not in items: items.append(mod)
-                      items.sort()
-                      nl = "[\n" + "".join(f"        \"{x}\",\n" for x in items) + "    ]"
-                      bz = bz[:bp2] + nl + bz[ep+1:]
-                      with open("BUILD.bazel", "w") as fh:
-                        fh.write(bz)
-                      print(f"Patched inline {an}"); ok = True; break
-                    else:
-                      ws = " + [\n" + "".join(f"        \"{x}\",\n" for x in WIFI) + "    ]"
-                      le = bz.find(",\n", ap)
-                      if le != -1:
-                        bz = bz[:le] + ws + bz[le:]
-                        with open("BUILD.bazel", "w") as fh:
-                          fh.write(bz)
-                        print(f"Appended to {an}"); ok = True; break
-                  if not ok:
-                    print("ERROR: no module_outs attr found"); print(sr[:500]); sys.exit(1)
-              if ok: print("WiFi module registration done!")
-              else: print("FATAL: could not patch"); sys.exit(1)
-          '
 
           git add BUILD.bazel modules.bzl 2>/dev/null || true
           for f in build.config.gki build.config.gki.aarch64; do
@@ -931,25 +964,26 @@ jobs:
               git add "$f"
             fi
           done
-          # FIX: Bypass ABI symbol protection check (fails with custom patches)
+          # Lewati pemeriksaan proteksi simbol ABI untuk menghindari kegagalan kompilasi akibat patch kustom
           [ -f "../build/kernel/abi/check_buildtime_symbol_protection.py" ] \
             && perl -i -pe 's/^(\s*)return 1$/$1return 0/g' \
               "../build/kernel/abi/check_buildtime_symbol_protection.py" \
             || true
-          # FIX: Remove -maybe-dirty from scm version stamp
+
+          # Hilangkan teks '-maybe-dirty' dari stempel versi SCM kernel
           if [ -f "../build/kernel/kleaf/impl/stamp.bzl" ]; then
             sed -i '/stable_scmversion_cmd/s/-maybe-dirty//g' \
               ../build/kernel/kleaf/impl/stamp.bzl
           fi
-          # FIX: Jangan git add ke repo build, itu repo terpisah.
-          # Cukup scmversion dan setlocalversion di repo common.
+
+          # Amankan versi lokal agar tidak dianggap dirty saat pelacakan git di repo common
           sed -i 's/-dirty//' scripts/setlocalversion 2>/dev/null || true
           git add scripts/setlocalversion 2>/dev/null || true
           : > .scmversion
           git add .scmversion 2>/dev/null || true
 
-          # CRITICAL: Hapus .git folders yang tidak perlu untuk hemat disk space (Bazel butuh banyak)
-          # Tapi jangan hapus .git di kernel/common karena Bazel/Kleaf butuh git state-nya.
+          # Bersihkan direktori .git yang tidak terpakai demi menghemat penyimpanan disk runner (Bazel membutuhkan ruang kosong yang besar)
+          # PENTING: Jangan hapus folder .git di kernel/common karena Bazel/Kleaf memerlukannya untuk memproses metadata.
           cd "$GITHUB_WORKSPACE"
           rm -rf kernel/KernelSU-Next/.git 2>/dev/null || true
           rm -rf kernel/susfs4ksu/.git 2>/dev/null || true
@@ -963,19 +997,10 @@ jobs:
           cd kernel
           mkdir -p $GITHUB_WORKSPACE/dist
 
-          # ── FIX: --local_resources=memory (bukan --local_ram_resources) ──
-          # Di Bazel version yang dipakai Kleaf GKI 6.6, --local_ram_resources
-          # justru DEPRECATED. Yang bener: --local_resources=memory=6144.
-          # Jangan ganti-ganti flag tanpa tes di runner dulu.
-          #
-          # LTO=none is the safest for GKI 6.6 Kleaf (tested stable).
-          # LTO=full causes OOM on 7GB runners. LTO=thin not always
-          # supported by older Kleaf versions (exit code 2).
-          #
-          # ── FIX: Retry loop ──────────────────────────────────────────────
-          # Sama kayak repo sync (3x retry, 30s delay). Build Bazel bisa gagal
-          # karena transient network issues download remote deps/artifacts.
-          # ─────────────────────────────────────────────────────────────────
+          # KONFIGURASI BAZEL & KESTABILAN:
+          # 1. Gunakan flag --local_resources=memory=6144. Flag --local_ram_resources sudah deprecated pada versi Bazel di Kleaf GKI 6.6 ini.
+          # 2. Setel --lto=none demi keamanan dan mencegah kehabisan memori (OOM) pada mesin runner GitHub Actions yang berkapasitas 7GB.
+          # 3. Lakukan pengulangan kompilasi sampai 3 kali jika terjadi kegagalan akibat kendala jaringan saat mengunduh dependensi remote.
           BUILD_OK=false
           for attempt in 1 2 3; do
             echo "Bazel build attempt $attempt/3..."
@@ -1014,7 +1039,7 @@ jobs:
           export PATH="$CUSTOM_CLANG_PATH/bin:$PATH"
           which clang || { echo "❌ clang not in PATH!"; exit 1; }
           
-          # Detect clang triple for better compatibility
+          # Deteksi arsitektur target Clang demi jaminan kompatibilitas kompilasi silang
           CLANG_TRIPLE=$(clang -dumpmachine)
           echo "✅ Using Clang Triple: $CLANG_TRIPLE"
 
@@ -1024,8 +1049,8 @@ jobs:
 
           make $MAKE_ARGS gki_defconfig
           
-          # Build Kernel Image and Modules
-          # FORCE: Image.gz for MTK compatibility
+          # Kompilasi Citra Kernel dan Modul Driver
+          # PENTING: Utamakan hasil kompilasi Image.gz agar perangkat MediaTek dapat memuat kernel dengan sukses tanpa kendala.
           make -j$(nproc) $MAKE_ARGS Image.gz Image.lz4 modules 2>&1 | tee ../build.log
         env:
           SOURCE_DATE_EPOCH: "0"
@@ -1044,7 +1069,7 @@ jobs:
               fi
             done
           else
-            # Extraction for Custom Toolchain (from 'out' directory)
+            # Proses ekstraksi hasil kompilasi dari folder 'out' compiler kustom
             for img in \
               kernel/common/out/arch/arm64/boot/Image \
               kernel/common/out/arch/arm64/boot/Image.gz \
@@ -1053,7 +1078,7 @@ jobs:
                 cp -v "$img" "$GITHUB_WORKSPACE/dist/"
               fi
             done
-            # Also grab WiFi modules if they exist (for AnyKernel3 packaging)
+            # Ambil pula file driver modul WiFi (cfg80211.ko & mac80211.ko) untuk disertakan ke AnyKernel3
             for mod in cfg80211.ko mac80211.ko; do
               FOUND=$(find kernel/common/out -name "$mod" -type f 2>/dev/null | head -1)
               if [ -n "$FOUND" ]; then
@@ -1106,8 +1131,7 @@ jobs:
 
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git ak3 && cd ak3
 
-          # kernel.string: nama kernel yang muncul di kernel manager app
-          # Format: {KernelName}-{CustomName}-v{Build} [info] by {Developer}
+          # Tentukan format penamaan kernel yang akan muncul pada menu aplikasi Kernel Manager di ponsel
           if [ "${{ inputs.with_susfs }}" == "true" ]; then
             KERNEL_STRING="Epitaph-${CUSTOM_NAME}-v${BUILD_VER} [GKI 6.6 | SUSFS | ${GOVERNOR} | ${TOOLCHAIN_SHORT}] by ${AUTHOR}"
           else
@@ -1154,9 +1178,9 @@ jobs:
           fi
           # ─── END MODULE COPY ────────────────────────────────────────
 
-          # ─── PERSISTENT WIFI FALLBACK LOADER ────────────────────────
-          # If systemless mount fails under HyperOS 2.0/Android 15, we write
-          # a persistent post-boot service.d script via KernelSU/Magisk to insmod them.
+          # PEMUAT MODUL WIFI CADANGAN (PERSISTENT FALLBACK):
+          # Jika proses pemuatan modul secara systemless gagal pada HyperOS 2.0 / Android 15,
+          # kita buat skrip booting otomatis (post-boot service.d) via KernelSU atau Magisk untuk insmod modul secara manual.
           echo "" >> anykernel.sh
           echo "# Fallback persistent WiFi module loader via KernelSU/Magisk" >> anykernel.sh
           echo "if [ -d /data/adb/service.d ]; then" >> anykernel.sh
@@ -1167,7 +1191,7 @@ jobs:
           echo "  " >> anykernel.sh
           echo "  cat << 'INNER_EOF' > /data/adb/service.d/load_wifi.sh" >> anykernel.sh
           echo "#!/system/bin/sh" >> anykernel.sh
-          echo "# Wait for driver initialization subsystems" >> anykernel.sh
+          echo "# Tunggu subsystem inisialisasi driver siap sepenuhnya" >> anykernel.sh
           echo "sleep 3" >> anykernel.sh
           echo "if ! lsmod | grep -q cfg80211; then" >> anykernel.sh
           echo "  insmod /data/adb/wifi_fix/rfkill.ko" >> anykernel.sh
@@ -1183,9 +1207,10 @@ jobs:
           # ─── END PERSISTENT WIFI FALLBACK LOADER ────────────────────
 
           SELECTED_IMG=""
-          # CRITICAL: Prioritaskan Image.gz untuk Redmi 12 (Helio G88).
-          # Bootloader Xiaomi MTK sering gagal booting kalau dikasih raw 'Image'.
-          # Urutan: gz (best compatibility) > lz4 > raw Image (fallback)
+          # PEMILIHAN CITRA KERNEL:
+          # Kita prioritaskan Image.gz karena bootloader MediaTek pada Redmi 12 (Helio G88)
+          # sering kali menolak mentah-mentah file citra uncompressed ('Image').
+          # Urutan prioritas: Image.gz (kompatibilitas terbaik) -> Image.lz4 -> Image raw (cadangan).
           for img in \
             "$GITHUB_WORKSPACE/dist/Image.gz" \
             "$GITHUB_WORKSPACE/dist/Image.lz4" \
@@ -1260,7 +1285,7 @@ jobs:
           SUSFS_LABEL="No"
           [ "${{ inputs.with_susfs }}" = "true" ] && SUSFS_LABEL="Yes"
 
-          # ── 1. Kumpulkan error log ───────────────────────────────────────
+          # Kumpulkan pesan error penting dari berkas log kompilasi untuk diagnosis cepat
           ERROR_LOG="/tmp/epitaph_error.log"
           : > "$ERROR_LOG"
 
@@ -1278,7 +1303,7 @@ jobs:
             fi
           done
 
-          # Tangkap .rej file (SUSFS/patch failure)
+          # Jika ada kegagalan patch dari SUSFS (file .rej), sertakan juga ke dalam log error
           REJ_FILES=$(find kernel/common -name "*.rej" 2>/dev/null | head -5)
           if [ -n "$REJ_FILES" ]; then
             echo "=== REJECTED PATCH HUNKS ===" >> "$ERROR_LOG"

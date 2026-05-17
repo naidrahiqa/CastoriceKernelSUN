@@ -1,81 +1,79 @@
-# 🛠️ Redmi 12 (fire) Kernel Debugging Guide
+# Panduan Diagnosis & Debugging Kernel Redmi 12 (fire)
 
-Dokumen ini berisi panduan praktis untuk mendiagnosis masalah kernel (bootloop, crash, atau fitur tidak jalan) pada Redmi 12, terutama bagi kamu yang tidak memiliki Custom Recovery (TWRP/OrangeFox).
+> [!NOTE]
+> Dokumen ini dirancang sebagai panduan taktis bagi pengembang untuk melakukan penarikan log konsol kernel serta mendiagnosis masalah seperti kegagalan booting (*bootloop*), kegagalan modul driver, atau ketidakstabilan fitur sistem pada perangkat Redmi 12 (fire) tanpa ketergantungan pada pemasangan Custom Recovery (TWRP/OrangeFox).
 
 ---
 
-## 🚀 1. Mengambil Log Setelah Bootloop (PStore/Ramoops)
+## 1. Pengambilan Log Pasca-Bootloop (PStore / RAMoops)
+Generic Kernel Image (GKI) memiliki subsistem penyimpanan log khusus bernama `pstore`. Subsistem ini merekam data keluaran konsol dmesg terakhir ke dalam alokasi memori RAM terisolasi yang tidak akan terhapus saat terjadi kegagalan booting (*Kernel Panic*) atau mati mendadak, selama komponen perangkat keras tidak kehilangan tegangan daya secara total.
 
-GKI (Generic Kernel Image) memiliki fitur bernama `pstore` yang menyimpan log kernel terakhir ke dalam RAM yang tidak terhapus saat reboot (selama hardware tidak kehilangan daya total).
-
-### Langkah-langkah:
-1. **Trigger Bootloop**: Flash kernel custom kamu. Biarkan HP mencoba booting sampai terjadi "Panic" (biasanya restart sendiri atau masuk ke Fastboot).
-2. **Masuk ke Fastboot**: Tekan dan tahan `Volume Down + Power`.
-3. **Flash Kernel Stock**: Kembalikan HP ke kondisi bisa booting dengan mem-flash kernel ori/stock.
+### Prosedur Penarikan Log:
+1. **Pemicuan Kejadian**: Flash citra kernel kustom Anda. Biarkan perangkat memproses siklus booting hingga terjadi kegagalan (*Kernel Panic* atau *reboot* otomatis kembali ke Fastboot).
+2. **Akses Fastboot**: Masuk ke mode Fastboot dengan menekan dan menahan kombinasi tombol `Volume Down + Power`.
+3. **Kembalikan Booting Perangkat**: Flash citra kernel bawaan (*Stock Boot*) agar perangkat dapat masuk kembali ke sistem Android utama:
    ```bash
    fastboot flash boot boot_stock.img
    fastboot reboot
    ```
-4. **Tarik Log PStore**: Begitu HP masuk ke sistem Android, buka terminal di PC dan jalankan:
+4. **Penarikan Berkas Log PStore**: Segera setelah ponsel masuk ke antarmuka Android utama, hubungkan kabel data PC, buka terminal, lalu jalankan rangkaian perintah berikut:
    ```bash
-   # Masuk ke shell root
+   # Akses cangkang shell dengan hak root penuh
    adb shell
    su
    
-   # Cek apakah ada file di pstore
-   ls /sys/fs/pstore/
+   # Periksa ketersediaan berkas rekaman log pstore
+   ls -la /sys/fs/pstore/
    
-   # Salin log dmesg terakhir (pilih salah satu yang ada)
+   # Salin berkas log konsol dmesg terakhir ke penyimpanan internal (pilih salah satu berkas yang terisi)
    cat /sys/fs/pstore/console-ramoops-0 > /sdcard/last_kmsg.log
    cat /sys/fs/pstore/dmesg-ramoops-0 > /sdcard/panic_log.txt
    ```
-5. **Analisis**: File `last_kmsg.log` tersebut berisi rekaman detik-detik sebelum kernel custom kamu mati.
+5. **Analisis Diagnosis**: Berkas `last_kmsg.log` berisi rekaman kronologis detik-detik krusial tepat sebelum kernel kustom Anda mengalami crash fatal.
 
 ---
 
-## 📡 2. Mengambil Log Live (ADB Dmesg)
+## 2. Pengambilan Log Aktif secara Real-Time (ADB Dmesg)
+Gunakan metode ini apabila perangkat **berhasil masuk ke antarmuka sistem Android utama (booting sukses)**, namun beberapa fitur penting tidak berfungsi dengan baik (seperti WiFi mati, hak akses KernelSU-Next tidak terdeteksi, atau performa melambat).
 
-Gunakan ini jika HP **berhasil masuk ke Android** tapi ada fitur yang tidak jalan (misal: KernelSU tidak terbaca, WiFi mati, dsb).
-
+### Perintah Perekaman Log:
+Jalankan perintah berikut pada terminal PC Anda untuk merekam pesan konsol dmesg secara langsung ke dalam berkas teks lokal:
 ```bash
-# Simpan dmesg ke file secara real-time
 adb shell "su -c dmesg" > dmesg_live.log
 ```
 
 ---
 
-## 🔍 3. Apa yang Harus Dicari di Log?
+## 3. Identifikasi Parameter Masalah pada Berkas Log
+Buka berkas log yang berhasil Anda dapatkan (`last_kmsg.log` atau `dmesg_live.log`) menggunakan aplikasi editor teks (seperti VS Code atau Notepad++), lalu lakukan pencarian kata kunci penting berikut:
 
-Buka file log menggunakan Text Editor (VS Code/Notepad++) dan cari kata kunci berikut:
-
-| Kata Kunci | Arti | Solusi Umum |
+| Parameter Pencarian | Definisi Masalah | Prosedur Solusi Umum |
 | :--- | :--- | :--- |
-| `Kernel panic` | Kernel menyerah karena error fatal. | Cek baris di atasnya untuk melihat driver yang crash. |
-| `Call Trace` | Jejak eksekusi fungsi sebelum crash. | Lihat fungsi terakhir yang dipanggil (biasanya ada nama file `.c`). |
-| `init: Service '...' killed` | Proses sistem mati karena kernel bermasalah. | Sering terjadi jika `MODVERSIONS` dimatikan. |
-| `KSU: ...` | Log dari KernelSU. | Cek apakah hooks berhasil terpasang atau ditolak. |
-| `uapi/... missing` | Error saat compile. | Pastikan folder `uapi` sudah ikut disalin di workflow. |
+| `Kernel panic` | Kernel mendeteksi kegagalan fatal pada memori atau perangkat keras dan memutuskan menghentikan sistem. | Telusuri baris log tepat di atas pesan ini untuk melihat driver atau fungsi sistem yang memicu kegagalan pertama kali. |
+| `Call Trace` | Rantai eksekusi fungsi pemrograman sebelum terjadinya crash sistem. | Analisis baris teratas fungsi yang dipanggil (biasanya memuat referensi berkas biner `.c` atau `.ko` yang bermasalah). |
+| `init: Service '...' killed` | Subsistem inisialisasi Android mematikan proses akibat kegagalan pemuatan driver. | Biasanya dipicu akibat penonaktifan modul `MODVERSIONS` secara ilegal yang menyebabkan kegagalan pemuatan driver vendor Xiaomi. |
+| `KSU: ...` | Pesan pelacakan inisialisasi modul KernelSU-Next. | Periksa apakah proses pemasangan kait (*hooks*) sistem berjalan sempurna atau dibatalkan oleh kebijakan keamanan kernel. |
+| `uapi/... missing` | Kegagalan kompilasi akibat file antarmuka pengguna kernel yang hilang. | Pastikan seluruh berkas pustaka API telah disalin dengan benar pada direktori `common/drivers/kernelsu/uapi` sebelum proses build. |
 
 ---
 
-## 💡 4. Tips Khusus Redmi 12 (fire)
+## 4. Tips Diagnosis Khusus Platform Redmi 12 (MTK Helio G88)
 
-### format Image
-Redmi 12 menggunakan MediaTek Helio G88. Bootloader-nya seringkali **menolak** file `Image` mentah (uncompressed).
-- **Selalu gunakan `Image.gz`** untuk di-pack ke AnyKernel3.
-- Jika menggunakan `Image` raw, HP biasanya akan langsung masuk ke Fastboot (Bad Image).
+### Kompatibilitas Format Citra Kernel
+Chipset MediaTek Helio G88 pada Redmi 12 memiliki sistem kemudi bootloader yang sangat ketat. Bootloader perangkat ini umumnya akan **menolak mentah-mentah** berkas citra kernel mentah uncompressed (`Image`).
+* **Kewajiban Pengemasan**: Pastikan AnyKernel3 dikonfigurasi untuk membungkus format citra terkompresi `Image.gz`.
+* **Gejala Kegagalan**: Apabila memaksakan biner raw `Image` tanpa kompresi, ponsel biasanya akan langsung menolak melakukan booting dan terlempar kembali ke mode Fastboot (*Bad Image Format*).
 
-### VBMeta Flags
-Jika kamu mem-flash kernel custom, pastikan kamu sudah mematikan verifikasi Android (AVB):
+### Pengaturan Bendera AVB (VBMeta)
+Sebelum memasang kernel kustom pada sistem yang menggunakan pengaman verifikasi ketat, Anda wajib menonaktifkan pemeriksaan integritas Android Verified Boot (AVB) menggunakan perintah berikut melalui Fastboot:
 ```bash
 fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img
+fastboot --disable-verity --disable-verification flash vbmeta_system vbmeta_system.img
+fastboot --disable-verity --disable-verification flash vbmeta_vendor vbmeta_vendor.img
 ```
-*Gunakan `vbmeta.img` dari ROM yang sedang kamu pakai.*
+*Gunakan berkas `vbmeta.img` resmi yang diekstraksi dari paket Fastboot ROM HyperOS 2.0 yang sedang berjalan aktif pada perangkat.*
 
-### KMI Version
-Pastikan base kernel kamu cocok dengan versi firmware. 
-- Stock HyperOS 2 biasanya menggunakan KMI versi `8`. 
-- Cek `scripts/setlocalversion` jika ada masalah symbol mismatch.
-
----
-> **Note**: Log adalah teman terbaikmu. Jangan menebak-nebak kenapa bootloop, biarkan `dmesg` yang memberitahu alasannya.
+### Sinkronisasi Versi Antarmuka KMI
+Pastikan basis kode kernel yang Anda kompilasi memiliki versi KMI (Kernel Module Interface) yang sesuai dengan spesifikasi vendor. 
+* Stock ROM HyperOS 2.0 untuk Redmi 12 (fire) menggunakan basis KMI versi **8**.
+* Lakukan sinkronisasi stempel versi pada berkas `scripts/setlocalversion` apabila modul vendor mengalami penolakan akibat *symbol mismatch*.
