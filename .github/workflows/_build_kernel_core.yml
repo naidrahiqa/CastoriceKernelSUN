@@ -796,16 +796,17 @@ jobs:
               -e 's/trim_nonlisted_kmi = .*/trim_nonlisted_kmi = False,/g' \
               BUILD.bazel
 
-            # FIX: Pakai buildozer pinned, jalankan dari WORKSPACE root.
+            # FIX: Pakai buildozer pinned v8.5.1, jalankan dari WORKSPACE root.
             # Kalo dijalankan dari kernel/common/, //common:kernel_aarch64
             # resolve ke common/common/ (salah) → exit code 8.
             # Pake /tmp biar gak perlu cd bolak-balik.
-            wget -q "https://github.com/bazelbuild/buildtools/releases/download/v7.3.0/buildozer-linux-amd64" -O /tmp/buildozer
-            chmod +x /tmp/buildozer
-            cd "$GITHUB_WORKSPACE/kernel"
-            /tmp/buildozer 'add module_outs net/wireless/cfg80211.ko net/mac80211/mac80211.ko' //common:kernel_aarch64 || true
-            cd "$GITHUB_WORKSPACE/kernel/common"
-            rm -f /tmp/buildozer
+            wget -q "https://github.com/bazelbuild/buildtools/releases/download/v8.5.1/buildozer-linux-amd64" -O /tmp/buildozer 2>/dev/null && {
+                chmod +x /tmp/buildozer
+                cd "$GITHUB_WORKSPACE/kernel"
+                /tmp/buildozer 'add module_outs net/wireless/cfg80211.ko net/mac80211/mac80211.ko' //common:kernel_aarch64 || true
+                cd "$GITHUB_WORKSPACE/kernel/common"
+                rm -f /tmp/buildozer
+            } || echo "⚠️ buildozer setup failed (non-fatal)"
 
             git add BUILD.bazel
             echo "✅ BUILD.bazel patched and added to git"
